@@ -1,37 +1,60 @@
 import dotenv from "dotenv";
-import httpServer from "./app.js";
-// import connectDB from "./config/db.js";
-import connectDB from "./config/db.js"
-import colors from "colors"
+import logger from "./utils/logger.js";
+import connectDB from "./config/db.js";
+import { PORT } from "./config/constants.js";
+import { createServer } from "http";
+import app from "./app.js";
+
 dotenv.config({
-    path: "./.env",
+  path: "./.env",
 });
-/**
- * Starting from Node.js v14 top-level await is available and it is only available in ES modules.
- * This means you can not use it with common js modules or Node version < 14.
- */
+
 const majorNodeVersion = +process.env.NODE_VERSION?.split(".")[0] || 0;
+const server = createServer(app);
 
 const startServer = async () => {
-
-    httpServer.listen(process.env.PORT || 8080, () => {
-        console.log((`\n⚙️  Server is running on port:  http://localhost:${process.env.PORT} \n`).bgWhite.black);
-    });
+  server.listen(PORT || 8080, () => {
+    logger.info(`Server running on http://localhost:${PORT}`);
+  });
 };
 
 if (majorNodeVersion >= 14) {
-    try {
-        await connectDB();
-        startServer();
-    } catch (err) {
-        console.log("Mongo db connect error: ", err);
-    }
+  try {
+    await connectDB();
+    startServer();
+  } catch (err) {
+    logger.info("Mongo db connection error: ", err);
+  }
 } else {
-    connectDB()
-        .then(() => {
-            startServer();
-        })
-        .catch((err) => {
-            console.log("Mongo db connect error: ", err);
-        });
+  connectDB()
+    .then(() => {
+      startServer();
+    })
+    .catch((err) => {
+      logger.info("Mongo db connection error: ", err);
+    });
+}
+
+process.on("unhandledRejection", (err) => {
+  logger.error(`Uncaught Handle Rejection: ${err.message}`);
+  logger.error(err.stack);
+  process.exit(1);
+});
+process.on("SIGINT", shutdown);
+
+
+async function shutdown() {
+  logger.warn("Trying to shutdown the Server gracefully...");
+  try {
+    server.close(() => {
+      logger.info("HTTP Server Closed");
+    });
+
+    await mongoose.connection.exit();
+    logger.info("Connection closed Successfully");
+    process.exit(0);
+  } catch (error) {
+    logger.error(`Error occurred, Exiting the Server...`);
+    process.exit(1);
+  }
 }
