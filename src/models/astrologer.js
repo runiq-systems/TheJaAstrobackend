@@ -66,6 +66,7 @@ const astrologerSchema = new mongoose.Schema(
     idProof: {
       type: {
         type: String,
+        enum: ["passport", "driver_license", "national_id", "other"  ]
       },
       number: {
         type: String,
