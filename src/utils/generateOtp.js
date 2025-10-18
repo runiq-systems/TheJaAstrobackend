@@ -1,7 +1,7 @@
 import crypto from "crypto"
-import sendEmail from "./sendEmail"
+import sendEmail from "./sendEmail.js"
 
-const generateOtp = () => {
+export const generateOtp = () => {
     const otp = crypto.randomBytes(3).toString("hex")
     const numericOtp = parseInt(otp, 16).toString().slice(0,6)
 

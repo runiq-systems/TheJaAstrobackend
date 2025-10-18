@@ -8,9 +8,9 @@ import { rateLimiter } from "./middleware/ratelimiter.js";
 import errorHandler from "./middleware/errorHandler.js";
 
 import indexRoute from "./routes/indexRoute.js"
+import authRoute from "./routes/authRoute.js"
 
 const app = express();
-
 dotenv.config({
     path: "./.env",
 });
@@ -31,13 +31,12 @@ app.use(rateLimiter);
 app.use(express.json({ limit: "16kb" }));
 app.use(express.urlencoded({ extended: true, limit: "16kb" }));
 app.use(cookieParser());
-app.use(errorHandler)
 app.use(
     cors({
         origin:
-            process.env.CORS_ORIGIN === "*"
-                ? "*"
-                : process.env.CORS_ORIGIN?.split(","),
+        process.env.CORS_ORIGIN === "*"
+        ? "*"
+        : process.env.CORS_ORIGIN?.split(","),
         credentials: true,
     })
 );
@@ -45,6 +44,8 @@ app.use(
 
 
 // Routes
-app.use("/api/v1", indexRoute)
+app.use("/api/v1", indexRoute) 
+app.use("/api/v1", authRoute)
 
+app.use(errorHandler)
 export default app

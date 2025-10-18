@@ -57,10 +57,10 @@ const userSchema = new mongoose.Schema(
     refreshToken: {
       type: String,
     },
-    UserStatus: {
+    userStatus: {
       type: String,
       enum: ["Active", "InActive", "Blocked"],
-      default: "inActive",
+      default: "InActive",
       index: true,
     },
     status: {

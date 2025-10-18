@@ -14,7 +14,6 @@ const bankDetailsSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
-
   accountHolderName: {
     type: String,
     required: true,
