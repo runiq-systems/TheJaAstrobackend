@@ -67,7 +67,8 @@ export async function registerController(req, res) {
 
 export const LogoutController = async (req, res) => {
   try {
-    const { userId } = req.user; // Assuming userId is extracted from a verified token via middleware
+    const userId = req.user.id;
+    // Assuming userId is extracted from a verified token via middleware
     // Clear refreshToken, otp, otpExpires, set isOnline to false, and update lastSeen in the database
     await User.findByIdAndUpdate(
       userId,
