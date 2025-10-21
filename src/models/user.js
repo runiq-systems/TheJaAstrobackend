@@ -16,8 +16,8 @@ const userSchema = new mongoose.Schema(
     },
     email: {
       type: String,
-      unique: true,
-      sparse: true, // Some users may log in with phone only
+      // unique: true,
+      // sparse: true, // Some users may log in with phone only
       lowercase: true,
     },
     dateOfBirth: {
