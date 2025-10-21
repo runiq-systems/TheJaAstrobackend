@@ -6,7 +6,7 @@ const router = express.Router()
 
 router.post("/auth/register", registerController)
 router.post("/auth/verify-otp", verifyOtpController)
-router.post("/auth/logout", LogoutController)
+router.post("/auth/logout",authMiddleware ,LogoutController)
 
 // Step-wise profile update
 router.patch("/profile/step/:step", authMiddleware, UpdateProfileStepController);
