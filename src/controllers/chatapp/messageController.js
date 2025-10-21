@@ -1,6 +1,3 @@
-import { Message } from "../models/message.js";
-import { Chat } from "../models/chat.js";
-import { User } from "../models/user.js";
 
 import { Message } from "../../models/chatapp/message.js";
 import { Chat } from "../../models/chatapp/chat.js";
@@ -10,8 +7,7 @@ import { ApiResponse } from "../../utils/ApiResponse.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { emitSocketEvent } from "../../socket/index.js";
 import { ChatEventsEnum } from "../../constants.js";
-
-import { uploadOnCloudinary, deleteFromCloudinary } from "../utils/cloudinary.js";
+import { uploadOnCloudinary ,deleteFromCloudinary} from "../../utils/cloudinary.js";
 
 /**
  * @desc    Get all messages in a chat
