@@ -22,14 +22,15 @@ export async function authMiddleware(req, res, next) {
     // 2️⃣ Verify JWT
     let decoded;
     try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET);
+      decoded = jwt.verify(token, process.env.JWT_SECRET_KEY);
+      console.log("Decoded JWT:", decoded);
     } catch (error) {
       logger.warn(`JWT verification failed: ${error.message}`);
       return res.status(401).json({
         success: false,
         message: "Unauthorized: Invalid or expired token",
       });
-    }
+    } 
 
     // 3️⃣ Find user in DB
     const user = await User.findById(decoded.id).select(
@@ -45,13 +46,13 @@ export async function authMiddleware(req, res, next) {
     }
 
     // 4️⃣ Check if user is active
-    if (user.userStatus !== "active") {
-      logger.warn(`Blocked or inactive user attempted access: ${user._id}`);
-      return res.status(403).json({
-        success: false,
-        message: "Forbidden: User account not active",
-      });
-    }
+    // if (user.userStatus !== "active") {
+    //   logger.warn(`Blocked or inactive user attempted access: ${user._id}`);
+    //   return res.status(403).json({
+    //     success: false,
+    //     message: "Forbidden: User account not active",
+    //   });
+    // }
 
     // 5️⃣ Attach user to request for downstream controllers
     req.user = user;
