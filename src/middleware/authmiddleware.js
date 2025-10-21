@@ -46,13 +46,13 @@ export async function authMiddleware(req, res, next) {
     }
 
     // 4️⃣ Check if user is active
-    if (user.userStatus !== "active") {
-      logger.warn(`Blocked or inactive user attempted access: ${user._id}`);
-      return res.status(403).json({
-        success: false,
-        message: "Forbidden: User account not active",
-      });
-    }
+    // if (user.userStatus !== "active") {
+    //   logger.warn(`Blocked or inactive user attempted access: ${user._id}`);
+    //   return res.status(403).json({
+    //     success: false,
+    //     message: "Forbidden: User account not active",
+    //   });
+    // }
 
     // 5️⃣ Attach user to request for downstream controllers
     req.user = user;
