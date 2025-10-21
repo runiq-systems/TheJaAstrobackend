@@ -4,9 +4,9 @@ const userSchema = new mongoose.Schema(
   {
     fullName: {
       type: String,
-      lowercase: true,
-      trim: true,
-      index: true,
+      // lowercase: true,
+      // trim: true,
+      // index: true,
     },
     phone: {
       type: String,
@@ -30,7 +30,7 @@ const userSchema = new mongoose.Schema(
     gender: {
       type: String,
       enum: ["male", "female", "other"], // Enum for gender values
-      index: true,
+      // index: true,
     },
     languages: [
       {
@@ -61,13 +61,13 @@ const userSchema = new mongoose.Schema(
       type: String,
       enum: ["Active", "InActive", "Blocked"],
       default: "InActive",
-      index: true,
+      // index: true,
     },
     status: {
       type: String,
       enum: ["Online", "offline", "Busy"], // Allow only specific status values
       default: "offline", // Default t
-      index: true,
+      // index: true,
     },
 
     isOnline: {
