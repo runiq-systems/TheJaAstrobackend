@@ -23,16 +23,17 @@ export async function authMiddleware(req, res, next) {
     let decoded;
     try {
       decoded = jwt.verify(token, process.env.JWT_SECRET_KEY);
+      console.log("Decoded JWT:", decoded);
     } catch (error) {
       logger.warn(`JWT verification failed: ${error.message}`);
       return res.status(401).json({
         success: false,
         message: "Unauthorized: Invalid or expired token",
       });
-    }
+    } 
 
     // 3️⃣ Find user in DB
-    const user = await User.findById(decoded._id).select(
+    const user = await User.findById(decoded.id).select(
       "-otp -otpExpires -password"
     ); // exclude sensitive fields
 

@@ -103,7 +103,7 @@ export const LogoutController = async (req, res) => {
 export const UpdateProfileStepController = async (req, res) => {
   try {
    
-    const userId = req.user._id || req.user.id
+    const userId = req.user._id || req.user.id;
     const { step } = req.params; // Step number (1, 2, 3, or 4)
     const data = req.body;
 
@@ -197,7 +197,7 @@ export const UpdateProfileStepController = async (req, res) => {
 
 export const UpdateProfileCompleteController = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user._id || req.user.id;
     const { fullName, gender, timeOfBirth, isAccurate, dateOfBirth, placeOfBirth } = req.body;
 
     // Validate all required fields
@@ -250,7 +250,7 @@ export const UpdateProfileCompleteController = async (req, res) => {
 
 export const GetProfileController = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user._id || req.user.id;
     // Fetch user profile with selected fields
     const user = await User.findById(userId).select(
       "fullName gender dateOfBirth timeOfBirth isAccurate placeOfBirth"
