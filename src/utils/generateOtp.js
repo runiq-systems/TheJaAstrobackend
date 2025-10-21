@@ -3,9 +3,9 @@ import sendEmail from "./sendEmail.js"
 
 export const generateOtp = () => {
     const otp = crypto.randomBytes(3).toString("hex")
-    const numericOtp = parseInt(otp, 16).toString().slice(0,6)
+    const numericOtp = parseInt(otp, 16).toString().slice(0,4)
 
-    if(numericOtp.length < 6) {
+    if(numericOtp.length < 4) {
         return generateOtp()
     }
 

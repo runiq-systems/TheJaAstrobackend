@@ -4,13 +4,15 @@ const userSchema = new mongoose.Schema(
   {
     fullName: {
       type: String,
-      trim: true,
+      // lowercase: true,
+      // trim: true,
+      // index: true,
     },
     phone: {
       type: String,
       required: true,
-      sparse: true,
       trim: true,
+      unique: true
     },
     email: {
       type: String,
