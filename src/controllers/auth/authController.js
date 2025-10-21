@@ -102,7 +102,7 @@ export const LogoutController = async (req, res) => {
 
 export const UpdateProfileStepController = async (req, res) => {
   try {
-   
+
     const userId = req.user._id || req.user.id;
     const { step } = req.params; // Step number (1, 2, 3, or 4)
     const data = req.body;
@@ -252,8 +252,8 @@ export const GetProfileController = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
     // Fetch user profile with selected fields
-    const user = await User.findById(userId).select(
-      "fullName gender dateOfBirth timeOfBirth isAccurate placeOfBirth"
+  const user = await User.findById(userId).select(
+      "fullName gender dateOfBirth timeOfBirth isAccurate placeOfBirth phone"
     );
 
     if (!user) {
@@ -269,7 +269,7 @@ export const GetProfileController = async (req, res) => {
       data: {
         fullName: user.fullName || "",
         gender: user.gender || "",
-        phone: user.phone || "",
+        phone: user.phone || "", // Now phone will be availablephone: user.phone || "", // Now phone will be available
         dateOfBirth: user.dateOfBirth ? user.dateOfBirth.toISOString().split("T")[0] : "",
         timeOfBirth: user.timeOfBirth || "",
         isAccurate: user.isAccurate || false,
