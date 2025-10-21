@@ -269,6 +269,7 @@ export const GetProfileController = async (req, res) => {
       data: {
         fullName: user.fullName || "",
         gender: user.gender || "",
+        phone: user.phone || "",
         dateOfBirth: user.dateOfBirth ? user.dateOfBirth.toISOString().split("T")[0] : "",
         timeOfBirth: user.timeOfBirth || "",
         isAccurate: user.isAccurate || false,
