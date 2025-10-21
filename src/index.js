@@ -3,17 +3,17 @@ import logger from "./utils/logger.js";
 import connectDB from "./config/db.js";
 import { PORT } from "./config/constants.js";
 import { createServer } from "http";
-import app from "./app.js";
+import httpserver from "./app.js";
 
 dotenv.config({
   path: "./.env",
 });
 
 const majorNodeVersion = +process.env.NODE_VERSION?.split(".")[0] || 0;
-const server = createServer(app);
+
 
 const startServer = async () => {
-  server.listen(PORT || 8080, () => {
+  httpserver.listen(PORT || 8080, () => {
     logger.info(`Server running on http://localhost:${PORT}`);
   });
 };
