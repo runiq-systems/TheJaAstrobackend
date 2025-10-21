@@ -19,7 +19,10 @@ dotenv.config({
 });
 
 
-    const httpserver = createServer(app);
+const httpserver = createServer(app);
+
+app.set('trust proxy', 1)
+
 
 const io = new Server(httpserver, {
     pingTimeout: 60000,

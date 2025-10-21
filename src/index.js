@@ -11,7 +11,6 @@ dotenv.config({
 
 const majorNodeVersion = +process.env.NODE_VERSION?.split(".")[0] || 0;
 
-
 const startServer = async () => {
   httpserver.listen(PORT || 8080, () => {
     logger.info(`Server running on http://localhost:${PORT}`);

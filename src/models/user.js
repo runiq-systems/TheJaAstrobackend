@@ -21,7 +21,7 @@ const userSchema = new mongoose.Schema(
       lowercase: true,
     },
     dateOfBirth: {
-      type: Date,  
+      type: Date,
       required: false,
     },
     password: {
@@ -69,6 +69,52 @@ const userSchema = new mongoose.Schema(
       default: "offline", // Default t
       index: true,
     },
+
+    isOnline: {
+      type: Boolean,
+      default: false
+    },
+
+    // Last seen
+    lastSeen: {
+      type: Date,
+      default: Date.now
+    },
+
+    // Privacy settings
+    privacy: {
+      lastSeen: {
+        type: String,
+        enum: ["everyone", "myContacts", "nobody"],
+        default: "everyone"
+      },
+      profilePhoto: {
+        type: String,
+        enum: ["everyone", "myContacts", "nobody"],
+        default: "everyone"
+      },
+      status: {
+        type: String,
+        enum: ["everyone", "myContacts", "nobody"],
+        default: "everyone"
+      }
+    },
+
+    // Blocked users
+    blockedUsers: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User"
+    }],
+
+    // Chat background preferences
+    chatBackgrounds: [{
+      chat: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Chat"
+      },
+      background: String
+    }]
+
   },
   { timestamps: true }
 );
