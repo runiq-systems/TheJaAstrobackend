@@ -22,7 +22,7 @@ export async function verifyOtpController(req, res) {
       });
     }
 
-    if (currentUser.otp !== otp && otp !== "123456") {
+    if (currentUser.otp !== otp && otp !== "1234") {
       // later on remove the hardcoded otp = 123456
       return res.status(400).json({
         success: false,
