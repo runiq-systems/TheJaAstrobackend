@@ -10,7 +10,7 @@ import errorHandler from "./middleware/errorHandler.js";
 
 import indexRoute from "./routes/indexRoute.js"
 import authRoute from "./routes/authRoute.js"
-
+import chatmessageRoute from './routes/chatapp/chatRoutes.js'
 import { initializeSocketIO } from "./socket/index.js";
 
 const app = express();
@@ -60,6 +60,7 @@ app.use(
 // Routes
 app.use("/api/v1", indexRoute)
 app.use("/api/v1", authRoute)
+app.use("/api/v1/chat", chatmessageRoute)
 
 app.use(errorHandler)
 export default httpserver;
