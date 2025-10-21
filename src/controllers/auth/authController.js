@@ -97,14 +97,10 @@ export const LogoutController = async (req, res) => {
   }
 };
 
-
-
-
 export const UpdateProfileStepController = async (req, res) => {
   try {
-   
-    const userId = req.user._id || req.user.id
-    const { step } = req.params; // Step number (1, 2, 3, or 4)
+    const userId = req.user._id || req.user.id;
+    const { step } = req.params;
     const data = req.body;
 
     let updateFields = {};
@@ -112,67 +108,65 @@ export const UpdateProfileStepController = async (req, res) => {
     switch (step) {
       case "1":
         // Step 1: Update fullName and gender
-        if (!data.fullName || !data.gender) {
+        if (!data.fullName?.trim() || !data.gender?.trim()) {
           return res.status(400).json({
             success: false,
             message: "fullName and gender are required for step 1",
           });
         }
+
         updateFields = {
-          fullName: data.fullName,
-          gender: data.gender,
+          fullName: data.fullName.trim(),
+          gender: data.gender.trim(),
         };
         break;
+
       case "2":
-        // Step 2: Update timeOfBirth and isAccurate
-        if (!data.timeOfBirth || data.isAccurate === undefined) {
+        // Step 2: Update date, time, accuracy, and place
+        if (
+          !data.timeOfBirth ||
+          !data.dateOfBirth ||
+          data.isAccurate === undefined ||
+          !data.placeOfBirth?.trim()
+        ) {
           return res.status(400).json({
             success: false,
-            message: "timeOfBirth and isAccurate are required for step 2",
+            message:
+              "timeOfBirth, dateOfBirth, isAccurate, and placeOfBirth are required for step 2",
           });
         }
-        updateFields = {
-          timeOfBirth: data.timeOfBirth,
-          isAccurate: data.isAccurate,
-        };
-        break;
-      case "3":
-        // Step 3: Update dateOfBirth
-        if (!data.dateOfBirth) {
+
+        // Ensure consistent date format
+        const parsedDate = new Date(data.dateOfBirth);
+        if (isNaN(parsedDate)) {
           return res.status(400).json({
             success: false,
-            message: "dateOfBirth is required for step 3",
+            message: "Invalid date format. Use ISO format: YYYY-MM-DD",
           });
         }
+
         updateFields = {
-          dateOfBirth: new Date(data.dateOfBirth),
+          timeOfBirth: data.timeOfBirth, // e.g. "14:35" or "02:35 PM"
+          dateOfBirth: parsedDate,
+          isAccurate: Boolean(data.isAccurate),
+          placeOfBirth: data.placeOfBirth.trim(),
         };
         break;
-      case "4":
-        // Step 4: Update placeOfBirth
-        if (!data.placeOfBirth) {
-          return res.status(400).json({
-            success: false,
-            message: "placeOfBirth is required for step 4",
-          });
-        }
-        updateFields = {
-          placeOfBirth: data.placeOfBirth,
-        };
-        break;
+
       default:
         return res.status(400).json({
           success: false,
-          message: "Invalid step number",
+          message: "Invalid step number. Use step 1 or 2.",
         });
     }
 
-    // Update user in the database
     const updatedUser = await User.findByIdAndUpdate(
       userId,
       { $set: updateFields },
       { new: true, runValidators: true }
-    ).select("fullName gender timeOfBirth isAccurate dateOfBirth placeOfBirth");
+    ).select(
+      "fullName gender timeOfBirth dateOfBirth isAccurate placeOfBirth"
+    );
 
     if (!updatedUser) {
       return res.status(404).json({
@@ -187,7 +181,7 @@ export const UpdateProfileStepController = async (req, res) => {
       data: updatedUser,
     });
   } catch (error) {
-    logger.error(`Error in UpdateProfileStepController: ${error.message}`);
+    logger.error(`Error in UpdateProfileStepController: ${error.stack}`);
     return res.status(500).json({
       success: false,
       message: "Internal Server Error",
