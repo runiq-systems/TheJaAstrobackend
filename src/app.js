@@ -15,6 +15,12 @@ dotenv.config({
     path: "./.env",
 });
 
+
+app.get("/", (req, res) => {
+    res.send("API is running...");
+}
+);
+
 // Connection socket
 // const io = new Server(server, {
 //     pingTimeout: 60000,
@@ -23,6 +29,7 @@ dotenv.config({
 //         credentials: true,
 //     },
 // });
+
 
 
 // Middleware
