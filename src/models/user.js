@@ -4,9 +4,7 @@ const userSchema = new mongoose.Schema(
   {
     fullName: {
       type: String,
-      // lowercase: true,
-      // trim: true,
-      // index: true,
+      trim: true,
     },
     phone: {
       type: String,
@@ -16,21 +14,30 @@ const userSchema = new mongoose.Schema(
     },
     email: {
       type: String,
-      // unique: true,
-      // sparse: true, // Some users may log in with phone only
       lowercase: true,
     },
     dateOfBirth: {
       type: Date,
       required: false,
     },
+    timeOfBirth: {
+      type: String, // e.g., "14:30" in HH:MM format
+      required: false,
+    },
+    isAccurate: {
+      type: Boolean, // Indicates if birth time is accurate
+      default: false,
+    },
+    placeOfBirth: {
+      type: String, // e.g., "Nawāda, Bihar, India"
+      trim: true,
+    },
     password: {
       type: String,
     },
     gender: {
       type: String,
-      enum: ["male", "female", "other"], // Enum for gender values
-      // index: true,
+      enum: ["male", "female", "other"],
     },
     languages: [
       {
@@ -61,63 +68,54 @@ const userSchema = new mongoose.Schema(
       type: String,
       enum: ["Active", "InActive", "Blocked"],
       default: "InActive",
-      // index: true,
     },
     status: {
       type: String,
-      enum: ["Online", "offline", "Busy"], // Allow only specific status values
-      default: "offline", // Default t
-      // index: true,
+      enum: ["Online", "offline", "Busy"],
+      default: "offline",
     },
-
     isOnline: {
       type: Boolean,
-      default: false
+      default: false,
     },
-
-    // Last seen
     lastSeen: {
       type: Date,
-      default: Date.now
+      default: Date.now,
     },
-
-    // Privacy settings
     privacy: {
       lastSeen: {
         type: String,
         enum: ["everyone", "myContacts", "nobody"],
-        default: "everyone"
+        default: "everyone",
       },
       profilePhoto: {
         type: String,
         enum: ["everyone", "myContacts", "nobody"],
-        default: "everyone"
+        default: "everyone",
       },
       status: {
         type: String,
         enum: ["everyone", "myContacts", "nobody"],
-        default: "everyone"
-      }
-    },
-
-    // Blocked users
-    blockedUsers: [{
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User"
-    }],
-
-    // Chat background preferences
-    chatBackgrounds: [{
-      chat: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Chat"
+        default: "everyone",
       },
-      background: String
-    }]
-
+    },
+    blockedUsers: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
+    chatBackgrounds: [
+      {
+        chat: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Chat",
+        },
+        background: String,
+      },
+    ],
   },
   { timestamps: true }
 );
 
-
-export const User = mongoose.model("User", userSchema)
+export const User = mongoose.model("User", userSchema);
