@@ -22,7 +22,7 @@ export async function authMiddleware(req, res, next) {
     // 2️⃣ Verify JWT
     let decoded;
     try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET);
+      decoded = jwt.verify(token, process.env.JWT_SECRET_KEY);
     } catch (error) {
       logger.warn(`JWT verification failed: ${error.message}`);
       return res.status(401).json({
@@ -32,7 +32,7 @@ export async function authMiddleware(req, res, next) {
     }
 
     // 3️⃣ Find user in DB
-    const user = await User.findById(decoded.id).select(
+    const user = await User.findById(decoded._id).select(
       "-otp -otpExpires -password"
     ); // exclude sensitive fields
 
