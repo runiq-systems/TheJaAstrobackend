@@ -145,7 +145,7 @@ export const initializeSocketIO = (io) => {
       if (!token) throw new ApiError(401, "Unauthorized: Token missing");
 
       // Verify JWT
-      const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
+      const decoded = jwt.verify(token, process.env.JWT_SECRET_KEY);
       const user = await User.findById(decoded?._id).select("-password -refreshToken");
 
       if (!user) throw new ApiError(401, "Unauthorized: Invalid user");
@@ -169,7 +169,7 @@ export const initializeSocketIO = (io) => {
         console.log(`🔴 User disconnected: ${socket.user?.username} (${socket.user?._id})`);
         socket.leave(socket.user._id.toString());
       });
-      
+
     } catch (error) {
       console.error("❌ Socket connection error:", error.message);
       socket.emit(ChatEventsEnum.SOCKET_ERROR_EVENT, error?.message || "Socket connection failed");
