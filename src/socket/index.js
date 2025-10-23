@@ -146,7 +146,7 @@ export const initializeSocketIO = (io) => {
 
       // Verify JWT
       const decoded = jwt.verify(token, process.env.JWT_SECRET_KEY);
-      const user = await User.findById(decoded?._id).select("-password -refreshToken");
+      const user = await User.findById(decoded?.id).select("-password -refreshToken");
       console.log("decoded", decoded)
       console.log("Decoded user :", user);
 
