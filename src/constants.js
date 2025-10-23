@@ -2,7 +2,7 @@
 
 export const ChatEventsEnum = Object.freeze({
   // 🔌 Connection & System
-  CONNECTED_EVENT: "connect",                   // Socket connected
+  CONNECTED_EVENT: "connected",                   // Socket connected
   DISCONNECT_EVENT: "disconnect",               // Socket disconnected
   RECONNECT_EVENT: "reconnect",                 // Socket reconnected
   SOCKET_ERROR_EVENT: "socketError",            // Socket error occurred
