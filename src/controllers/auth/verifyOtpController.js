@@ -43,10 +43,8 @@ export async function verifyOtpController(req, res) {
     currentUser.otpExpires = null;
 
     const payload = { id: currentUser._id, phone: currentUser.phone };
-    const token = jwt.sign(payload, JWT_SECRET_KEY, { expiresIn: "1h" });
-    const refreshToken = jwt.sign(payload, JWT_SECRET_KEY, {
-      expiresIn: "21d",
-    });
+    const token = jwt.sign(payload, JWT_SECRET_KEY);
+    const refreshToken = jwt.sign(payload, JWT_SECRET_KEY);
 
     currentUser.refreshToken = refreshToken;
 
