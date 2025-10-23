@@ -153,7 +153,7 @@ export const initializeSocketIO = (io) => {
       // Attach user to socket
       socket.user = user;
       socket.join(user._id.toString());
-      console.log(`🟢 User connected: ${user.username} (${user._id})`);
+      console.log(`🟢 User connected:  (${user._id})`);
 
       // Notify client that connection is established
       socket.emit(ChatEventsEnum.CONNECTED_EVENT, { userId: user._id });
@@ -169,6 +169,7 @@ export const initializeSocketIO = (io) => {
         console.log(`🔴 User disconnected: ${socket.user?.username} (${socket.user?._id})`);
         socket.leave(socket.user._id.toString());
       });
+      
     } catch (error) {
       console.error("❌ Socket connection error:", error.message);
       socket.emit(ChatEventsEnum.SOCKET_ERROR_EVENT, error?.message || "Socket connection failed");
