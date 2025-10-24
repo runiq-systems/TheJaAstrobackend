@@ -64,7 +64,6 @@ export async function registerController(req, res) {
   }
 }
 
-
 export const LogoutController = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -239,9 +238,6 @@ export const UpdateProfileCompleteController = async (req, res) => {
     });
   }
 };
-
-
-
 
 export const GetProfileController = async (req, res) => {
   try {

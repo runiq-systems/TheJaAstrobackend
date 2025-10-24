@@ -5,6 +5,7 @@ import {
   searchAvailableUsers,
   markMessageAsRead,
   getAllChats,
+  getAllUsers,
 } from "../../controllers/chatapp/chatController.js";
 import {
   getAllMessages,
@@ -17,6 +18,7 @@ import { upload } from "../../middleware/multer.js";
 
 const router = express.Router();
 
+router.get("/all-users", getAllUsers);
 // Apply JWT verification to all routes
 router.use(authMiddleware);
 
@@ -24,6 +26,7 @@ router.use(authMiddleware);
 router.route("/one-on-one").post(createOrGetAOneOnOneChat);
 
 router.route("/search-users").get(searchAvailableUsers);
+
 
 router.route("/").get(getAllChats);
 
