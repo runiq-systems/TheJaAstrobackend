@@ -5,6 +5,7 @@ import { Server } from "socket.io";
 import { ChatEventsEnum } from "../constants.js";
 import { User } from "../models/user.js";
 import { ApiError } from "../utils/ApiError.js";
+import logger from "../utils/logger.js";
 /* -------------------------------------------------------------------------- */
 /*                          🔧  SOCKET EVENT MOUNTERS                         */
 /* -------------------------------------------------------------------------- */
@@ -167,6 +168,7 @@ export const initializeSocketIO = (io) => {
       mountMessageReadEvent(socket);
       mountGroupChatEvents(socket);
 
+      logger.info(`Socket connected: (${socket.user})`);
       /* ------------------------------- Disconnect event ----------------------------- */
       socket.on(ChatEventsEnum.DISCONNECT_EVENT, () => {
         console.log(`🔴 User disconnected: ${socket.user?.username} (${socket.user?._id})`);
