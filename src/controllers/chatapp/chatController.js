@@ -356,37 +356,52 @@ export const markMessageAsRead = asyncHandler(async (req, res) => {
  * @access  Private
  */
 export const getAllUsers = asyncHandler(async (req, res) => {
-//   const userId = req.user.id;
-//   const { page = 1, limit = 20, search = "" } = req.query;
+  const userId = req.user?.id || req.user?._id;
+  const { page = 1, limit = 20, search = "" } = req.query;
 
-//   const searchRegex = new RegExp(search, "i");
+  const searchRegex = new RegExp(search, "i");
 
-  // // Build criteria
-  // const criteria = {
-  //     _id: { $ne: userId },
-  //     $and: [
-  //         { blockedUsers: { $ne: userId } }, // Users who haven't blocked current user
-  //         { _id: { $nin: req.user.blockedUsers } } // Users not blocked by current user
-  //     ],
-  //     ...(search
-  //         ? {
-  //             $or: [
-  //                 { fullName: { $regex: searchRegex } },
-  //                 { username: { $regex: searchRegex } },
-  //                 { email: { $regex: searchRegex } },
-  //                 { phone: { $regex: searchRegex } }
-  //             ]
-  //         }
-  //         : {})
-  // };
+  // ✅ Build search criteria
+  const criteria = {
+    _id: { $ne: userId }, // exclude current user
+    ...(search
+      ? {
+          $or: [
+            { fullName: { $regex: searchRegex } },
+            { username: { $regex: searchRegex } },
+            { email: { $regex: searchRegex } },
+            { phone: { $regex: searchRegex } },
+          ],
+        }
+      : {}),
+  };
 
-  const users = await User.find({});
+  // ✅ Convert pagination params
+  const currentPage = parseInt(page, 10) || 1;
+  const perPage = parseInt(limit, 10) || 20;
+
+  // ✅ Query users
+  const users = await User.find(criteria)
+    .select("fullName username email avatar status isOnline lastSeen")
+    .limit(perPage)
+    .skip((currentPage - 1) * perPage)
+    .sort({ fullName: 1 });
+
+  // ✅ Count total for pagination
+  const totalUsers = await User.countDocuments(criteria);
 
   const response = {
     users,
+    pagination: {
+      currentPage,
+      totalPages: Math.ceil(totalUsers / perPage),
+      totalUsers,
+      hasNext: currentPage * perPage < totalUsers,
+      hasPrev: currentPage > 1,
+    },
   };
 
   return res
     .status(200)
-    .json(new ApiResponse(200, response, "All users retrieved successfully"));
+    .json(new ApiResponse(200, response, "Users retrieved successfully"));
 });
