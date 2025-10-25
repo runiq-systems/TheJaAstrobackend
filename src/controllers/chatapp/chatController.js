@@ -382,7 +382,6 @@ export const getAllUsers = asyncHandler(async (req, res) => {
 
   // ✅ Query users
   const users = await User.find(criteria)
-    .select("fullName username email avatar status isOnline lastSeen")
     .limit(perPage)
     .skip((currentPage - 1) * perPage)
     .sort({ fullName: 1 });
