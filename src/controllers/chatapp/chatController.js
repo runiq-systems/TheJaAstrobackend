@@ -14,7 +14,7 @@ import { ChatEventsEnum } from "../../constants.js";
  */
 export const createOrGetAOneOnOneChat = asyncHandler(async (req, res) => {
   const { participantId } = req.body;
-  const currentUserId = req.user._id;
+  const currentUserId = req.user.id;
 
   // Validate participant
   if (!participantId) {
