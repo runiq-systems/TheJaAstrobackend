@@ -1,4 +1,3 @@
-
 import { Message } from "../../models/chatapp/message.js";
 import { Chat } from "../../models/chatapp/chat.js";
 import { User } from "../../models/user.js";
@@ -16,7 +15,7 @@ import { uploadOnCloudinary ,deleteFromCloudinary} from "../../utils/cloudinary.
  */
 export const getAllMessages = asyncHandler(async (req, res) => {
   const { chatId } = req.params;
-  const userId = req.user._id;
+  const userId = req.user.id;
   const { page = 1, limit = 50, before } = req.query;
 
   // Verify chat exists and user is participant
@@ -74,11 +73,8 @@ export const getAllMessages = asyncHandler(async (req, res) => {
     });
   }
 
-  // Reverse to show oldest first
-  const sortedMessages = messages.reverse();
-
   const response = {
-    messages: sortedMessages,
+    messages: messages, // Removed reverse() - now newest first
     pagination: {
       currentPage: parseInt(page),
       totalPages: Math.ceil(total / limit),
@@ -100,7 +96,7 @@ export const getAllMessages = asyncHandler(async (req, res) => {
  */
 export const sendMessage = asyncHandler(async (req, res) => {
   const { chatId } = req.params;
-  const userId = req.user._id;
+  const userId = req.user.id;
   const { content, type = "text", replyTo, isForwarded = false } = req.body;
 
   // Validate required fields
@@ -192,16 +188,7 @@ export const sendMessage = asyncHandler(async (req, res) => {
   chat.lastMessage = message._id;
   await chat.save();
 
-  // Emit socket event to all chat participants
-  const populatedChat = await Chat.findById(chatId).populate("participants", "_id");
-  
-  populatedChat.participants.forEach(participant => {
-    if (participant._id.toString() !== userId.toString()) {
-      emitSocketEvent(req, participant._id.toString(), ChatEventsEnum.NEW_MESSAGE_EVENT, message);
-    }
-  });
-
-  // Also emit to the chat room
+  // Emit socket event to the chat room only (removed individual participant emits to avoid duplicates)
   emitSocketEvent(req, chatId, ChatEventsEnum.NEW_MESSAGE_EVENT, message);
 
   return res.status(201).json(
@@ -216,7 +203,7 @@ export const sendMessage = asyncHandler(async (req, res) => {
  */
 export const deleteMessage = asyncHandler(async (req, res) => {
   const { messageId } = req.params;
-  const userId = req.user._id;
+  const userId = req.user.id;
   const { deleteType = "forMe" } = req.body; // "forMe" or "forEveryone"
 
   // Find the message
@@ -284,7 +271,7 @@ export const deleteMessage = asyncHandler(async (req, res) => {
  */
 export const reactToMessage = asyncHandler(async (req, res) => {
   const { messageId } = req.params;
-  const userId = req.user._id;
+  const userId = req.user.id;
   const { emoji } = req.body;
 
   if (!emoji) {
