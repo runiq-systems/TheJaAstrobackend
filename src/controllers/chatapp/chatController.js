@@ -381,7 +381,7 @@ export const getAllUsers = asyncHandler(async (req, res) => {
   const perPage = parseInt(limit, 10) || 20;
 
   // ✅ Query users
-  const users = await User.find(criteria)
+  const data = await User.find(criteria)
   .select("fullName _id phone")
     .limit(perPage)
     .skip((currentPage - 1) * perPage)
@@ -391,7 +391,7 @@ export const getAllUsers = asyncHandler(async (req, res) => {
   const totalUsers = await User.countDocuments(criteria);
 
   const response = {
-    users,
+    data,
     pagination: {
       currentPage,
       totalPages: Math.ceil(totalUsers / perPage),
