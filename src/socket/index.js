@@ -197,7 +197,7 @@ export const emitSocketEvent = (req, roomId, event, payload) => {
   try {
     const io = req.app.get("io");
     io.in(roomId).emit(event, payload);
-    console.log(`📤 Event emitted: ${event} -> Room: ${roomId}`);
+    console.log(`📤 Event emitted: ${payload} -> Room: ${event}`);
   } catch (error) {
     console.error("❌ Failed to emit socket event:", error);
   }
