@@ -148,8 +148,8 @@ export const initializeSocketIO = (io) => {
       // Verify JWT
       const decoded = jwt.verify(token, process.env.JWT_SECRET_KEY);
       const user = await User.findById(decoded?.id).select("-password -refreshToken");
-      console.log("decoded", decoded)
-      console.log("Decoded user :", user);
+      // console.log("decoded", decoded)
+      // console.log("Decoded user :", user);
 
 
       if (!user) throw new ApiError(401, "Unauthorized: Invalid user");
@@ -157,7 +157,7 @@ export const initializeSocketIO = (io) => {
       // Attach user to socket
       socket.user = user;
       socket.join(user._id.toString());
-      console.log(`🟢 User connected:  (${user._id})`);
+      // console.log(`🟢 User connected:  (${user._id})`);
 
       // Notify client that connection is established
       socket.emit(ChatEventsEnum.CONNECTED_EVENT, { userId: user._id });
