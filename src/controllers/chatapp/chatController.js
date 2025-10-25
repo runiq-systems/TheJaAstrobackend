@@ -382,6 +382,7 @@ export const getAllUsers = asyncHandler(async (req, res) => {
 
   // ✅ Query users
   const users = await User.find(criteria)
+  .select("fullName _id phone")
     .limit(perPage)
     .skip((currentPage - 1) * perPage)
     .sort({ fullName: 1 });
