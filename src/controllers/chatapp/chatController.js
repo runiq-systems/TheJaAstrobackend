@@ -80,7 +80,7 @@ export const createOrGetAOneOnOneChat = asyncHandler(async (req, res) => {
  */
 export const deleteOneOnOneChat = asyncHandler(async (req, res) => {
   const { chatId } = req.params;
-  const userId = req.user._id;
+  const userId = req.user.id;
 
   // Find the chat
   const chat = await Chat.findById(chatId);
@@ -132,7 +132,7 @@ export const deleteOneOnOneChat = asyncHandler(async (req, res) => {
  */
 export const searchAvailableUsers = asyncHandler(async (req, res) => {
   const { query, page = 1, limit = 20 } = req.query;
-  const userId = req.user._id;
+  const userId = req.user.id;
 
   if (!query || query.trim().length < 2) {
     throw new ApiError(400, "Search query must be at least 2 characters long");
@@ -292,7 +292,7 @@ export const getAllChats = asyncHandler(async (req, res) => {
  */
 export const markMessageAsRead = asyncHandler(async (req, res) => {
   const { chatId } = req.params;
-  const userId = req.user._id;
+  const userId = req.user.id;
 
   // Verify chat exists and user is participant
   const chat = await Chat.findOne({
