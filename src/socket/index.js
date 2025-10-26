@@ -168,7 +168,7 @@ export const initializeSocketIO = (io) => {
       mountMessageReadEvent(socket);
       mountGroupChatEvents(socket);
 
-      logger.info(`Socket connected: (${socket.user})`);
+      // logger.info(`Socket connected: (${socket.user})`);
       /* ------------------------------- Disconnect event ----------------------------- */
       socket.on(ChatEventsEnum.DISCONNECT_EVENT, () => {
         console.log(`🔴 User disconnected: ${socket.user?.username} (${socket.user?._id})`);
