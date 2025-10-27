@@ -6,6 +6,8 @@ import { ApiResponse } from "../../utils/ApiResponse.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { emitSocketEvent } from "../../socket/index.js";
 import { ChatEventsEnum } from "../../constants.js";
+import logger from "../../utils/logger.js";
+import mongoose from "mongoose";
 /**
  *
  * @desc    Create or get a one-on-one chat
@@ -355,53 +357,69 @@ export const markMessageAsRead = asyncHandler(async (req, res) => {
  * @route   GET /api/v1/chats/all-users
  * @access  Private
  */
+
 export const getAllUsers = asyncHandler(async (req, res) => {
-  const userId = req.user?.id || req.user?._id;
-  const { page = 1, limit = 20, search = "" } = req.query;
+  try {
+    const userId = req.user?.id || req.user?._id;
+    const { page = 1, limit = 20, search = "" } = req.query;
 
-  const searchRegex = new RegExp(search, "i");
+    const searchRegex = new RegExp(search, "i");
 
-  // ✅ Build search criteria
-  const criteria = {
-    _id: { $ne: userId }, // exclude current user
-    ...(search
-      ? {
-          $or: [
-            { fullName: { $regex: searchRegex } },
-            { username: { $regex: searchRegex } },
-            { email: { $regex: searchRegex } },
-            { phone: { $regex: searchRegex } },
-          ],
-        }
-      : {}),
-  };
+    // ✅ Convert to ObjectId safely
+    const currentUserId = mongoose.Types.ObjectId.isValid(userId)
+      ? new mongoose.Types.ObjectId(userId)
+      : null;
 
-  // ✅ Convert pagination params
-  const currentPage = parseInt(page, 10) || 1;
-  const perPage = parseInt(limit, 10) || 20;
+    // ✅ Build criteria
+    const criteria = {
+      ...(currentUserId ? { _id: { $ne: currentUserId } } : {}),
+      ...(search
+        ? {
+            $or: [
+              { fullName: { $regex: searchRegex } },
+              { username: { $regex: searchRegex } },
+              { email: { $regex: searchRegex } },
+              { phone: { $regex: searchRegex } },
+            ],
+          }
+        : {}),
+    };
 
-  // ✅ Query users
-  const data = await User.find(criteria)
-  .select("fullName _id phone")
-    .limit(perPage)
-    .skip((currentPage - 1) * perPage)
-    .sort({ fullName: 1 });
+    const currentPage = parseInt(page, 10) || 1;
+    const perPage = parseInt(limit, 10) || 20;
 
-  // ✅ Count total for pagination
-  const totalUsers = await User.countDocuments(criteria);
+    // ✅ Query users
+    const data = await User.find(criteria)
+      .select("fullName _id phone avatar")
+      .limit(perPage)
+      .skip((currentPage - 1) * perPage)
+      .sort({ fullName: 1 });
 
-  const response = {
-    data,
-    pagination: {
-      currentPage,
-      totalPages: Math.ceil(totalUsers / perPage),
-      totalUsers,
-      hasNext: currentPage * perPage < totalUsers,
-      hasPrev: currentPage > 1,
-    },
-  };
+    // ✅ Count total for pagination
+    const totalUsers = await User.countDocuments(criteria);
 
-  return res
-    .status(200)
-    .json(new ApiResponse(200, response, "Users retrieved successfully"));
+    const response = {
+      data,
+      pagination: {
+        currentPage,
+        totalPages: Math.ceil(totalUsers / perPage),
+        totalUsers,
+        hasNext: currentPage * perPage < totalUsers,
+        hasPrev: currentPage > 1,
+      },
+    };
+
+    logger.info(
+      `✅ Users retrieved successfully | userId=${userId} | count=${data.length}`
+    );
+
+    return res
+      .status(200)
+      .json(new ApiResponse(200, response, "Users retrieved successfully"));
+  } catch (error) {
+    logger.error(
+      `❌ Error fetching users | userId=${req.user?._id || "unknown"} | message=${error.message}`
+    );
+    throw new ApiError(500, "Failed to retrieve users");
+  }
 });
