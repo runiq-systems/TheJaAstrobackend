@@ -1,8 +1,7 @@
-import Call from '../models/call.js';
 import { User } from '../models/user.js';
 import { NotificationService } from './notification.service.js';
 import logger from '../utils/logger.js';
-
+import call from '../models/calllogs/call.js';
 export class WebRTCService {
     constructor(io) {
         this.io = io;
