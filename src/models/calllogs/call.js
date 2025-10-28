@@ -1,13 +1,12 @@
+// models/call.js
 import mongoose, { Schema } from 'mongoose';
 
-// Constants for better maintainability
 const CALL_TYPES = ['AUDIO', 'VIDEO'];
-const CALL_STATUSES = ['INITIATED', 'CONNECTED', 'COMPLETED', 'MISSED', 'REJECTED', 'FAILED', 'DISCONNECTED'];
+const CALL_STATUSES = ['INITIATED', 'RINGING', 'CONNECTED', 'COMPLETED', 'MISSED', 'REJECTED', 'FAILED', 'CANCELLED'];
 const CALL_DIRECTIONS = ['USER_TO_ASTROLOGER', 'ASTROLOGER_TO_USER'];
 
 const callSchema = new Schema(
   {
-    // Core call participants
     userId: {
       type: Schema.Types.ObjectId,
       ref: 'User',
@@ -20,30 +19,13 @@ const callSchema = new Schema(
       required: true,
       index: true,
     },
-    
-    // Call timing
-    startTime: {
-      type: Date,
-      required: true,
-      default: Date.now,
-    },
-    endTime: {
-      type: Date,
-    },
-    duration: {
-      type: Number,
-      default: 0, // duration in seconds
-      min: 0,
-    },
-    
-    // Call metadata
+
     callType: {
       type: String,
       enum: CALL_TYPES,
       required: true,
-      index: true,
     },
-    callDirection: {
+    direction: {
       type: String,
       enum: CALL_DIRECTIONS,
       required: true,
@@ -54,197 +36,96 @@ const callSchema = new Schema(
       default: 'INITIATED',
       index: true,
     },
-    
-    // Media features
-    screenSharing: {
-      enabled: {
-        type: Boolean,
-        default: false,
-      },
-      duration: {
-        type: Number,
-        default: 0,
-        min: 0,
-      },
-    },
-    
-    // Post-call feedback
-    rating: {
-      type: Number,
-      min: 1,
-      max: 5,
-    },
-    feedback: {
-      type: String,
-      trim: true,
-      maxlength: 500,
-    },
-    
-    // Financials
-    charges: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-    totalAmount: {
-      type: Number,
-      min: 0,
-    },
-    
-    // Technical details
-    recordingUrl: {
-      type: String,
-      trim: true,
-      validate: {
-        validator: function(url) {
-          if (!url) return true;
-          return /^https?:\/\/.+/.test(url);
-        },
-        message: 'Invalid recording URL format',
-      },
-    },
+
+    startTime: { type: Date, default: Date.now, required: true },
+    connectTime: { type: Date }, // when call is answered
+    endTime: { type: Date },
+    duration: { type: Number, default: 0 }, // in seconds
+
+    chargesPerMinute: { type: Number, min: 0 }, // astrologer rate
+    totalAmount: { type: Number, min: 0 },
+
     socketIds: {
       caller: String,
       receiver: String,
     },
-    webrtcStats: {
-      type: Map,
-      of: Schema.Types.Mixed,
-    },
-    
-    
 
+    rating: { type: Number, min: 1, max: 5 },
+    feedback: { type: String, trim: true, maxlength: 300 },
 
-  
-    
-    // Notification preferences
-    notificationPreferences: {
-      incomingCalls: {
-        type: Boolean,
-        default: true,
-      },
-      missedCalls: {
-        type: Boolean,
-        default: true,
-      },
-      callEnded: {
-        type: Boolean,
-        default: true,
-      },
-      sound: {
-        type: Boolean,
-        default: true,
-      },
-      vibration: {
-        type: Boolean,
-        default: true,
-      },
-    },
-    
-    // For astrologers
-    isAstrologer: {
-      type: Boolean,
-      default: false,
-      index: true,
-    },
-    specialization: [{
+    recordingUrl: {
       type: String,
-    }],
-    experience: {
-      type: Number,
-      default: 0,
-    },
-  
-    totalCalls: {
-      type: Number,
-      default: 0,
+      validate: {
+        validator: (v) => !v || /^https?:\/\/.+/.test(v),
+        message: 'Invalid URL',
+      },
     },
   },
   {
     timestamps: true,
-    versionKey: false,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
   }
 );
 
-// Compound indexes for performance
-callSchema.index({ userId: 1, astrologerId: 1, startTime: -1 });
-callSchema.index({ status: 1, callType: 1 });
-callSchema.index({ createdAt: -1 });
-callSchema.index({ 'socketIds.caller': 1 });
-callSchema.index({ 'socketIds.receiver': 1 });
+// Indexes
+callSchema.index({ userId: 1, startTime: -1 });
+callSchema.index({ astrologerId: 1, startTime: -1 });
+callSchema.index({ status: 1, createdAt: -1 });
 
-// Virtual fields
-callSchema.virtual('isCompleted').get(function() {
-  return this.status === 'COMPLETED';
+// Virtual: is call active?
+callSchema.virtual('isActive').get(function () {
+  return ['INITIATED', 'RINGING', 'CONNECTED'].includes(this.status);
 });
 
-callSchema.virtual('isActive').get(function() {
-  return ['INITIATED', 'CONNECTED'].includes(this.status);
-});
-
-// Pre-save middleware for auto-calculation
-callSchema.pre('save', function(next) {
+// Auto-calculate duration & amount
+callSchema.pre('save', function (next) {
   if (this.endTime && this.startTime) {
-    const diff = (this.endTime - this.startTime) / 1000;
-    this.duration = Math.max(0, Math.round(diff));
-    
-    // Calculate total amount if charges per minute exist
-    if (this.charges && this.duration > 0) {
-      this.totalAmount = (this.charges * this.duration) / 60;
-    }
+    this.duration = Math.max(0, Math.floor((this.endTime - this.startTime) / 1000));
+  }
+  if (this.chargesPerMinute && this.duration > 0) {
+    this.totalAmount = Number(((this.chargesPerMinute * this.duration) / 60).toFixed(2));
   }
   next();
 });
 
-// Static methods
-callSchema.statics = {
-  async getActiveCallsByUser(userId) {
-    return this.find({
-      $or: [{ userId }, { astrologerId: userId }],
-      status: { $in: ['INITIATED', 'CONNECTED'] },
-    });
+// Instance methods
+callSchema.methods = {
+  markRinging() {
+    this.status = 'RINGING';
+    return this.save();
   },
-
-  async getCompletedCalls(userId, limit = 20) {
-    return this.find({ 
-      $or: [{ userId }, { astrologerId: userId }],
-      status: 'COMPLETED' 
-    })
-      .sort({ endTime: -1 })
-      .limit(limit);
+  markConnected() {
+    this.status = 'CONNECTED';
+    this.connectTime = new Date();
+    return this.save();
   },
-
-  async findActiveCallBetweenUsers(userId1, userId2) {
-    return this.findOne({
-      $or: [
-        { userId: userId1, astrologerId: userId2 },
-        { userId: userId2, astrologerId: userId1 }
-      ],
-      status: { $in: ['INITIATED', 'CONNECTED'] }
-    });
+  markEnded(status = 'COMPLETED', endTime = new Date()) {
+    this.status = status;
+    this.endTime = endTime;
+    return this.save();
   },
 };
 
-// Instance methods
-callSchema.methods = {
-  markCompleted(endTime = new Date()) {
-    this.endTime = endTime;
-    this.status = 'COMPLETED';
-    this.duration = Math.max(0, Math.round((endTime - this.startTime) / 1000));
-    return this.save();
+// Static methods
+callSchema.statics = {
+  findActiveCall(userId, partnerId) {
+    return this.findOne({
+      $or: [
+        { userId, astrologerId: partnerId },
+        { userId: partnerId, astrologerId: userId },
+      ],
+      status: { $in: ['INITIATED', 'RINGING', 'CONNECTED'] },
+    });
   },
-
-  markConnected() {
-    this.status = 'CONNECTED';
-    return this.save();
-  },
-
-  markFailed(reason = 'Unknown error') {
-    this.status = 'FAILED';
-    this.feedback = reason;
-    return this.save();
+  getUserCallHistory(userId, limit = 10) {
+    return this.find({
+      $or: [{ userId }, { astrologerId: userId }],
+      status: 'COMPLETED',
+    })
+      .sort({ endTime: -1 })
+      .limit(limit)
+      .select('callType duration totalAmount rating createdAt');
   },
 };
 

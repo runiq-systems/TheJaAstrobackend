@@ -12,7 +12,7 @@ import indexRoute from "./routes/indexRoute.js"
 import authRoute from "./routes/authRoute.js"
 import chatmessageRoute from './routes/chatapp/chatRoutes.js'
 import { initializeSocketIO } from "./socket/index.js";
-
+import { setupWebRTC } from "./webrtc/webrtc.service.js";
 const app = express();
 dotenv.config({
     path: "./.env",
@@ -34,6 +34,14 @@ const io = new Server(httpserver, {
 app.set("io", io);
 
 initializeSocketIO(io);
+// Setup WebRTC service
+const webrtcService = setupWebRTC(io);
+
+// Optional: Add monitoring endpoint
+app.get('/api/webrtc/stats', (req, res) => {
+    res.json(webrtcService.getServiceStats());
+});
+
 
 app.get("/", (req, res) => {
     res.send("API is running...");

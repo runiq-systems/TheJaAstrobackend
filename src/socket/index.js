@@ -35,6 +35,7 @@ const mountTypingEvents = (socket) => {
       typing: true,
       timestamp: new Date(),
     });
+    logger.info(`User ${socket.user.username} is typing in chat ${chatId}`);
   });
 
   // Typing stopped
