@@ -1,6 +1,6 @@
 import { Expo } from 'expo-server-sdk';
-import { User } from '../models/user';
-import logger from '../utils/logger';
+import { User } from '../models/user.js';
+import logger from '../utils/logger.js';
 // Initialize Expo SDK
 const expo = new Expo();
 
