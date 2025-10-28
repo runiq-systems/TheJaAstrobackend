@@ -6,6 +6,8 @@ import { ApiResponse } from "../../utils/ApiResponse.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { emitSocketEvent } from "../../socket/index.js";
 import { ChatEventsEnum } from "../../constants.js";
+import logger from "../../utils/logger.js";
+import mongoose from "mongoose";
 /**
  *
  * @desc    Create or get a one-on-one chat
@@ -403,8 +405,8 @@ export const markMessageAsRead = asyncHandler(async (req, res) => {
  * @route   GET /api/v1/chats/all-users
  * @access  Private
  */
-export const getAllUsers = asyncHandler(async (req, res) => {
 
+export const getAllUsers = asyncHandler(async (req, res) => {
   try {
 
 
@@ -460,5 +462,6 @@ export const getAllUsers = asyncHandler(async (req, res) => {
     return res
       .status(500)
       .json(new ApiResponse(500, null, "Internal Server Error"));
+      
   }
 });
