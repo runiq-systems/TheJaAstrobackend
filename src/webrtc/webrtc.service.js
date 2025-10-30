@@ -1,7 +1,7 @@
 import { User } from '../models/user.js';
 import { NotificationService } from './notification.service.js';
 import logger from '../utils/logger.js';
-import call from '../models/calllogs/call.js';
+import Call from '../models/calllogs/call.js';
 export class WebRTCService {
     constructor(io) {
         this.io = io;
@@ -20,6 +20,7 @@ export class WebRTCService {
 
     setupSocketHandlers() {
         this.io.on('connection', (socket) => {
+            
             logger.http(`User connected: ${socket.id}`, {
                 ip: socket.handshake.address,
                 userAgent: socket.handshake.headers['user-agent']
@@ -81,7 +82,7 @@ export class WebRTCService {
 
             logger.info(`User ${userId} joined with socket ${socket.id}`, {
                 totalSockets: this.users.get(userId).size,
-                username: user.name || user.username
+                username: user.fullName || user.fullName
             });
 
             socket.emit('joinSuccess', {
@@ -323,8 +324,8 @@ export class WebRTCService {
                     status: 'COMPLETED'
                 },
                 { new: true }
-            ).populate('userId', 'name username')
-                .populate('astrologerId', 'name username');
+            ).populate('userId', 'name fullName')
+                .populate('astrologerId', 'name fullName');
 
             // Notify both parties
             this.emitToUser(receiverId, 'callEnded', {
@@ -388,7 +389,7 @@ export class WebRTCService {
                     feedback: reason
                 },
                 { new: true }
-            ).populate('userId', 'name username profilePicture');
+            ).populate('userId', 'name fullName profilePicture');
 
             // Notify caller
             this.emitToUser(callerId, 'callRejected', {
@@ -492,7 +493,7 @@ export class WebRTCService {
                     endTime: new Date()
                 },
                 { new: true }
-            ).populate('userId', 'name username profilePicture');
+            ).populate('userId', 'name fullName profilePicture');
 
             // Send push notification
             if (callRecord.userId) {
@@ -750,12 +751,12 @@ export class WebRTCService {
     }
 
     async notifyReceiver(callerId, receiverId, callType, callRecord) {
-        const caller = await User.findById(callerId).select('name username profilePicture');
+        const caller = await User.findById(callerId).select('name fullName profilePicture');
 
         // Socket notification to receiver
         this.emitToUser(receiverId, 'incomingCall', {
             callerId,
-            callerName: caller.name || caller.username,
+            callerName: caller.fullName || caller.fullName,
             callerPicture: caller.profilePicture,
             callType,
             callRecordId: callRecord._id,
@@ -951,7 +952,7 @@ export class WebRTCService {
                 userId,
                 updateData,
                 { new: true }
-            ).select('name username profilePicture status isOnline lastSeen');
+            ).select('name fullName profilePicture status isOnline lastSeen');
 
             if (user) {
                 this.broadcastUserStatus(userId, user.status, user);
