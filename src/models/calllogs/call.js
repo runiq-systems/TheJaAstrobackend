@@ -28,6 +28,7 @@ const callSchema = new Schema(
     direction: {
       type: String,
       enum: CALL_DIRECTIONS,
+      default: 'USER_TO_ASTROLOGER',
       required: true,
     },
     status: {

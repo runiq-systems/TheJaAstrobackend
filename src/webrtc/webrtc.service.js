@@ -182,7 +182,7 @@ export class WebRTCService {
                 callerId,
                 receiverId,
                 callType,
-                callDirection: 'USER_TO_ASTROLOGER',
+                // callDirection: 'USER_TO_ASTROLOGER',
                 socketId: socket.id
             });
 
