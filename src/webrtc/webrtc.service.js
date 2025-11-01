@@ -20,7 +20,7 @@ export class WebRTCService {
 
     setupSocketHandlers() {
         this.io.on('connection', (socket) => {
-            
+
             logger.http(`User connected: ${socket.id}`, {
                 ip: socket.handshake.address,
                 userAgent: socket.handshake.headers['user-agent']
@@ -257,14 +257,26 @@ export class WebRTCService {
             });
 
             // Notify caller
-            this.emitToUser(callerId, 'callAccepted', {
+            this.emitToUser(callerId, 'callerAccepted', {  // Changed event name
                 receiverId,
                 receiverSocketId: socket.id,
                 callRecordId: callRecord._id,
                 callType: callRecord.callType,
-                timestamp: new Date()
+                timestamp: new Date(),
+                receiverName: receiver?.fullName || 'Astrologer', // Add receiver info
+                receiverImage: receiver?.avatar || ''
             });
 
+            // Notify receiver (callee) with callAccepted
+            this.emitToUser(receiverId, 'callAccepted', {
+                callerId,
+                callerSocketId: socket.id,
+                callRecordId: callRecord._id,
+                callType: callRecord.callType,
+                timestamp: new Date(),
+                callerName: caller?.fullName || 'User', // Add caller info
+                callerImage: caller?.avatar || ''
+            });
             // Stop caller tune
             this.emitToUser(callerId, 'stopCallerTune', { callerId });
 
