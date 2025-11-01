@@ -757,6 +757,7 @@ export class WebRTCService {
         // Socket notification to receiver
         this.emitToUser(receiverId, 'incomingCall', {
             callerId,
+            receiverId,
             callerName: caller.fullName || caller.fullName,
             callerPicture: caller.profilePicture,
             callType,
