@@ -232,7 +232,7 @@ export class WebRTCService {
                 socketId: socket.id
             });
 
-            // Get call record
+            // Get call record only
             const callRecord = await Call.findById(callRecordId);
             if (!callRecord) {
                 throw new Error('Call record not found');
@@ -256,37 +256,26 @@ export class WebRTCService {
                 connectTime: callRecord.connectTime
             });
 
-            // Notify caller
-            this.emitToUser(callerId, 'callerAccepted', {  // Changed event name
+            // ✅ SIMPLIFIED: Notify caller without user details
+            this.emitToUser(callerId, 'callerAccepted', {
                 receiverId,
                 receiverSocketId: socket.id,
                 callRecordId: callRecord._id,
                 callType: callRecord.callType,
-                timestamp: new Date(),
-                receiverName: receiver?.fullName || 'Astrologer', // Add receiver info
-                receiverImage: receiver?.avatar || ''
+                timestamp: new Date()
             });
 
-            // Notify receiver (callee) with callAccepted
+            // ✅ SIMPLIFIED: Notify receiver without user details
             this.emitToUser(receiverId, 'callAccepted', {
                 callerId,
                 callerSocketId: socket.id,
                 callRecordId: callRecord._id,
                 callType: callRecord.callType,
-                timestamp: new Date(),
-                callerName: caller?.fullName || 'User', // Add caller info
-                callerImage: caller?.avatar || ''
+                timestamp: new Date()
             });
+
             // Stop caller tune
             this.emitToUser(callerId, 'stopCallerTune', { callerId });
-
-            // Send push notification to caller
-            const receiver = await User.findById(receiverId);
-            await NotificationService.sendCallAcceptedNotification(
-                callerId,
-                receiver,
-                callRecord._id
-            );
 
             // Cleanup pending call
             this.pendingCalls.delete(callKey);
