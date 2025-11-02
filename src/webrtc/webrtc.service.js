@@ -485,6 +485,8 @@ export class WebRTCService {
 
         } catch (error) {
             logger.error(`Call cancel error:`, error);
+            this.cleanupCallResources(callKey, callerId, receiverId, socket);
+
             socket.emit('callError', {
                 message: 'Failed to cancel call',
                 details: error.message
