@@ -232,7 +232,7 @@ export class WebRTCService {
                 socketId: socket.id
             });
 
-            // Get call record only
+            // Fetch call record
             const callRecord = await Call.findById(callRecordId);
             if (!callRecord) {
                 throw new Error('Call record not found');
@@ -241,9 +241,11 @@ export class WebRTCService {
             // Clear ring timeout
             this.clearCallTimeout(callKey);
 
-            // Update call record
+            // Update call record to connected
             callRecord.status = 'CONNECTED';
             callRecord.connectTime = new Date();
+            // set receiver socket id
+            if (!callRecord.socketIds) callRecord.socketIds = {};
             callRecord.socketIds.receiver = socket.id;
             await callRecord.save();
 
@@ -256,22 +258,54 @@ export class WebRTCService {
                 connectTime: callRecord.connectTime
             });
 
+            // Optionally fetch caller/receiver user meta for nicer payload
+            const [callerUser, receiverUser] = await Promise.all([
+                User.findById(callerId).select('name fullName profilePicture'),
+                User.findById(receiverId).select('name fullName profilePicture')
+            ]);
 
-
-            // ✅ SIMPLIFIED: Notify receiver without user details
-            this.emitToUser(receiverId, 'callAccepted', {
-                callerId,
-                callerSocketId: socket.id,
+            // Prepare payloads
+            const payloadForCaller = {
+                callerId,               // original caller id
+                receiverId,             // who accepted
+                receiverSocketId: socket.id,
+                receiverName: receiverUser?.fullName || undefined,
+                receiverPicture: receiverUser?.profilePicture || undefined,
                 callRecordId: callRecord._id,
                 callType: callRecord.callType,
                 timestamp: new Date()
-            });
+            };
 
-            logger.info("callaccepted by reciver", receiverId, "---->", 'to', callerId)
-            // Stop caller tune
+            const payloadForReceiver = {
+                callerId,
+                callerSocketId: callRecord.socketIds?.caller || null,
+                callerName: callerUser?.fullName || undefined,
+                callerPicture: callerUser?.profilePicture || undefined,
+                callRecordId: callRecord._id,
+                callType: callRecord.callType,
+                timestamp: new Date()
+            };
+
+            // Emit to caller
+            const sentToCaller = this.emitToUser(callerId, 'callAccepted', payloadForCaller);
+            if (!sentToCaller) {
+                logger.warn(`[EMIT_WARN] callAccepted NOT delivered to caller ${callerId}. They may not be connected.`);
+            } else {
+                logger.info(`[EMIT] callAccepted delivered to caller ${callerId}`, { callRecordId: callRecord._id });
+            }
+
+            // Emit to receiver (so receiver UI can also transition if it listens for the same event)
+            const sentToReceiver = this.emitToUser(receiverId, 'callAccepted', payloadForReceiver);
+            if (!sentToReceiver) {
+                logger.warn(`[EMIT_WARN] callAccepted NOT delivered to receiver ${receiverId}.`);
+            } else {
+                logger.info(`[EMIT] callAccepted delivered to receiver ${receiverId}`, { callRecordId: callRecord._id });
+            }
+
+            // Stop caller tune (existing behavior)
             this.emitToUser(callerId, 'stopCallerTune', { callerId });
 
-            // Cleanup pending call
+            // Remove pending call and keep activeCalls as-is (connected)
             this.pendingCalls.delete(callKey);
 
             logger.info(`[CALL_CONNECTED] ${callKey}`, {
@@ -287,6 +321,7 @@ export class WebRTCService {
             });
         }
     }
+
 
     async handleEndCall(socket, { callerId, receiverId, callRecordId, reason = 'normal' }) {
         try {
