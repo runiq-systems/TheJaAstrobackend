@@ -256,7 +256,7 @@ export class WebRTCService {
                 connectTime: callRecord.connectTime
             });
 
-           
+
 
             // ✅ SIMPLIFIED: Notify receiver without user details
             this.emitToUser(receiverId, 'callAccepted', {
@@ -267,7 +267,7 @@ export class WebRTCService {
                 timestamp: new Date()
             });
 
-            logger.info("callaccepted by reciver",receiverId,"---->",'to',callerId)
+            logger.info("callaccepted by reciver", receiverId, "---->", 'to', callerId)
             // Stop caller tune
             this.emitToUser(callerId, 'stopCallerTune', { callerId });
 
@@ -424,9 +424,9 @@ export class WebRTCService {
     }
 
     async handleCancelCall(socket, { callerId, receiverId, callRecordId }) {
-        try {
-            const callKey = this.generateCallKey(callerId, receiverId);
+        const callKey = this.generateCallKey(callerId, receiverId);
 
+        try {
             // ✅ If callRecordId not provided, get it from pending calls
             if (!callRecordId) {
                 callRecordId = this.getCallRecordId(callKey);
@@ -435,12 +435,6 @@ export class WebRTCService {
             if (!callRecordId) {
                 throw new Error('Call record ID not found');
             }
-
-            logger.info(`[CALL_CANCEL] ${callerId} cancelling call to ${receiverId}`, {
-                callRecordId,
-                socketId: socket.id
-            });
-
 
             logger.info(`[CALL_CANCEL] ${callerId} cancelling call to ${receiverId}`, {
                 callRecordId,
@@ -470,23 +464,23 @@ export class WebRTCService {
                 callRecordId: callRecord._id
             });
 
-            // Cleanup resources
-            this.cleanupCallResources(callKey, callerId, receiverId, socket);
-
             logger.info(`[CALL_CANCELLED] ${callKey}`, {
                 callRecordId: callRecord._id
             });
 
         } catch (error) {
-            logger.error(`Call cancel error:`, error);
-            // this.cleanupCallResources(callKey, callerId, receiverId, socket);
+            logger.error(`[CALL_CANCEL_ERROR] ${callerId} → ${receiverId}:`, error);
 
             socket.emit('callError', {
                 message: 'Failed to cancel call',
                 details: error.message
             });
+        } finally {
+            // ✅ Always clean up resources even if something fails
+            this.cleanupCallResources(callKey, callerId, receiverId, socket);
         }
     }
+
 
     async handleMissedCall(socket, { receiverId, callerId, callRecordId }) {
         try {
