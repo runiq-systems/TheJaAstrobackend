@@ -267,6 +267,7 @@ export class WebRTCService {
                 timestamp: new Date()
             });
 
+            logger.info("callaccepted by reciver",receiverId,"---->",'caller',callerId)
             // Stop caller tune
             this.emitToUser(callerId, 'stopCallerTune', { callerId });
 
