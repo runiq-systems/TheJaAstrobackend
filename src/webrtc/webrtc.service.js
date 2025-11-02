@@ -256,14 +256,7 @@ export class WebRTCService {
                 connectTime: callRecord.connectTime
             });
 
-            // ✅ SIMPLIFIED: Notify caller without user details
-            this.emitToUser(callerId, 'callerAccepted', {
-                receiverId,
-                receiverSocketId: socket.id,
-                callRecordId: callRecord._id,
-                callType: callRecord.callType,
-                timestamp: new Date()
-            });
+           
 
             // ✅ SIMPLIFIED: Notify receiver without user details
             this.emitToUser(receiverId, 'callAccepted', {
