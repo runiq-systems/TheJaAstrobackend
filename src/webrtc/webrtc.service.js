@@ -267,7 +267,7 @@ export class WebRTCService {
                 timestamp: new Date()
             });
 
-            logger.info("callaccepted by reciver",receiverId,"---->",'caller',callerId)
+            logger.info("callaccepted by reciver",receiverId,"---->",'to',callerId)
             // Stop caller tune
             this.emitToUser(callerId, 'stopCallerTune', { callerId });
 
@@ -479,7 +479,7 @@ export class WebRTCService {
 
         } catch (error) {
             logger.error(`Call cancel error:`, error);
-            this.cleanupCallResources(callKey, callerId, receiverId, socket);
+            // this.cleanupCallResources(callKey, callerId, receiverId, socket);
 
             socket.emit('callError', {
                 message: 'Failed to cancel call',
