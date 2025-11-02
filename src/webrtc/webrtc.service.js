@@ -433,6 +433,21 @@ export class WebRTCService {
         try {
             const callKey = this.generateCallKey(callerId, receiverId);
 
+            // ✅ If callRecordId not provided, get it from pending calls
+            if (!callRecordId) {
+                callRecordId = this.getCallRecordId(callKey);
+            }
+
+            if (!callRecordId) {
+                throw new Error('Call record ID not found');
+            }
+
+            logger.info(`[CALL_CANCEL] ${callerId} cancelling call to ${receiverId}`, {
+                callRecordId,
+                socketId: socket.id
+            });
+
+
             logger.info(`[CALL_CANCEL] ${callerId} cancelling call to ${receiverId}`, {
                 callRecordId,
                 socketId: socket.id
@@ -738,6 +753,16 @@ export class WebRTCService {
         this.pendingCalls.set(callKey, callData);
     }
 
+
+    getCallRecordId(callKey) {
+        const pendingCall = this.pendingCalls.get(callKey);
+        return pendingCall ? pendingCall.callRecordId : null;
+    }
+
+    getCallRecordIdByUsers(callerId, receiverId) {
+        const callKey = this.generateCallKey(callerId, receiverId);
+        return this.getCallRecordId(callKey);
+    }
     setActiveCallState(callerId, receiverId, callKey) {
         this.activeCalls.set(callerId, {
             otherUserId: receiverId,
