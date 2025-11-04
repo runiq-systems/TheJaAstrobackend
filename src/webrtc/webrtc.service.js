@@ -2,1253 +2,1060 @@ import { User } from '../models/user.js';
 import { NotificationService } from './notification.service.js';
 import logger from '../utils/logger.js';
 import Call from '../models/calllogs/call.js';
-export class WebRTCService {
-    constructor(io) {
-        this.io = io;
-        this.users = new Map(); // userId -> Set(socketIds)
-        this.activeCalls = new Map(); // userId -> callData
-        this.pendingCalls = new Map(); // callKey -> callData
-        this.callTimings = new Map(); // callKey -> timingData
-        this.callTimeouts = new Map(); // callKey -> timeout
 
-        this.CALL_TIMEOUT = 45000; // 45 seconds
-        this.RING_TIMEOUT = 30000; // 30 seconds
-        this.CONFLICT_WINDOW = 5000; // 5 seconds
-        // ← MOVE CALL_STATES HERE (MUST BE BEFORE setupSocketHandlers)
-        this.CALL_STATES = {
-            INITIATED: 'INITIATED',
-            RINGING: 'RINGING',
-            CONNECTING: 'CONNECTING',
-            CONNECTED: 'CONNECTED',
-            ENDED: 'ENDED',
-            CANCELLED: 'CANCELLED',
-            REJECTED: 'REJECTED',
-            MISSED: 'MISSED',
-        };
+// Global state
+const users = new Map(); // userId -> Set(socketIds)
+const activeCalls = new Map(); // userId -> callData
+const pendingCalls = new Map(); // callKey -> callData
+const callTimings = new Map(); // callKey -> timingData
+const callTimeouts = new Map(); // callKey -> timeout
+const iceBuffer = new Map(); // callKey -> [iceCandidates]
 
-        this.setupSocketHandlers();
-    }
+// Constants
+const CALL_TIMEOUT = 45000; // 45 seconds
+const RING_TIMEOUT = 30000; // 30 seconds
+const CONFLICT_WINDOW = 5000; // 5 seconds
 
-    setupSocketHandlers() {
-        this.io.on('connection', (socket) => {
+const CALL_STATES = {
+    INITIATED: 'INITIATED',
+    RINGING: 'RINGING',
+    CONNECTING: 'CONNECTING',
+    CONNECTED: 'CONNECTED',
+    ENDED: 'ENDED',
+    CANCELLED: 'CANCELLED',
+    REJECTED: 'REJECTED',
+    MISSED: 'MISSED',
+    COMPLETED: 'COMPLETED',
+    DISCONNECTED: 'DISCONNECTED'
+};
 
-            logger.http(`User connected: ${socket.id}`, {
-                ip: socket.handshake.address,
-                userAgent: socket.handshake.headers['user-agent']
-            });
+// Utility Functions
+const generateCallKey = (userId1, userId2) => {
+    return [userId1, userId2].sort().join('_');
+};
 
-            // User management
-            socket.on('join', this.handleJoin.bind(this, socket));
-            socket.on('disconnect', this.handleDisconnect.bind(this, socket));
-            socket.on('getOnlineStatus', this.handleGetOnlineStatus.bind(this, socket));
-
-            // Call lifecycle
-            socket.on('call', this.handleCall.bind(this, socket));
-            socket.on('acceptCall', this.handleAcceptCall.bind(this, socket));
-            socket.on('rejectCall', this.handleRejectCall.bind(this, socket));
-            socket.on('endCall', this.handleEndCall.bind(this, socket));
-            socket.on('cancelCall', this.handleCancelCall.bind(this, socket));
-            socket.on('missedCall', this.handleMissedCall.bind(this, socket));
-
-            // WebRTC signaling
-            socket.on('offer', this.handleOffer.bind(this, socket));
-            socket.on('answer', this.handleAnswer.bind(this, socket));
-            socket.on('iceCandidate', this.handleIceCandidate.bind(this, socket));
-
-            // Call features
-            socket.on('toggleVideo', this.handleToggleVideo.bind(this, socket));
-            socket.on('toggleAudio', this.handleToggleAudio.bind(this, socket));
-            socket.on('toggleScreenShare', this.handleToggleScreenShare.bind(this, socket));
-            socket.on('qualityMetrics', this.handleQualityMetrics.bind(this, socket));
-
-            // User status
-            socket.on('updateStatus', this.handleUpdateStatus.bind(this, socket));
+const emitToUser = (userId, event, data) => {
+    const userSockets = users.get(userId);
+    if (userSockets && userSockets.size > 0) {
+        userSockets.forEach(socketId => {
+            global.io.to(socketId).emit(event, data);
         });
-    }
-
-    // User Management
-    async handleJoin(socket, { userId }) {
-        try {
-            if (!userId) {
-                throw new Error('User ID is required');
-            }
-
-            // Validate user exists
-            const user = await User.findById(userId);
-            if (!user) {
-                throw new Error('User not found');
-            }
-
-            // Add user to connected users
-            if (!this.users.has(userId)) {
-                this.users.set(userId, new Set());
-            }
-            this.users.get(userId).add(socket.id);
-
-            // Store userId in socket for easy access
-            socket.userId = userId;
-
-            // Update user status
-            await this.updateUserStatus(userId, 'Online');
-
-            logger.info(`User ${userId} joined with socket ${socket.id}`, {
-                totalSockets: this.users.get(userId).size,
-                username: user.fullName || user.fullName
-            });
-
-            socket.emit('joinSuccess', {
-                userId,
-                socketId: socket.id,
-                userStatus: user.status,
-                isOnline: user.isOnline
-            });
-
-            // Notify others about user coming online
-            this.broadcastUserStatus(userId, 'Online', user);
-
-        } catch (error) {
-            logger.error(`Join error for user ${userId}:`, error);
-            socket.emit('error', {
-                type: 'JOIN_ERROR',
-                message: error.message
-            });
-        }
-    }
-
-    async handleDisconnect(socket) {
-        try {
-            const userId = socket.userId;
-            if (!userId) return;
-
-            logger.info(`User ${userId} disconnected (socket: ${socket.id})`);
-
-            // Remove socket from user's connections
-            const userSockets = this.users.get(userId);
-            if (userSockets) {
-                userSockets.delete(socket.id);
-                if (userSockets.size === 0) {
-                    this.users.delete(userId);
-                    await this.updateUserStatus(userId, 'offline');
-                }
-            }
-
-            // Handle active call disconnection
-            await this.handleCallDisconnection(userId, socket);
-
-            // Cleanup pending calls
-            this.cleanupPendingCallsBySocket(socket.id);
-
-            logger.debug(`Disconnect processing completed for user ${userId}`);
-
-        } catch (error) {
-            logger.error('Disconnect handler error:', error);
-        }
-    }
-
-    // Call Management
-    async handleCall(socket, { callerId, receiverId, callType = 'AUDIO' }) {
-        let callKey;
-        try {
-            // Validation
-            if (!callerId || !receiverId) {
-                throw new Error('Caller and receiver IDs are required');
-            }
-
-            if (callerId === receiverId) {
-                throw new Error('Cannot call yourself');
-            }
-
-            callKey = this.generateCallKey(callerId, receiverId);
-
-            logger.info(`[CALL_INITIATE] ${callerId} -> ${receiverId} (${callType})`, {
-                socketId: socket.id,
-                callKey
-            });
-
-            // Check user availability
-            await this.validateUserAvailability(callerId, receiverId, socket);
-
-            // Check for existing calls
-            if (this.isUserInCall(callerId) || this.isUserInCall(receiverId)) {
-                logger.warn(`[CALL_BUSY] User is in another call`, { callerId, receiverId });
-                socket.emit('userBusy', {
-                    userId: receiverId,
-                    message: 'User is in another call'
-                });
-                return;
-            }
-
-            // Check for call conflicts
-            if (this.hasCallConflict(callKey)) {
-                logger.warn(`[CALL_CONFLICT] Call conflict detected`, { callKey });
-                socket.emit('callConflict', {
-                    message: 'Call already in progress',
-                    callKey
-                });
-                return;
-            }
-
-            // Create call record
-            const callRecord = await this.createCallRecord({
-                callerId,
-                receiverId,
-                callType,
-                // callDirection: 'USER_TO_ASTROLOGER',
-                socketId: socket.id
-            });
-
-            // Setup pending call
-            this.setupPendingCall(callKey, {
-                callerId,
-                receiverId,
-                callType,
-                callRecordId: callRecord._id,
-                socketId: socket.id,
-                timestamp: Date.now(),
-                status: 'INITIATED'
-            });
-
-            // Set active call state
-            this.setActiveCallState(callerId, receiverId, callKey);
-
-            // Update call status to RINGING
-            await callRecord.markRinging();
-
-            // Notify receiver
-            await this.notifyReceiver(callerId, receiverId, callType, callRecord);
-
-            // Set ring timeout
-            this.setRingTimeout(callKey, callerId, receiverId, callRecord._id);
-
-            logger.info(`[CALL_SETUP_COMPLETE] ${callKey}`, {
-                callRecordId: callRecord._id
-            });
-
-        } catch (error) {
-            logger.error(`Call initiation error:`, error);
-            this.cleanupCallResources(callKey, callerId, receiverId, socket);
-            socket.emit('callError', {
-                message: 'Failed to initiate call',
-                details: error.message
-            });
-        }
-    }
-
-    async handleAcceptCall(socket, { receiverId, callerId, callRecordId }) {
-        try {
-            const callKey = this.generateCallKey(callerId, receiverId);
-
-            logger.info(`[CALL_ACCEPT] ${receiverId} accepting call from ${callerId}`, {
-                callRecordId,
-                socketId: socket.id
-            });
-
-            // Fetch call record
-            const callRecord = await Call.findById(callRecordId);
-            if (!callRecord) {
-                throw new Error('Call record not found');
-            }
-
-            // Clear ring timeout
-            this.clearCallTimeout(callKey);
-
-            // Update call record to connected
-            callRecord.status = 'CONNECTED';
-            callRecord.connectTime = new Date();
-            // set receiver socket id
-            if (!callRecord.socketIds) callRecord.socketIds = {};
-            callRecord.socketIds.receiver = socket.id;
-            await callRecord.save();
-
-            // Start call timing
-            this.callTimings.set(callKey, {
-                startTime: new Date(),
-                callRecordId: callRecord._id,
-                callerId,
-                receiverId,
-                connectTime: callRecord.connectTime
-            });
-
-            // Optionally fetch caller/receiver user meta for nicer payload
-            const [callerUser, receiverUser] = await Promise.all([
-                User.findById(callerId).select('name fullName profilePicture'),
-                User.findById(receiverId).select('name fullName profilePicture')
-            ]);
-
-            // Prepare payloads
-            const payloadForCaller = {
-                callerId,               // original caller id
-                receiverId,             // who accepted
-                receiverSocketId: socket.id,
-                receiverName: receiverUser?.fullName || undefined,
-                receiverPicture: receiverUser?.profilePicture || undefined,
-                callRecordId: callRecord._id,
-                callType: callRecord.callType,
-                timestamp: new Date()
-            };
-
-            const payloadForReceiver = {
-                callerId,
-                callerSocketId: callRecord.socketIds?.caller || null,
-                callerName: callerUser?.fullName || undefined,
-                callerPicture: callerUser?.profilePicture || undefined,
-                callRecordId: callRecord._id,
-                callType: callRecord.callType,
-                timestamp: new Date()
-            };
-
-            // Emit to caller
-            const sentToCaller = this.emitToUser(callerId, 'callAccepted', payloadForCaller);
-            if (!sentToCaller) {
-                logger.warn(`[EMIT_WARN] callAccepted NOT delivered to caller ${callerId}. They may not be connected.`);
-            } else {
-                logger.info(`[EMIT] callAccepted delivered to caller ${callerId}`, { callRecordId: callRecord._id });
-            }
-
-            // Emit to receiver (so receiver UI can also transition if it listens for the same event)
-            const sentToReceiver = this.emitToUser(receiverId, 'callAccepted', payloadForReceiver);
-            if (!sentToReceiver) {
-                logger.warn(`[EMIT_WARN] callAccepted NOT delivered to receiver ${receiverId}.`);
-            } else {
-                logger.info(`[EMIT] callAccepted delivered to receiver ${receiverId}`, { callRecordId: callRecord._id });
-            }
-
-            // Stop caller tune (existing behavior)
-            this.emitToUser(callerId, 'stopCallerTune', { callerId });
-
-            // Remove pending call and keep activeCalls as-is (connected)
-            this.pendingCalls.delete(callKey);
-
-            logger.info(`[CALL_CONNECTED] ${callKey}`, {
-                callRecordId: callRecord._id,
-                connectTime: callRecord.connectTime
-            });
-
-        } catch (error) {
-            logger.error(`Call accept error:`, error);
-            socket.emit('callError', {
-                message: 'Failed to accept call',
-                details: error.message
-            });
-        }
-    }
-
-
-    async handleEndCall(socket, { callerId, receiverId, callRecordId, reason = 'normal' }) {
-        try {
-            const callKey = this.generateCallKey(callerId, receiverId);
-
-            logger.info(`[CALL_END] ${callerId} ending call with ${receiverId}`, {
-                callRecordId,
-                reason,
-                socketId: socket.id
-            });
-
-            // Calculate duration and update call record
-            const callTiming = this.callTimings.get(callKey);
-            const endTime = new Date();
-            let duration = 0;
-            let callDuration = 0;
-
-            if (callTiming) {
-                duration = Math.round((endTime - callTiming.startTime) / 1000);
-                if (callTiming.connectTime) {
-                    callDuration = Math.round((endTime - callTiming.connectTime) / 1000);
-                }
-            }
-
-            const callRecord = await Call.findByIdAndUpdate(
-                callRecordId,
-                {
-                    endTime,
-                    duration,
-                    status: 'COMPLETED'
-                },
-                { new: true }
-            ).populate('userId', 'name fullName')
-                .populate('astrologerId', 'name fullName');
-
-            // Notify both parties
-            this.emitToUser(receiverId, 'callEnded', {
-                callerId,
-                receiverId,
-                duration: callDuration,
-                totalDuration: duration,
-                reason,
-                timestamp: endTime,
-                callRecordId: callRecord._id
-            });
-
-            // Send push notifications
-            if (callRecord.userId && callRecord.astrologerId) {
-                const callerData = callRecord.userId._id.toString() === callerId ?
-                    callRecord.userId : callRecord.astrologerId;
-                const receiverData = callRecord.userId._id.toString() === receiverId ?
-                    callRecord.userId : callRecord.astrologerId;
-
-                await NotificationService.sendCallEndedNotification(
-                    receiverId,
-                    callerData,
-                    callRecord._id,
-                    callDuration
-                );
-            }
-
-            // Cleanup resources
-            this.cleanupCallResources(callKey, callerId, receiverId, socket);
-
-            logger.info(`[CALL_ENDED] ${callKey} lasted ${callDuration}s (total: ${duration}s)`, {
-                callRecordId: callRecord._id,
-                reason
-            });
-
-        } catch (error) {
-            logger.error(`Call end error:`, error);
-            socket.emit('callError', {
-                message: 'Failed to end call',
-                details: error.message
-            });
-        }
-    }
-
-    async handleRejectCall(socket, { receiverId, callerId, callRecordId, reason = 'user_busy' }) {
-        try {
-            const callKey = this.generateCallKey(callerId, receiverId);
-
-            logger.info(`[CALL_REJECT] ${receiverId} rejecting call from ${callerId}`, {
-                callRecordId,
-                reason,
-                socketId: socket.id
-            });
-
-            // Update call record
-            const callRecord = await Call.findByIdAndUpdate(
-                callRecordId,
-                {
-                    status: 'REJECTED',
-                    endTime: new Date(),
-                    feedback: reason
-                },
-                { new: true }
-            ).populate('userId', 'name fullName profilePicture');
-
-            // Notify caller
-            this.emitToUser(callerId, 'callRejected', {
-                receiverId,
-                callRecordId: callRecord._id,
-                reason,
-                timestamp: new Date()
-            });
-
-            // Stop caller tune
-            this.emitToUser(callerId, 'stopCallerTune', { callerId });
-
-            // Send push notification
-            if (callRecord.userId) {
-                await NotificationService.sendCallMissedNotification(
-                    callerId,
-                    callRecord.userId,
-                    callRecord._id
-                );
-            }
-
-            // Cleanup resources
-            this.cleanupCallResources(callKey, callerId, receiverId, socket);
-
-            logger.info(`[CALL_REJECTED] ${callKey}`, {
-                callRecordId: callRecord._id,
-                reason
-            });
-
-        } catch (error) {
-            logger.error(`Call reject error:`, error);
-            socket.emit('callError', {
-                message: 'Failed to reject call',
-                details: error.message
-            });
-        }
-    }
-
-    async handleCancelCall(socket, { callerId, receiverId, callRecordId }) {
-        const callKey = this.generateCallKey(callerId, receiverId);
-
-        try {
-            // ✅ If callRecordId not provided, get it from pending calls
-            if (!callRecordId) {
-                callRecordId = this.getCallRecordId(callKey);
-            }
-
-            if (!callRecordId) {
-                throw new Error('Call record ID not found');
-            }
-
-            logger.info(`[CALL_CANCEL] ${callerId} cancelling call to ${receiverId}`, {
-                callRecordId,
-                socketId: socket.id
-            });
-
-            // Update call record
-            const callRecord = await Call.findByIdAndUpdate(
-                callRecordId,
-                {
-                    status: 'CANCELLED',
-                    endTime: new Date()
-                },
-                { new: true }
-            );
-
-            // Notify receiver
-            this.emitToUser(receiverId, 'callCancelled', {
-                callerId,
-                callRecordId: callRecord._id,
-                timestamp: new Date()
-            });
-
-            // Stop incoming call notification for receiver
-            this.emitToUser(receiverId, 'stopIncomingCall', {
-                callerId,
-                callRecordId: callRecord._id
-            });
-
-            logger.info(`[CALL_CANCELLED] ${callKey}`, {
-                callRecordId: callRecord._id
-            });
-
-        } catch (error) {
-            logger.error(`[CALL_CANCEL_ERROR] ${callerId} → ${receiverId}:`, error);
-
-            socket.emit('callError', {
-                message: 'Failed to cancel call',
-                details: error.message
-            });
-        } finally {
-            // ✅ Always clean up resources even if something fails
-            this.cleanupCallResources(callKey, callerId, receiverId, socket);
-        }
-    }
-
-
-    async handleMissedCall(socket, { receiverId, callerId, callRecordId }) {
-        try {
-            const callKey = this.generateCallKey(callerId, receiverId);
-
-            logger.info(`[CALL_MISSED] ${receiverId} missed call from ${callerId}`, {
-                callRecordId,
-                socketId: socket.id
-            });
-
-            // Update call record
-            const callRecord = await Call.findByIdAndUpdate(
-                callRecordId,
-                {
-                    status: 'MISSED',
-                    endTime: new Date()
-                },
-                { new: true }
-            ).populate('userId', 'name fullName profilePicture');
-
-            // Send push notification
-            if (callRecord.userId) {
-                await NotificationService.sendCallMissedNotification(
-                    receiverId,
-                    callRecord.userId,
-                    callRecord._id
-                );
-            }
-
-            // Notify caller
-            this.emitToUser(callerId, 'callMissed', {
-                receiverId,
-                callRecordId: callRecord._id,
-                timestamp: new Date()
-            });
-
-            // Cleanup resources
-            this.cleanupCallResources(callKey, callerId, receiverId, socket);
-
-            logger.info(`[CALL_MISSED] ${callKey}`, {
-                callRecordId: callRecord._id
-            });
-
-        } catch (error) {
-            logger.error(`Missed call handling error:`, error);
-            socket.emit('callError', {
-                message: 'Failed to process missed call',
-                details: error.message
-            });
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    //  SIGNALING HELPERS (add to WebRTCService class)
-    // ─────────────────────────────────────────────────────────────────────────────
-    /**
-     * Generate a deterministic call key – used everywhere for lookup.
-     */
-    generateCallKey(a, b) {
-        return [a, b].sort().join('_');
-    }
-
-    /**
-     * Emit to a user (handles multiple sockets, offline users, returns boolean)
-     */
-    emitToUser(userId, event, payload) {
-        const sockets = this.users.get(userId);
-        if (!sockets || sockets.size === 0) {
-            logger.warn(`[EMIT] User offline – ${event}`, { userId, payload });
-            return false;
-        }
-        sockets.forEach(sid => this.io.to(sid).emit(event, payload));
+        logger.debug(`[EMIT_SUCCESS] ${event} to ${userId}`, { data });
         return true;
     }
+    logger.warn(`[EMIT_FAILED] User ${userId} offline for event ${event}`, { data });
+    return false;
+};
 
-    /**
-     * Validate SDP payload (offer / answer)
-     */
-    validateSDP(type, data) {
-        if (!data || typeof data.sdp !== 'string' || !data.sdp.includes('m=')) {
-            throw new Error(`Invalid ${type} SDP`);
-        }
+const validateSDP = (type, data) => {
+    if (!data || typeof data.sdp !== 'string' || !data.sdp.includes('m=')) {
+        throw new Error(`Invalid ${type} SDP`);
     }
+};
 
-    /**
-     * Validate ICE candidate
-     */
-    validateIceCandidate(candidate) {
-        if (!candidate || typeof candidate.candidate !== 'string') {
-            throw new Error('Invalid ICE candidate');
-        }
+const validateIceCandidate = (candidate) => {
+    if (!candidate || typeof candidate.candidate !== 'string') {
+        throw new Error('Invalid ICE candidate');
     }
+};
 
-    /**
-     * Standard error response
-     */
-    emitSignalingError(socket, type, err, callRecordId) {
-        const payload = {
-            type,
-            code: err.code || 'UNKNOWN',
-            message: err.message || 'Signaling error',
-            callRecordId,
+const emitSignalingError = (socket, type, err, callRecordId) => {
+    const payload = {
+        type,
+        code: err.code || 'UNKNOWN',
+        message: err.message || 'Signaling error',
+        callRecordId,
+        timestamp: Date.now(),
+    };
+    logger.error(`[SIGNALING_ERROR] ${type}`, payload);
+    socket.emit('signalingError', payload);
+};
+
+const flushBufferedIce = (callKey, targetUserId) => {
+    const buf = iceBuffer.get(callKey) || [];
+    if (!buf.length) return;
+
+    buf.forEach(item => {
+        emitToUser(targetUserId, 'iceCandidate', {
+            candidate: item.candidate,
+            callerId: item.callerId,
+            receiverId: targetUserId,
+            callRecordId: item.callRecordId,
             timestamp: Date.now(),
-        };
-        logger.error(`[SIGNALING_ERROR] ${type}`, payload);
-        socket.emit('signalingError', payload);
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    //  1. OFFER
-    // ─────────────────────────────────────────────────────────────────────────────
-    async handleOffer(socket, { offer, callerId, receiverId, callRecordId }) {
-        const callKey = this.generateCallKey(callerId, receiverId);
-        const logCtx = { callKey, callRecordId, callerId, receiverId, socketId: socket.id };
-
-        try {
-            // ── 1. Input validation ────────────────────────────────────────
-            if (!offer?.sdp || !callerId || !receiverId || !callRecordId) {
-                throw Object.assign(new Error('Missing required fields'), { code: 'BAD_REQUEST' });
-            }
-            this.validateSDP('offer', offer);
-
-            // ── 2. State check (must be CONNECTING) ───────────────────────
-            const active = this.activeCalls.get(callerId);
-            console.log("active", active)
-
-            // if (!active || active.callKey !== callKey || active.status !== this.CALL_STATES.CONNECTING) {
-            //     throw Object.assign(new Error('Call not in CONNECTING state'), { code: 'INVALID_STATE' });
-            // }
-
-            // ── 3. Forward to receiver ─────────────────────────────────────
-            const sent = this.emitToUser(receiverId, 'offer', {
-                offer,
-                callerId,
-                receiverId,
-                callRecordId,
-                timestamp: Date.now(),
-            });
-
-            if (!sent) {
-                await this.flushBufferedIce(callKey, receiverId); // ← ADD
-            }
-
-            logger.debug('[OFFER] Forwarded', logCtx);
-        } catch (err) {
-            this.emitSignalingError(socket, 'OFFER_ERROR', err, callRecordId);
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    //  2. ANSWER
-    // ─────────────────────────────────────────────────────────────────────────────
-    async handleAnswer(socket, { answer, receiverId, callerId, callRecordId }) {
-        const callKey = this.generateCallKey(callerId, receiverId);
-        const logCtx = { callKey, callRecordId, callerId, receiverId, socketId: socket.id };
-
-        try {
-            // ── 1. Validation ───────────────────────────────────────────────
-            if (!answer?.sdp || !callerId || !receiverId || !callRecordId) {
-                throw Object.assign(new Error('Missing required fields'), { code: 'BAD_REQUEST' });
-            }
-            this.validateSDP('answer', answer);
-
-            // ── 2. State check ──────────────────────────────────────────────
-            const active = this.activeCalls.get(receiverId);
-            console.log("active", active)
-            if (!active || active.callKey !== callKey || active.status !== this.CALL_STATES.CONNECTING) {
-                throw Object.assign(new Error('Call not in CONNECTING state'), { code: 'INVALID_STATE' });
-            }
-
-            // ── 3. Forward to caller ───────────────────────────────────────
-            const sent = this.emitToUser(callerId, 'answer', {
-                answer,
-                callerId,
-                receiverId,
-                callRecordId,
-                timestamp: Date.now(),
-            });
-
-            if (!sent) {
-                await this.flushBufferedIce(callKey, callerId); // ← ADD
-            }
-
-            logger.debug('[ANSWER] Forwarded', logCtx);
-        } catch (err) {
-            this.emitSignalingError(socket, 'ANSWER_ERROR', err, callRecordId);
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    //  3. ICE CANDIDATE
-    // ─────────────────────────────────────────────────────────────────────────────
-    handleIceCandidate(socket, { candidate, callerId, receiverId, callRecordId }) {
-        const callKey = this.generateCallKey(callerId, receiverId);
-        const logCtx = {
-            callKey,
-            callRecordId,
-            callerId,
-            receiverId,
-            socketId: socket.id,
-            candidateType: candidate?.type,
-        };
-
-        try {
-            // ── 1. Validation ───────────────────────────────────────────────
-            if (!candidate || !callerId || !receiverId || !callRecordId) {
-                throw Object.assign(new Error('Missing required fields'), { code: 'BAD_REQUEST' });
-            }
-            this.validateIceCandidate(candidate);
-
-            // ── 2. State check ──────────────────────────────────────────────
-            const active = this.activeCalls.get(callerId);
-            console.log("active", active)
-
-            // if (!active || active.callKey !== callKey || active.status !== this.CALL_STATES.CONNECTING) {
-            //     logger.debug('[ICE] Dropped – call not CONNECTING', logCtx);
-            //     return; // silently drop
-            // }
-
-            // ── 3. Buffer if remote description not set yet ───────────────
-            const receiverActive = this.activeCalls.get(receiverId);
-            const remoteDescMissing = !receiverActive?.pc?.remoteDescription;
-
-            if (remoteDescMissing) {
-                // Store in per-call buffer (max 30 candidates)
-                const buf = this.iceBuffer.get(callKey) || [];
-                if (buf.length < 30) {
-                    buf.push({ candidate, callerId, callRecordId });
-                    this.iceBuffer.set(callKey, buf);
-                }
-                logger.debug('[ICE] Buffered (remote desc missing)', { ...logCtx, buffered: buf.length });
-                return;
-            }
-
-            // ── 4. Forward ─────────────────────────────────────────────────
-            const sent = this.emitToUser(receiverId, 'iceCandidate', {
-                candidate,
-                callerId,
-                receiverId,
-                callRecordId,
-                timestamp: Date.now(),
-            });
-
-            if (!sent) {
-                logger.warn('[ICE] Receiver offline – candidate lost', logCtx);
-            } else {
-                logger.debug('[ICE] Forwarded', logCtx);
-            }
-        } catch (err) {
-            this.emitSignalingError(socket, 'ICE_CANDIDATE_ERR', err, callRecordId);
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    //  Helper: flush buffered ICE when remote description arrives
-    //  Call this from handleAnswer / handleOffer after setRemoteDescription
-    // ─────────────────────────────────────────────────────────────────────────────
-    flushBufferedIce(callKey, targetUserId) {
-        const buf = this.iceBuffer.get(callKey) || [];
-        if (!buf.length) return;
-
-        buf.forEach(item => {
-            this.emitToUser(targetUserId, 'iceCandidate', {
-                candidate: item.candidate,
-                callerId: item.callerId,
-                receiverId: targetUserId,
-                callRecordId: item.callRecordId,
-                timestamp: Date.now(),
-            });
         });
+    });
 
-        this.iceBuffer.delete(callKey);
-        logger.debug('[ICE] Flushed buffered candidates', { callKey, count: buf.length });
+    iceBuffer.delete(callKey);
+    logger.debug('[ICE_FLUSHED] Buffered candidates sent', { callKey, count: buf.length });
+};
+
+const clearCallTimeout = (callKey) => {
+    const timeout = callTimeouts.get(callKey);
+    if (timeout) {
+        clearTimeout(timeout);
+        callTimeouts.delete(callKey);
     }
+};
 
-    // Call Features
-    handleToggleVideo(socket, { callRecordId, enabled, userId }) {
-        try {
-            const call = this.findCallBySocket(socket.id);
-            if (call) {
-                const otherUserId = call.userId.toString() === userId ?
-                    call.astrologerId : call.userId;
+const cleanupCallResources = (callKey, callerId, receiverId, socket = null) => {
+    clearCallTimeout(callKey);
+    pendingCalls.delete(callKey);
+    activeCalls.delete(callerId);
+    activeCalls.delete(receiverId);
+    callTimings.delete(callKey);
+    callTimeouts.delete(callKey);
+    iceBuffer.delete(callKey);
 
-                this.emitToUser(otherUserId, 'videoToggled', {
-                    enabled,
-                    byUserId: userId,
-                    callRecordId
-                });
+    logger.debug('[CLEANUP] Call resources cleaned', { callKey, callerId, receiverId });
+};
 
-                logger.debug(`[VIDEO_TOGGLED] User ${userId} ${enabled ? 'enabled' : 'disabled'} video`, {
-                    callRecordId
-                });
-            }
-        } catch (error) {
-            logger.error(`Toggle video error:`, error);
-        }
-    }
+const getCallRecordId = (callKey) => {
+    const pendingCall = pendingCalls.get(callKey);
+    return pendingCall ? pendingCall.callRecordId : null;
+};
 
-    handleToggleAudio(socket, { callRecordId, enabled, userId }) {
-        try {
-            const call = this.findCallBySocket(socket.id);
-            if (call) {
-                const otherUserId = call.userId.toString() === userId ?
-                    call.astrologerId : call.userId;
-
-                this.emitToUser(otherUserId, 'audioToggled', {
-                    enabled,
-                    byUserId: userId,
-                    callRecordId
-                });
-
-                logger.debug(`[AUDIO_TOGGLED] User ${userId} ${enabled ? 'enabled' : 'disabled'} audio`, {
-                    callRecordId
-                });
-            }
-        } catch (error) {
-            logger.error(`Toggle audio error:`, error);
-        }
-    }
-
-    handleToggleScreenShare(socket, { callRecordId, enabled, userId }) {
-        try {
-            const call = this.findCallBySocket(socket.id);
-            if (call) {
-                const otherUserId = call.userId.toString() === userId ?
-                    call.astrologerId : call.userId;
-
-                this.emitToUser(otherUserId, 'screenShareToggled', {
-                    enabled,
-                    byUserId: userId,
-                    callRecordId
-                });
-
-                logger.debug(`[SCREEN_SHARE_TOGGLED] User ${userId} ${enabled ? 'started' : 'stopped'} screen share`, {
-                    callRecordId
-                });
-            }
-        } catch (error) {
-            logger.error(`Toggle screen share error:`, error);
-        }
-    }
-
-    handleQualityMetrics(socket, { callRecordId, metrics, userId }) {
-        try {
-            // Store quality metrics for analytics
-            logger.debug(`[QUALITY_METRICS] User ${userId} quality metrics`, {
-                callRecordId,
-                metrics
-            });
-
-            // You can store these in the call record or a separate analytics service
-            Call.findByIdAndUpdate(callRecordId, {
-                qualityMetrics: metrics,
-                networkQuality: this.calculateNetworkQuality(metrics)
-            }).catch(err => logger.error('Error updating quality metrics:', err));
-
-        } catch (error) {
-            logger.error(`Quality metrics handling error:`, error);
-        }
-    }
-
-    // Utility Methods
-    generateCallKey(userId1, userId2) {
-        return [userId1, userId2].sort().join('_');
-    }
-
-    async validateUserAvailability(callerId, receiverId, socket) {
-        const [caller, receiver] = await Promise.all([
-            User.findById(callerId),
-            User.findById(receiverId)
-        ]);
-
-        if (!caller || !receiver) {
-            throw new Error('User not found');
-        }
-
-        if (receiver.userStatus === 'InActive' || receiver.isSuspended) {
-            socket.emit('receiverUnavailable', {
-                message: 'User is currently unavailable'
-            });
-            throw new Error('Receiver unavailable');
-        }
-
-        if (caller.isSuspended) {
-            socket.emit('callerSuspended', {
-                message: 'Your account is suspended'
-            });
-            throw new Error('Caller account suspended');
-        }
-
-        return { caller, receiver };
-    }
-
-    async createCallRecord(callData) {
-        const callRecord = new Call({
-            userId: callData.callerId,
-            astrologerId: callData.receiverId,
-            callType: callData.callType,
-            callDirection: callData.callDirection,
-            status: 'INITIATED',
-            socketIds: {
-                caller: callData.socketId
-            },
-            videoEnabled: callData.callType === 'VIDEO',
-            audioEnabled: true
-        });
-
-        return await callRecord.save();
-    }
-
-    setupPendingCall(callKey, callData) {
-        this.pendingCalls.set(callKey, callData);
-    }
-
-
-    getCallRecordId(callKey) {
-        const pendingCall = this.pendingCalls.get(callKey);
-        return pendingCall ? pendingCall.callRecordId : null;
-    }
-
-    getCallRecordIdByUsers(callerId, receiverId) {
-        const callKey = this.generateCallKey(callerId, receiverId);
-        return this.getCallRecordId(callKey);
-    }
-    setActiveCallState(callerId, receiverId, callKey) {
-        this.activeCalls.set(callerId, {
-            otherUserId: receiverId,
-            callKey,
-            role: 'caller'
-        });
-        this.activeCalls.set(receiverId, {
-            otherUserId: callerId,
-            callKey,
-            role: 'receiver'
-        });
-    }
-
-    async notifyReceiver(callerId, receiverId, callType, callRecord) {
-        const caller = await User.findById(callerId).select('name fullName profilePicture');
-
-        // Socket notification to receiver
-        this.emitToUser(receiverId, 'incomingCall', {
-            callerId,
-            receiverId,
-            callerName: caller.fullName || caller.fullName,
-            callerPicture: caller.profilePicture,
-            callType,
-            callRecordId: callRecord._id,
-            timestamp: Date.now()
-        });
-
-        // Play caller tune to caller
-        this.emitToUser(callerId, 'playCallerTune', { callerId });
-
-        // Send push notification to receiver
-        await NotificationService.sendIncomingCallNotification(
-            receiverId,
-            caller,
-            callRecord._id
+const isUserInCall = (userId) => {
+    return activeCalls.has(userId) ||
+        Array.from(pendingCalls.values()).some(call =>
+            call.callerId === userId || call.receiverId === userId
         );
+};
 
-        logger.debug(`[RECEIVER_NOTIFIED] Receiver ${receiverId} notified about incoming call`, {
-            callRecordId: callRecord._id,
-            callType
-        });
-    }
+const hasCallConflict = (callKey) => {
+    const existingCall = pendingCalls.get(callKey);
+    if (!existingCall) return false;
+    const timeSinceCall = Date.now() - existingCall.timestamp;
+    return timeSinceCall < CONFLICT_WINDOW;
+};
 
-    setRingTimeout(callKey, callerId, receiverId, callRecordId) {
-        const timeout = setTimeout(async () => {
-            logger.info(`[RING_TIMEOUT] Call ${callKey} timed out`);
+const setRingTimeout = (callKey, callerId, receiverId, callRecordId) => {
+    const timeout = setTimeout(async () => {
+        logger.info('[RING_TIMEOUT] Call timed out', { callKey });
 
-            // Update call record
+        try {
             await Call.findByIdAndUpdate(callRecordId, {
                 status: 'MISSED',
                 endTime: new Date()
             });
 
-            // Notify caller
-            this.emitToUser(callerId, 'callTimeout', {
+            emitToUser(callerId, 'callTimeout', {
                 receiverId,
                 callRecordId,
                 message: 'Call timed out'
             });
 
-            // Notify receiver to stop ringing
-            this.emitToUser(receiverId, 'stopIncomingCall', {
+            emitToUser(receiverId, 'stopIncomingCall', {
                 callerId,
                 callRecordId
             });
 
-            // Cleanup resources
-            this.cleanupCallResources(callKey, callerId, receiverId);
-
-        }, this.RING_TIMEOUT);
-
-        this.callTimeouts.set(callKey, timeout);
-    }
-
-    clearCallTimeout(callKey) {
-        const timeout = this.callTimeouts.get(callKey);
-        if (timeout) {
-            clearTimeout(timeout);
-            this.callTimeouts.delete(callKey);
+            cleanupCallResources(callKey, callerId, receiverId);
+        } catch (error) {
+            logger.error('[RING_TIMEOUT_ERROR]', error);
         }
+    }, RING_TIMEOUT);
+
+    callTimeouts.set(callKey, timeout);
+};
+
+const validateUserAvailability = async (callerId, receiverId, socket) => {
+    const [caller, receiver] = await Promise.all([
+        User.findById(callerId),
+        User.findById(receiverId)
+    ]);
+
+    if (!caller || !receiver) {
+        throw new Error('User not found');
     }
 
-    isUserInCall(userId) {
-        return this.activeCalls.has(userId) ||
-            Array.from(this.pendingCalls.values()).some(call =>
-                call.callerId === userId || call.receiverId === userId
-            );
+    if (receiver.userStatus === 'InActive' || receiver.isSuspended) {
+        socket.emit('receiverUnavailable', {
+            message: 'User is currently unavailable'
+        });
+        throw new Error('Receiver unavailable');
     }
 
-    hasCallConflict(callKey) {
-        const existingCall = this.pendingCalls.get(callKey);
-        if (!existingCall) return false;
-
-        const timeSinceCall = Date.now() - existingCall.timestamp;
-        return timeSinceCall < this.CONFLICT_WINDOW;
+    if (caller.isSuspended) {
+        socket.emit('callerSuspended', {
+            message: 'Your account is suspended'
+        });
+        throw new Error('Caller account suspended');
     }
 
-    findUserIdBySocket(socketId) {
-        for (const [userId, socketIds] of this.users.entries()) {
-            if (socketIds.has(socketId)) {
-                return userId;
-            }
-        }
-        return null;
-    }
+    return { caller, receiver };
+};
 
-    emitToUser(userId, event, data) {
-        const userSockets = this.users.get(userId);
-        if (userSockets && userSockets.size > 0) {
-            userSockets.forEach(socketId => {
-                this.io.to(socketId).emit(event, data);
-            });
-            return true;
-        }
-        return false;
-    }
+const createCallRecord = async (callData) => {
+    const callRecord = new Call({
+        userId: callData.callerId,
+        astrologerId: callData.receiverId,
+        callType: callData.callType,
+        callDirection: 'USER_TO_ASTROLOGER',
+        status: 'INITIATED',
+        socketIds: {
+            caller: callData.socketId
+        },
+        videoEnabled: callData.callType === 'VIDEO',
+        audioEnabled: true
+    });
 
-    broadcastUserStatus(userId, status, userData = null) {
-        this.io.emit('userStatusChanged', {
-            userId,
+    return await callRecord.save();
+};
+
+const notifyReceiver = async (callerId, receiverId, callType, callRecord) => {
+    const caller = await User.findById(callerId).select('name fullName profilePicture');
+
+    // Socket notification to receiver
+    emitToUser(receiverId, 'incomingCall', {
+        callerId,
+        receiverId,
+        callerName: caller.fullName || caller.name,
+        callerPicture: caller.profilePicture,
+        callType,
+        callRecordId: callRecord._id,
+        timestamp: Date.now()
+    });
+
+    // Play caller tune to caller
+    emitToUser(callerId, 'playCallerTune', { callerId });
+
+    // Send push notification to receiver
+    await NotificationService.sendIncomingCallNotification(
+        receiverId,
+        caller,
+        callRecord._id
+    );
+
+    logger.debug('[RECEIVER_NOTIFIED]', {
+        receiverId,
+        callRecordId: callRecord._id,
+        callType
+    });
+};
+
+const broadcastUserStatus = (userId, status, userData = null) => {
+    global.io.emit('userStatusChanged', {
+        userId,
+        status,
+        isOnline: status === 'Online',
+        lastSeen: status === 'offline' ? new Date() : undefined,
+        userData
+    });
+};
+
+const updateUserStatus = async (userId, status) => {
+    try {
+        const updateData = {
             status,
-            isOnline: status === 'Online',
-            lastSeen: status === 'offline' ? new Date() : undefined,
-            userData
-        });
+            isOnline: status === 'Online'
+        };
+
+        if (status === 'offline') {
+            updateData.lastSeen = new Date();
+        }
+
+        const user = await User.findByIdAndUpdate(
+            userId,
+            updateData,
+            { new: true }
+        ).select('name fullName profilePicture status isOnline lastSeen');
+
+        if (user) {
+            broadcastUserStatus(userId, user.status, user);
+            logger.debug('[STATUS_UPDATED]', { userId, status });
+        }
+    } catch (error) {
+        logger.error('[STATUS_UPDATE_ERROR]', { userId, error: error.message });
     }
+};
 
-    cleanupCallResources(callKey, callerId, receiverId, socket = null) {
-        // Clear timeouts
-        this.clearCallTimeout(callKey);
+const handleCallDisconnection = async (userId, socket) => {
+    const activeCall = activeCalls.get(userId);
+    if (!activeCall) return;
 
-        // Remove from collections
-        this.pendingCalls.delete(callKey);
-        this.activeCalls.delete(callerId);
-        this.activeCalls.delete(receiverId);
-        this.callTimings.delete(callKey);
-        this.callTimeouts.delete(callKey);
+    const { otherUserId, callKey } = activeCall;
 
-        logger.debug(`[CLEANUP] Resources cleaned for ${callKey}`, {
-            callerId,
-            receiverId
-        });
-    }
+    try {
+        const callTiming = callTimings.get(callKey);
+        if (callTiming) {
+            const endTime = new Date();
+            const duration = Math.round((endTime - callTiming.startTime) / 1000);
+            let callDuration = 0;
 
-    cleanupPendingCallsBySocket(socketId) {
-        for (const [callKey, callData] of this.pendingCalls.entries()) {
-            if (callData.socketId === socketId) {
-                this.pendingCalls.delete(callKey);
-                this.clearCallTimeout(callKey);
-                logger.debug(`[CLEANUP] Removed pending call ${callKey} for socket ${socketId}`);
+            if (callTiming.connectTime) {
+                callDuration = Math.round((endTime - callTiming.connectTime) / 1000);
             }
+
+            await Call.findByIdAndUpdate(callTiming.callRecordId, {
+                endTime,
+                duration,
+                status: 'DISCONNECTED',
+                disconnectedBy: userId
+            });
+
+            emitToUser(otherUserId, 'callEnded', {
+                reason: 'disconnected',
+                disconnectedBy: userId,
+                duration: callDuration,
+                totalDuration: duration,
+                callRecordId: callTiming.callRecordId
+            });
+
+            logger.info('[CALL_DISCONNECTED]', {
+                userId,
+                callKey,
+                callDuration,
+                totalDuration: duration
+            });
+        }
+
+        cleanupCallResources(callKey, userId, otherUserId);
+
+    } catch (error) {
+        logger.error('[CALL_DISCONNECTION_ERROR]', error);
+    }
+};
+
+const cleanupPendingCallsBySocket = (socketId) => {
+    for (const [callKey, callData] of pendingCalls.entries()) {
+        if (callData.socketId === socketId) {
+            pendingCalls.delete(callKey);
+            clearCallTimeout(callKey);
+            logger.debug('[CLEANUP_PENDING]', { callKey, socketId });
         }
     }
+};
 
-    async handleCallDisconnection(userId, socket) {
-        const activeCall = this.activeCalls.get(userId);
-        if (!activeCall) return;
+// Socket Event Handlers
+export const setupWebRTC = (io) => {
+    global.io = io;
 
-        const { otherUserId, callKey } = activeCall;
+    io.on('connection', (socket) => {
+        logger.http('[USER_CONNECTED]', {
+            socketId: socket.id,
+            ip: socket.handshake.address,
+            userAgent: socket.handshake.headers['user-agent']
+        });
 
-        try {
-            const callTiming = this.callTimings.get(callKey);
-            if (callTiming) {
-                const endTime = new Date();
-                const duration = Math.round((endTime - callTiming.startTime) / 1000);
-                let callDuration = 0;
-
-                if (callTiming.connectTime) {
-                    callDuration = Math.round((endTime - callTiming.connectTime) / 1000);
+        // User Management
+        socket.on('join', async ({ userId }) => {
+            try {
+                if (!userId) {
+                    throw new Error('User ID is required');
                 }
 
-                await Call.findByIdAndUpdate(callTiming.callRecordId, {
-                    endTime,
-                    duration,
-                    status: 'DISCONNECTED',
-                    disconnectedBy: userId
+                // Validate user exists
+                const user = await User.findById(userId);
+                if (!user) {
+                    throw new Error('User not found');
+                }
+
+                // Add user to connected users
+                if (!users.has(userId)) {
+                    users.set(userId, new Set());
+                }
+                users.get(userId).add(socket.id);
+
+                // Store userId in socket for easy access
+                socket.userId = userId;
+
+                // Update user status
+                await updateUserStatus(userId, 'Online');
+
+                logger.info('[JOIN_SUCCESS]', {
+                    userId,
+                    socketId: socket.id,
+                    totalSockets: users.get(userId).size,
+                    username: user.fullName || user.name
                 });
 
-                // Notify other user
-                this.emitToUser(otherUserId, 'callEnded', {
-                    reason: 'disconnected',
-                    disconnectedBy: userId,
+                socket.emit('joinSuccess', {
+                    userId,
+                    socketId: socket.id,
+                    userStatus: user.status,
+                    isOnline: user.isOnline
+                });
+
+                // Notify others about user coming online
+                broadcastUserStatus(userId, 'Online', user);
+
+            } catch (error) {
+                logger.error('[JOIN_ERROR]', { userId: socket.userId, error: error.message });
+                socket.emit('error', {
+                    type: 'JOIN_ERROR',
+                    message: error.message
+                });
+            }
+        });
+
+        socket.on('disconnect', async () => {
+            try {
+                const userId = socket.userId;
+                if (!userId) return;
+
+                logger.info('[USER_DISCONNECTED]', { userId, socketId: socket.id });
+
+                // Remove socket from user's connections
+                const userSockets = users.get(userId);
+                if (userSockets) {
+                    userSockets.delete(socket.id);
+                    if (userSockets.size === 0) {
+                        users.delete(userId);
+                        await updateUserStatus(userId, 'offline');
+                    }
+                }
+
+                // Handle active call disconnection
+                await handleCallDisconnection(userId, socket);
+
+                // Cleanup pending calls
+                cleanupPendingCallsBySocket(socket.id);
+
+                logger.debug('[DISCONNECT_COMPLETE]', { userId });
+
+            } catch (error) {
+                logger.error('[DISCONNECT_ERROR]', error);
+            }
+        });
+
+        socket.on('getOnlineStatus', async ({ userId }) => {
+            try {
+                const user = await User.findById(userId).select('status isOnline lastSeen');
+                if (user) {
+                    socket.emit('onlineStatus', {
+                        userId,
+                        status: user.status,
+                        isOnline: user.isOnline,
+                        lastSeen: user.lastSeen
+                    });
+                }
+            } catch (error) {
+                logger.error('[GET_STATUS_ERROR]', error);
+            }
+        });
+
+        // Call Lifecycle - FIXED FOR YOUR FRONTEND
+        socket.on('call', async ({ callerId, receiverId, callType = 'AUDIO' }) => {
+            let callKey;
+            try {
+                if (!callerId || !receiverId) {
+                    throw new Error('Caller and receiver IDs are required');
+                }
+
+                if (callerId === receiverId) {
+                    throw new Error('Cannot call yourself');
+                }
+
+                callKey = generateCallKey(callerId, receiverId);
+
+                logger.info('[CALL_INITIATE]', {
+                    callerId,
+                    receiverId,
+                    callType,
+                    socketId: socket.id,
+                    callKey
+                });
+
+                // Check user availability
+                await validateUserAvailability(callerId, receiverId, socket);
+
+                // Check for existing calls
+                if (isUserInCall(callerId) || isUserInCall(receiverId)) {
+                    logger.warn('[CALL_BUSY]', { callerId, receiverId });
+                    socket.emit('userBusy', {
+                        userId: receiverId,
+                        message: 'User is in another call'
+                    });
+                    return;
+                }
+
+                // Check for call conflicts
+                if (hasCallConflict(callKey)) {
+                    logger.warn('[CALL_CONFLICT]', { callKey });
+                    socket.emit('callConflict', {
+                        message: 'Call already in progress',
+                        callKey
+                    });
+                    return;
+                }
+
+                // Create call record
+                const callRecord = await createCallRecord({
+                    callerId,
+                    receiverId,
+                    callType,
+                    socketId: socket.id
+                });
+
+                // Setup pending call
+                pendingCalls.set(callKey, {
+                    callerId,
+                    receiverId,
+                    callType,
+                    callRecordId: callRecord._id,
+                    socketId: socket.id,
+                    timestamp: Date.now(),
+                    status: 'INITIATED'
+                });
+
+                // Set active call state - FIXED: Set to CONNECTING immediately for signaling
+                activeCalls.set(callerId, {
+                    otherUserId: receiverId,
+                    callKey,
+                    role: 'caller',
+                    status: CALL_STATES.CONNECTING,
+                    socketId: socket.id
+                });
+                
+                activeCalls.set(receiverId, {
+                    otherUserId: callerId,
+                    callKey,
+                    role: 'receiver', 
+                    status: CALL_STATES.RINGING,
+                    socketId: null
+                });
+
+                // Update call status to RINGING
+                await Call.findByIdAndUpdate(callRecord._id, {
+                    status: 'RINGING',
+                    startTime: new Date()
+                });
+
+                // Notify receiver
+                await notifyReceiver(callerId, receiverId, callType, callRecord);
+
+                // Set ring timeout
+                setRingTimeout(callKey, callerId, receiverId, callRecord._id);
+
+                // Immediately send callAccepted to caller to start WebRTC negotiation
+                socket.emit('callAccepted', {
+                    callRecordId: callRecord._id,
+                    receiverId,
+                    callerId
+                });
+
+                logger.info('[CALL_SETUP_COMPLETE]', {
+                    callKey,
+                    callRecordId: callRecord._id
+                });
+
+            } catch (error) {
+                logger.error('[CALL_INITIATE_ERROR]', error);
+                if (callKey) {
+                    cleanupCallResources(callKey, callerId, receiverId, socket);
+                }
+                socket.emit('callError', {
+                    message: 'Failed to initiate call',
+                    details: error.message
+                });
+            }
+        });
+
+        socket.on('acceptCall', async ({ receiverId, callerId, callRecordId }) => {
+            try {
+                const callKey = generateCallKey(callerId, receiverId);
+
+                logger.info('[CALL_ACCEPT]', {
+                    receiverId,
+                    callerId,
+                    callRecordId,
+                    socketId: socket.id
+                });
+
+                // Fetch call record
+                const callRecord = await Call.findById(callRecordId);
+                if (!callRecord) {
+                    throw new Error('Call record not found');
+                }
+
+                // Clear ring timeout
+                clearCallTimeout(callKey);
+
+                // Update receiver's socket ID in active calls
+                const receiverCallData = activeCalls.get(receiverId);
+                if (receiverCallData) {
+                    receiverCallData.socketId = socket.id;
+                    receiverCallData.status = CALL_STATES.CONNECTING;
+                    activeCalls.set(receiverId, receiverCallData);
+                }
+
+                // Update caller's status to CONNECTING
+                const callerCallData = activeCalls.get(callerId);
+                if (callerCallData) {
+                    callerCallData.status = CALL_STATES.CONNECTING;
+                    activeCalls.set(callerId, callerCallData);
+                }
+
+                // Update call record
+                callRecord.status = 'CONNECTING';
+                callRecord.connectTime = new Date();
+                if (!callRecord.socketIds) callRecord.socketIds = {};
+                callRecord.socketIds.receiver = socket.id;
+                await callRecord.save();
+
+                // Start call timing
+                callTimings.set(callKey, {
+                    startTime: new Date(),
+                    callRecordId: callRecord._id,
+                    callerId,
+                    receiverId,
+                    connectTime: callRecord.connectTime
+                });
+
+                // Fetch user details
+                const [callerUser, receiverUser] = await Promise.all([
+                    User.findById(callerId).select('name fullName profilePicture'),
+                    User.findById(receiverId).select('name fullName profilePicture')
+                ]);
+
+                // Send callAccepted to both parties
+                emitToUser(callerId, 'callAccepted', {
+                    callRecordId: callRecord._id,
+                    receiverId,
+                    callerId,
+                    receiverSocketId: socket.id
+                });
+
+                emitToUser(receiverId, 'callAccepted', {
+                    callRecordId: callRecord._id, 
+                    receiverId,
+                    callerId,
+                    callerSocketId: callRecord.socketIds?.caller
+                });
+
+                // Stop caller tune
+                emitToUser(callerId, 'stopCallerTune', { callerId });
+
+                // Remove from pending calls (now active)
+                pendingCalls.delete(callKey);
+
+                logger.info('[CALL_ACCEPTED]', {
+                    callKey,
+                    callRecordId: callRecord._id,
+                    connectTime: callRecord.connectTime
+                });
+
+            } catch (error) {
+                logger.error('[CALL_ACCEPT_ERROR]', error);
+                socket.emit('callError', {
+                    message: 'Failed to accept call',
+                    details: error.message
+                });
+            }
+        });
+
+        // WebRTC Signaling - FIXED FOR YOUR FRONTEND
+        socket.on('offer', async ({ offer, callerId, receiverId, callRecordId }) => {
+            const callKey = generateCallKey(callerId, receiverId);
+            
+            try {
+                logger.debug('[OFFER_RECEIVED]', { 
+                    callKey, 
+                    callRecordId, 
+                    from: callerId, 
+                    to: receiverId,
+                    socketId: socket.id 
+                });
+
+                if (!offer?.sdp || !callerId || !receiverId || !callRecordId) {
+                    throw new Error('Missing required fields for offer');
+                }
+
+                validateSDP('offer', offer);
+
+                // Forward offer to receiver
+                const sent = emitToUser(receiverId, 'offer', {
+                    offer,
+                    callerId,
+                    receiverId,
+                    callRecordId,
+                    timestamp: Date.now(),
+                });
+
+                if (!sent) {
+                    logger.warn('[OFFER_DELIVERY_FAILED] Receiver offline', { receiverId });
+                    // Buffer for when receiver comes online
+                    const buf = iceBuffer.get(callKey) || [];
+                    buf.push({ type: 'offer', data: offer, callerId, callRecordId });
+                    iceBuffer.set(callKey, buf);
+                } else {
+                    logger.debug('[OFFER_FORWARDED]', { callKey, receiverId });
+                }
+
+            } catch (err) {
+                logger.error('[OFFER_ERROR]', { 
+                    error: err.message, 
+                    callKey, 
+                    callRecordId 
+                });
+                emitSignalingError(socket, 'OFFER_ERROR', err, callRecordId);
+            }
+        });
+
+        socket.on('answer', async ({ answer, receiverId, callerId, callRecordId }) => {
+            const callKey = generateCallKey(callerId, receiverId);
+            
+            try {
+                logger.debug('[ANSWER_RECEIVED]', { 
+                    callKey, 
+                    callRecordId, 
+                    from: receiverId, 
+                    to: callerId,
+                    socketId: socket.id 
+                });
+
+                if (!answer?.sdp || !callerId || !receiverId || !callRecordId) {
+                    throw new Error('Missing required fields for answer');
+                }
+
+                validateSDP('answer', answer);
+
+                // Update call status to CONNECTED
+                await Call.findByIdAndUpdate(callRecordId, {
+                    status: 'CONNECTED',
+                    connectTime: new Date()
+                });
+
+                // Update active calls status
+                const callerCallData = activeCalls.get(callerId);
+                const receiverCallData = activeCalls.get(receiverId);
+                if (callerCallData) callerCallData.status = CALL_STATES.CONNECTED;
+                if (receiverCallData) receiverCallData.status = CALL_STATES.CONNECTED;
+
+                // Forward answer to caller
+                const sent = emitToUser(callerId, 'answer', {
+                    answer,
+                    callerId,
+                    receiverId,
+                    callRecordId,
+                    timestamp: Date.now(),
+                });
+
+                if (!sent) {
+                    logger.warn('[ANSWER_DELIVERY_FAILED] Caller offline', { callerId });
+                } else {
+                    logger.debug('[ANSWER_FORWARDED]', { callKey, callerId });
+                    // Flush any buffered ICE candidates for this call
+                    flushBufferedIce(callKey, callerId);
+                }
+
+            } catch (err) {
+                logger.error('[ANSWER_ERROR]', { 
+                    error: err.message, 
+                    callKey, 
+                    callRecordId 
+                });
+                emitSignalingError(socket, 'ANSWER_ERROR', err, callRecordId);
+            }
+        });
+
+        socket.on('iceCandidate', ({ candidate, callerId, receiverId, callRecordId }) => {
+            const callKey = generateCallKey(callerId, receiverId);
+            
+            try {
+                if (!candidate || !callerId || !receiverId || !callRecordId) {
+                    throw new Error('Missing required fields for ICE candidate');
+                }
+
+                validateIceCandidate(candidate);
+
+                logger.debug('[ICE_CANDIDATE_RECEIVED]', {
+                    callKey,
+                    callRecordId,
+                    from: socket.userId,
+                    to: socket.userId === callerId ? receiverId : callerId,
+                    candidate: candidate.candidate.substring(0, 50) + '...'
+                });
+
+                // Determine target user
+                const targetUserId = socket.userId === callerId ? receiverId : callerId;
+
+                // Forward ICE candidate to target user
+                const sent = emitToUser(targetUserId, 'iceCandidate', {
+                    candidate,
+                    callerId,
+                    receiverId,
+                    callRecordId,
+                    timestamp: Date.now(),
+                });
+
+                if (!sent) {
+                    logger.debug('[ICE_BUFFERED] Target user offline', { targetUserId });
+                    // Buffer ICE candidate
+                    const buf = iceBuffer.get(callKey) || [];
+                    buf.push({ candidate, callerId, callRecordId });
+                    iceBuffer.set(callKey, buf);
+                }
+
+            } catch (err) {
+                logger.error('[ICE_CANDIDATE_ERROR]', { 
+                    error: err.message, 
+                    callKey, 
+                    callRecordId 
+                });
+                emitSignalingError(socket, 'ICE_CANDIDATE_ERR', err, callRecordId);
+            }
+        });
+
+        socket.on('callMediaConnected', async ({ callRecordId }) => {
+            try {
+                logger.info('[MEDIA_CONNECTED]', { callRecordId, userId: socket.userId });
+                
+                // Update call record if needed
+                await Call.findByIdAndUpdate(callRecordId, {
+                    status: 'CONNECTED'
+                });
+
+            } catch (error) {
+                logger.error('[MEDIA_CONNECTED_ERROR]', error);
+            }
+        });
+
+        socket.on('endCall', async ({ callerId, receiverId, callRecordId, reason = 'normal' }) => {
+            try {
+                const callKey = generateCallKey(callerId, receiverId);
+
+                logger.info('[CALL_END]', {
+                    callerId,
+                    receiverId,
+                    callRecordId,
+                    reason,
+                    socketId: socket.id
+                });
+
+                // Calculate duration and update call record
+                const callTiming = callTimings.get(callKey);
+                const endTime = new Date();
+                let duration = 0;
+                let callDuration = 0;
+
+                if (callTiming) {
+                    duration = Math.round((endTime - callTiming.startTime) / 1000);
+                    if (callTiming.connectTime) {
+                        callDuration = Math.round((endTime - callTiming.connectTime) / 1000);
+                    }
+                }
+
+                const callRecord = await Call.findByIdAndUpdate(
+                    callRecordId,
+                    {
+                        endTime,
+                        duration,
+                        status: 'COMPLETED'
+                    },
+                    { new: true }
+                ).populate('userId', 'name fullName')
+                 .populate('astrologerId', 'name fullName');
+
+                // Notify the other party
+                const otherUserId = socket.userId === callerId ? receiverId : callerId;
+                emitToUser(otherUserId, 'callEnded', {
+                    callerId,
+                    receiverId,
                     duration: callDuration,
                     totalDuration: duration,
-                    callRecordId: callTiming.callRecordId
+                    reason,
+                    timestamp: endTime,
+                    callRecordId: callRecord._id
                 });
 
-                logger.info(`[CALL_DISCONNECTED] User ${userId} disconnected from call`, {
+                // Send push notifications if needed
+                if (callRecord.userId && callRecord.astrologerId) {
+                    const callerData = callRecord.userId._id.toString() === callerId ?
+                        callRecord.userId : callRecord.astrologerId;
+                    const receiverData = callRecord.userId._id.toString() === receiverId ?
+                        callRecord.userId : callRecord.astrologerId;
+
+                    await NotificationService.sendCallEndedNotification(
+                        receiverId,
+                        callerData,
+                        callRecord._id,
+                        callDuration
+                    );
+                }
+
+                // Cleanup resources
+                cleanupCallResources(callKey, callerId, receiverId, socket);
+
+                logger.info('[CALL_ENDED]', {
                     callKey,
                     callDuration,
-                    totalDuration: duration
+                    totalDuration: duration,
+                    callRecordId: callRecord._id,
+                    reason
+                });
+
+            } catch (error) {
+                logger.error('[CALL_END_ERROR]', error);
+                socket.emit('callError', {
+                    message: 'Failed to end call',
+                    details: error.message
                 });
             }
+        });
 
-            this.cleanupCallResources(callKey, userId, otherUserId);
+        // Additional event handlers for your frontend
+        socket.on('rejectCall', async ({ receiverId, callerId, callRecordId, reason = 'user_busy' }) => {
+            try {
+                const callKey = generateCallKey(callerId, receiverId);
 
-        } catch (error) {
-            logger.error(`Call disconnection handling error:`, error);
-        }
-    }
+                logger.info('[CALL_REJECT]', {
+                    receiverId,
+                    callerId,
+                    callRecordId,
+                    reason,
+                    socketId: socket.id
+                });
 
-    async updateUserStatus(userId, status) {
-        try {
-            const updateData = {
-                status,
-                isOnline: status === 'Online'
-            };
+                // Update call record
+                const callRecord = await Call.findByIdAndUpdate(
+                    callRecordId,
+                    {
+                        status: 'REJECTED',
+                        endTime: new Date(),
+                        feedback: reason
+                    },
+                    { new: true }
+                ).populate('userId', 'name fullName profilePicture');
 
-            if (status === 'offline') {
-                updateData.lastSeen = new Date();
-            }
+                // Notify caller
+                emitToUser(callerId, 'callRejected', {
+                    receiverId,
+                    callRecordId: callRecord._id,
+                    reason,
+                    timestamp: new Date()
+                });
 
-            const user = await User.findByIdAndUpdate(
-                userId,
-                updateData,
-                { new: true }
-            ).select('name fullName profilePicture status isOnline lastSeen');
+                // Stop caller tune
+                emitToUser(callerId, 'stopCallerTune', { callerId });
 
-            if (user) {
-                this.broadcastUserStatus(userId, user.status, user);
-                logger.debug(`User ${userId} status updated to ${status}`);
-            }
-        } catch (error) {
-            logger.error(`Status update error for user ${userId}:`, error);
-        }
-    }
+                // Cleanup resources
+                cleanupCallResources(callKey, callerId, receiverId, socket);
 
-    calculateNetworkQuality(metrics) {
-        if (!metrics) return 'UNKNOWN';
+                logger.info('[CALL_REJECTED]', {
+                    callKey,
+                    callRecordId: callRecord._id,
+                    reason
+                });
 
-        const { packetLoss, jitter, latency } = metrics;
-
-        if (packetLoss > 10 || jitter > 50 || latency > 300) {
-            return 'POOR';
-        } else if (packetLoss > 5 || jitter > 20 || latency > 150) {
-            return 'FAIR';
-        } else if (packetLoss > 2 || jitter > 10 || latency > 100) {
-            return 'GOOD';
-        } else {
-            return 'EXCELLENT';
-        }
-    }
-
-    findCallBySocket(socketId) {
-        // This would need additional tracking to map sockets to active calls
-        // For now, return null - implement based on your specific needs
-        return null;
-    }
-
-    // Additional handlers
-    async handleGetOnlineStatus(socket, { userId }) {
-        try {
-            const user = await User.findById(userId).select('status isOnline lastSeen');
-            if (user) {
-                socket.emit('onlineStatus', {
-                    userId,
-                    status: user.status,
-                    isOnline: user.isOnline,
-                    lastSeen: user.lastSeen
+            } catch (error) {
+                logger.error('[CALL_REJECT_ERROR]', error);
+                socket.emit('callError', {
+                    message: 'Failed to reject call',
+                    details: error.message
                 });
             }
-        } catch (error) {
-            logger.error(`Get online status error:`, error);
-        }
-    }
+        });
 
-    async handleUpdateStatus(socket, { status }) {
-        try {
-            const userId = socket.userId;
-            if (!userId) return;
+        socket.on('cancelCall', async ({ callerId, receiverId, callRecordId }) => {
+            const callKey = generateCallKey(callerId, receiverId);
 
-            await this.updateUserStatus(userId, status);
-            socket.emit('statusUpdated', { status });
+            try {
+                if (!callRecordId) {
+                    callRecordId = getCallRecordId(callKey);
+                }
 
-        } catch (error) {
-            logger.error(`Update status error:`, error);
-            socket.emit('error', {
-                type: 'STATUS_UPDATE_ERROR',
-                message: error.message
-            });
-        }
-    }
+                if (!callRecordId) {
+                    throw new Error('Call record ID not found');
+                }
 
-    // Get service statistics (for monitoring)
-    getServiceStats() {
+                logger.info('[CALL_CANCEL]', {
+                    callerId,
+                    receiverId,
+                    callRecordId,
+                    socketId: socket.id
+                });
+
+                // Update call record
+                const callRecord = await Call.findByIdAndUpdate(
+                    callRecordId,
+                    {
+                        status: 'CANCELLED',
+                        endTime: new Date()
+                    },
+                    { new: true }
+                );
+
+                // Notify receiver
+                emitToUser(receiverId, 'callCancelled', {
+                    callerId,
+                    callRecordId: callRecord._id,
+                    timestamp: new Date()
+                });
+
+                // Stop incoming call notification for receiver
+                emitToUser(receiverId, 'stopIncomingCall', {
+                    callerId,
+                    callRecordId: callRecord._id
+                });
+
+                logger.info('[CALL_CANCELLED]', {
+                    callKey,
+                    callRecordId: callRecord._id
+                });
+
+            } catch (error) {
+                logger.error('[CALL_CANCEL_ERROR]', { callerId, receiverId, error: error.message });
+                socket.emit('callError', {
+                    message: 'Failed to cancel call',
+                    details: error.message
+                });
+            } finally {
+                cleanupCallResources(callKey, callerId, receiverId, socket);
+            }
+        });
+
+        // User Status
+        socket.on('updateStatus', async ({ status }) => {
+            try {
+                const userId = socket.userId;
+                if (!userId) return;
+
+                await updateUserStatus(userId, status);
+                socket.emit('statusUpdated', { status });
+
+            } catch (error) {
+                logger.error('[UPDATE_STATUS_ERROR]', error);
+                socket.emit('error', {
+                    type: 'STATUS_UPDATE_ERROR',
+                    message: error.message
+                });
+            }
+        });
+    });
+
+    // Service statistics function
+    const getServiceStats = () => {
         return {
-            connectedUsers: this.users.size,
-            activeCalls: this.activeCalls.size,
-            pendingCalls: this.pendingCalls.size,
-            callTimings: this.callTimings.size,
-            userQueue: Array.from(this.users.entries()).map(([userId, sockets]) => ({
+            connectedUsers: users.size,
+            activeCalls: activeCalls.size,
+            pendingCalls: pendingCalls.size,
+            callTimings: callTimings.size,
+            userQueue: Array.from(users.entries()).map(([userId, sockets]) => ({
                 userId,
                 socketCount: sockets.size
             }))
         };
-    }
-}
+    };
 
-export const setupWebRTC = (io) => {
-    return new WebRTCService(io);
+    return {
+        getServiceStats
+    };
+};
+
+// Helper function for network quality calculation
+const calculateNetworkQuality = (metrics) => {
+    if (!metrics) return 'UNKNOWN';
+
+    const { packetLoss, jitter, latency } = metrics;
+
+    if (packetLoss > 10 || jitter > 50 || latency > 300) {
+        return 'POOR';
+    } else if (packetLoss > 5 || jitter > 20 || latency > 150) {
+        return 'FAIR';
+    } else if (packetLoss > 2 || jitter > 10 || latency > 100) {
+        return 'GOOD';
+    } else {
+        return 'EXCELLENT';
+    }
 };
