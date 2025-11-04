@@ -771,7 +771,7 @@ export class WebRTCService {
                 logger.debug('[ICE] Forwarded', logCtx);
             }
         } catch (err) {
-            this.emitSignalingError(socket, 'ICE_CANDIDATE_ERROR', err, callRecordId);
+            this.emitSignalingError(socket, 'ICE_CANDIDATE_ERR', err, callRecordId);
         }
     }
 
