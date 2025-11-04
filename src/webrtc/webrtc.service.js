@@ -17,7 +17,16 @@ export class WebRTCService {
 
         this.setupSocketHandlers();
     }
-
+    CALL_STATES = {
+        INITIATED: 'INITIATED',
+        RINGING: 'RINGING',
+        CONNECTING: 'CONNECTING',
+        CONNECTED: 'CONNECTED',
+        ENDED: 'ENDED',
+        CANCELLED: 'CANCELLED',
+        REJECTED: 'REJECTED',
+        MISSED: 'MISSED',
+    };
     setupSocketHandlers() {
         this.io.on('connection', (socket) => {
 
