@@ -14,19 +14,21 @@ export class WebRTCService {
         this.CALL_TIMEOUT = 45000; // 45 seconds
         this.RING_TIMEOUT = 30000; // 30 seconds
         this.CONFLICT_WINDOW = 5000; // 5 seconds
+        // ← MOVE CALL_STATES HERE (MUST BE BEFORE setupSocketHandlers)
+        this.CALL_STATES = {
+            INITIATED: 'INITIATED',
+            RINGING: 'RINGING',
+            CONNECTING: 'CONNECTING',
+            CONNECTED: 'CONNECTED',
+            ENDED: 'ENDED',
+            CANCELLED: 'CANCELLED',
+            REJECTED: 'REJECTED',
+            MISSED: 'MISSED',
+        };
 
         this.setupSocketHandlers();
     }
-    CALL_STATES = {
-        INITIATED: 'INITIATED',
-        RINGING: 'RINGING',
-        CONNECTING: 'CONNECTING',
-        CONNECTED: 'CONNECTED',
-        ENDED: 'ENDED',
-        CANCELLED: 'CANCELLED',
-        REJECTED: 'REJECTED',
-        MISSED: 'MISSED',
-    };
+
     setupSocketHandlers() {
         this.io.on('connection', (socket) => {
 
@@ -636,7 +638,7 @@ export class WebRTCService {
     // ─────────────────────────────────────────────────────────────────────────────
     //  1. OFFER
     // ─────────────────────────────────────────────────────────────────────────────
-    handleOffer(socket, { offer, callerId, receiverId, callRecordId }) {
+ async   handleOffer(socket, { offer, callerId, receiverId, callRecordId }) {
         const callKey = this.generateCallKey(callerId, receiverId);
         const logCtx = { callKey, callRecordId, callerId, receiverId, socketId: socket.id };
 
@@ -663,7 +665,7 @@ export class WebRTCService {
             });
 
             if (!sent) {
-                throw Object.assign(new Error('Receiver offline'), { code: 'OFFLINE' });
+                await this.flushBufferedIce(callKey, receiverId); // ← ADD
             }
 
             logger.debug('[OFFER] Forwarded', logCtx);
@@ -675,7 +677,7 @@ export class WebRTCService {
     // ─────────────────────────────────────────────────────────────────────────────
     //  2. ANSWER
     // ─────────────────────────────────────────────────────────────────────────────
-    handleAnswer(socket, { answer, receiverId, callerId, callRecordId }) {
+    async handleAnswer(socket, { answer, receiverId, callerId, callRecordId }) {
         const callKey = this.generateCallKey(callerId, receiverId);
         const logCtx = { callKey, callRecordId, callerId, receiverId, socketId: socket.id };
 
@@ -702,7 +704,7 @@ export class WebRTCService {
             });
 
             if (!sent) {
-                throw Object.assign(new Error('Caller offline'), { code: 'OFFLINE' });
+               await this.flushBufferedIce(callKey, callerId); // ← ADD
             }
 
             logger.debug('[ANSWER] Forwarded', logCtx);
