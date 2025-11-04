@@ -651,7 +651,7 @@ export class WebRTCService {
 
             // ── 2. State check (must be CONNECTING) ───────────────────────
             const active = this.activeCalls.get(callerId);
-            if (!active || active.callKey !== callKey || active.status !== CALL_STATES.CONNECTING) {
+            if (!active || active.callKey !== callKey || active.status !== this.CALL_STATES.CONNECTING) {
                 throw Object.assign(new Error('Call not in CONNECTING state'), { code: 'INVALID_STATE' });
             }
 
@@ -690,7 +690,7 @@ export class WebRTCService {
 
             // ── 2. State check ──────────────────────────────────────────────
             const active = this.activeCalls.get(receiverId);
-            if (!active || active.callKey !== callKey || active.status !== CALL_STATES.CONNECTING) {
+            if (!active || active.callKey !== callKey || active.status !== this.CALL_STATES.CONNECTING) {
                 throw Object.assign(new Error('Call not in CONNECTING state'), { code: 'INVALID_STATE' });
             }
 
@@ -736,7 +736,7 @@ export class WebRTCService {
 
             // ── 2. State check ──────────────────────────────────────────────
             const active = this.activeCalls.get(callerId);
-            if (!active || active.callKey !== callKey || active.status !== CALL_STATES.CONNECTING) {
+            if (!active || active.callKey !== callKey || active.status !== this.CALL_STATES.CONNECTING) {
                 logger.debug('[ICE] Dropped – call not CONNECTING', logCtx);
                 return; // silently drop
             }
