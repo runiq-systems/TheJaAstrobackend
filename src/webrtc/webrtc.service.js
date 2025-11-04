@@ -958,14 +958,20 @@ export class WebRTCService {
     }
     setActiveCallState(callerId, receiverId, callKey) {
         this.activeCalls.set(callerId, {
-            otherUserId: receiverId,
             callKey,
-            role: 'caller'
+            callerId,
+            receiverId,
+            status: this.CALL_STATES.CONNECTING,
+            pc: {}, // optional placeholder for later pc metadata if you keep it server-side
         });
+
+        // Optional: create entry for receiver too (helps later lookups):
         this.activeCalls.set(receiverId, {
-            otherUserId: callerId,
             callKey,
-            role: 'receiver'
+            callerId,
+            receiverId,
+            status: this.CALL_STATES.RINGING,
+            pc: {}
         });
     }
 
