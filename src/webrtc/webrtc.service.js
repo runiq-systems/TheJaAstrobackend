@@ -222,49 +222,34 @@ export class WebRTCService {
             });
         }
     }
-    // Helper: Get primary socket ID for a user
-    getSocketIdForUser(userId) {
-        const sockets = this.users.get(userId);
-        if (sockets && sockets.size > 0) {
-            return Array.from(sockets)[0]; // Return first active socket
-        }
-        return null;
-    }
 
-    // === IN handleAcceptCall ===
     async handleAcceptCall(socket, { receiverId, callerId, callRecordId }) {
-        const callKey = this.generateCallKey(callerId, receiverId);
-
         try {
+            const callKey = this.generateCallKey(callerId, receiverId);
+
             logger.info(`[CALL_ACCEPT] ${receiverId} accepting call from ${callerId}`, {
                 callRecordId,
                 socketId: socket.id
             });
 
-            // Fetch and validate call record
+            // Fetch call record
             const callRecord = await Call.findById(callRecordId);
             if (!callRecord) {
                 throw new Error('Call record not found');
             }
 
-            // Clear ringing timeout
+            // Clear ring timeout
             this.clearCallTimeout(callKey);
 
-            // === UPDATE CALL STATUS & TIMING ===
-            callRecord.status = CALL_STATES.CONNECTING; // or 'CONNECTING' if using string
+            // Update call record to connected
+            callRecord.status = 'CONNECTED';
             callRecord.connectTime = new Date();
-
-            // === STORE SOCKET IDS ===
-            callRecord.socketIds = callRecord.socketIds || {};
-            callRecord.socketIds.caller = this.getSocketIdForUser(callerId);
+            // set receiver socket id
+            if (!callRecord.socketIds) callRecord.socketIds = {};
             callRecord.socketIds.receiver = socket.id;
-
             await callRecord.save();
 
-            // === TRANSITION TO CONNECTING (WebRTC begins) ===
-            await this.transitionCallState(callKey, CALL_STATES.CONNECTING);
-
-            // Start timing
+            // Start call timing
             this.callTimings.set(callKey, {
                 startTime: new Date(),
                 callRecordId: callRecord._id,
@@ -273,28 +258,60 @@ export class WebRTCService {
                 connectTime: callRecord.connectTime
             });
 
-            // === NOTIFY BOTH USERS ===
-            const payload = {
+            // Optionally fetch caller/receiver user meta for nicer payload
+            const [callerUser, receiverUser] = await Promise.all([
+                User.findById(callerId).select('name fullName profilePicture'),
+                User.findById(receiverId).select('name fullName profilePicture')
+            ]);
+
+            // Prepare payloads
+            const payloadForCaller = {
+                callerId,               // original caller id
+                receiverId,             // who accepted
+                receiverSocketId: socket.id,
+                receiverName: receiverUser?.fullName || undefined,
+                receiverPicture: receiverUser?.profilePicture || undefined,
                 callRecordId: callRecord._id,
-                callerId,
-                receiverId,
                 callType: callRecord.callType,
+                timestamp: new Date()
             };
 
-            const sentToCaller = this.emitToUser(callerId, 'callAccepted', payload);
-            const sentToReceiver = this.emitToUser(receiverId, 'callAccepted', payload);
+            const payloadForReceiver = {
+                callerId,
+                callerSocketId: callRecord.socketIds?.caller || null,
+                callerName: callerUser?.fullName || undefined,
+                callerPicture: callerUser?.profilePicture || undefined,
+                callRecordId: callRecord._id,
+                callType: callRecord.callType,
+                timestamp: new Date()
+            };
 
+            // Emit to caller
+            const sentToCaller = this.emitToUser(callerId, 'callAccepted', payloadForCaller);
             if (!sentToCaller) {
-                logger.warn(`[EMIT] callAccepted not delivered to caller ${callerId}`);
-            }
-            if (!sentToReceiver) {
-                logger.warn(`[EMIT] callAccepted not delivered to receiver ${receiverId}`);
+                logger.warn(`[EMIT_WARN] callAccepted NOT delivered to caller ${callerId}. They may not be connected.`);
+            } else {
+                logger.info(`[EMIT] callAccepted delivered to caller ${callerId}`, { callRecordId: callRecord._id });
             }
 
-            // Remove from pending calls
+            // Emit to receiver (so receiver UI can also transition if it listens for the same event)
+            const sentToReceiver = this.emitToUser(receiverId, 'callAccepted', payloadForReceiver);
+            if (!sentToReceiver) {
+                logger.warn(`[EMIT_WARN] callAccepted NOT delivered to receiver ${receiverId}.`);
+            } else {
+                logger.info(`[EMIT] callAccepted delivered to receiver ${receiverId}`, { callRecordId: callRecord._id });
+            }
+
+            // Stop caller tune (existing behavior)
+            this.emitToUser(callerId, 'stopCallerTune', { callerId });
+
+            // Remove pending call and keep activeCalls as-is (connected)
             this.pendingCalls.delete(callKey);
 
-            logger.info(`[CALL_CONNECTING] ${callKey} - WebRTC signaling started`);
+            logger.info(`[CALL_CONNECTED] ${callKey}`, {
+                callRecordId: callRecord._id,
+                connectTime: callRecord.connectTime
+            });
 
         } catch (error) {
             logger.error(`Call accept error:`, error);
@@ -551,95 +568,222 @@ export class WebRTCService {
         }
     }
 
-    // WebRTC Signaling
+    // ─────────────────────────────────────────────────────────────────────────────
+    //  SIGNALING HELPERS (add to WebRTCService class)
+    // ─────────────────────────────────────────────────────────────────────────────
+    /**
+     * Generate a deterministic call key – used everywhere for lookup.
+     */
+    generateCallKey(a, b) {
+        return [a, b].sort().join('_');
+    }
+
+    /**
+     * Emit to a user (handles multiple sockets, offline users, returns boolean)
+     */
+    emitToUser(userId, event, payload) {
+        const sockets = this.users.get(userId);
+        if (!sockets || sockets.size === 0) {
+            logger.warn(`[EMIT] User offline – ${event}`, { userId, payload });
+            return false;
+        }
+        sockets.forEach(sid => this.io.to(sid).emit(event, payload));
+        return true;
+    }
+
+    /**
+     * Validate SDP payload (offer / answer)
+     */
+    validateSDP(type, data) {
+        if (!data || typeof data.sdp !== 'string' || !data.sdp.includes('m=')) {
+            throw new Error(`Invalid ${type} SDP`);
+        }
+    }
+
+    /**
+     * Validate ICE candidate
+     */
+    validateIceCandidate(candidate) {
+        if (!candidate || typeof candidate.candidate !== 'string') {
+            throw new Error('Invalid ICE candidate');
+        }
+    }
+
+    /**
+     * Standard error response
+     */
+    emitSignalingError(socket, type, err, callRecordId) {
+        const payload = {
+            type,
+            code: err.code || 'UNKNOWN',
+            message: err.message || 'Signaling error',
+            callRecordId,
+            timestamp: Date.now(),
+        };
+        logger.error(`[SIGNALING_ERROR] ${type}`, payload);
+        socket.emit('signalingError', payload);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    //  1. OFFER
+    // ─────────────────────────────────────────────────────────────────────────────
     handleOffer(socket, { offer, callerId, receiverId, callRecordId }) {
+        const callKey = this.generateCallKey(callerId, receiverId);
+        const logCtx = { callKey, callRecordId, callerId, receiverId, socketId: socket.id };
+
         try {
-            const callKey = this.generateCallKey(callerId, receiverId);
+            // ── 1. Input validation ────────────────────────────────────────
+            if (!offer?.sdp || !callerId || !receiverId || !callRecordId) {
+                throw Object.assign(new Error('Missing required fields'), { code: 'BAD_REQUEST' });
+            }
+            this.validateSDP('offer', offer);
 
-            // CRITICAL: Verify this call exists and is in correct state
-            const activeCall = this.activeCalls.get(callerId);
-            if (!activeCall || activeCall.callKey !== callKey) {
-                logger.warn(`[OFFER_REJECTED] Invalid call state`, { callerId, receiverId });
-                socket.emit('error', { type: 'INVALID_CALL', message: 'Call not active' });
-                return;
+            // ── 2. State check (must be CONNECTING) ───────────────────────
+            const active = this.activeCalls.get(callerId);
+            if (!active || active.callKey !== callKey || active.status !== CALL_STATES.CONNECTING) {
+                throw Object.assign(new Error('Call not in CONNECTING state'), { code: 'INVALID_STATE' });
             }
 
-            // Verify receiver is expecting this offer
-            const receiverState = this.activeCalls.get(receiverId);
-            if (!receiverState || receiverState.callKey !== callKey) {
-                logger.warn(`[OFFER_REJECTED] Receiver not in call`, { receiverId });
-                return;
-            }
-
-            logger.debug(`[OFFER] ${callerId} -> ${receiverId}`, { callRecordId });
-
-            this.emitToUser(receiverId, 'offer', {
+            // ── 3. Forward to receiver ─────────────────────────────────────
+            const sent = this.emitToUser(receiverId, 'offer', {
                 offer,
                 callerId,
                 receiverId,
                 callRecordId,
-                timestamp: Date.now()
+                timestamp: Date.now(),
             });
 
-        } catch (error) {
-            logger.error(`Offer handling error:`, error);
-            socket.emit('error', { type: 'OFFER_ERROR', message: error.message });
+            if (!sent) {
+                throw Object.assign(new Error('Receiver offline'), { code: 'OFFLINE' });
+            }
+
+            logger.debug('[OFFER] Forwarded', logCtx);
+        } catch (err) {
+            this.emitSignalingError(socket, 'OFFER_ERROR', err, callRecordId);
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────────
+    //  2. ANSWER
+    // ─────────────────────────────────────────────────────────────────────────────
     handleAnswer(socket, { answer, receiverId, callerId, callRecordId }) {
-        try {
-            const callKey = this.generateCallKey(callerId, receiverId);
+        const callKey = this.generateCallKey(callerId, receiverId);
+        const logCtx = { callKey, callRecordId, callerId, receiverId, socketId: socket.id };
 
-            const receiverState = this.activeCalls.get(receiverId);
-            if (!receiverState || receiverState.callKey !== callKey) {
-                logger.warn(`[ANSWER_REJECTED] Invalid receiver state`);
-                return;
+        try {
+            // ── 1. Validation ───────────────────────────────────────────────
+            if (!answer?.sdp || !callerId || !receiverId || !callRecordId) {
+                throw Object.assign(new Error('Missing required fields'), { code: 'BAD_REQUEST' });
+            }
+            this.validateSDP('answer', answer);
+
+            // ── 2. State check ──────────────────────────────────────────────
+            const active = this.activeCalls.get(receiverId);
+            if (!active || active.callKey !== callKey || active.status !== CALL_STATES.CONNECTING) {
+                throw Object.assign(new Error('Call not in CONNECTING state'), { code: 'INVALID_STATE' });
             }
 
-            logger.debug(`[ANSWER] ${receiverId} -> ${callerId}`);
-
-            this.emitToUser(callerId, 'answer', {
+            // ── 3. Forward to caller ───────────────────────────────────────
+            const sent = this.emitToUser(callerId, 'answer', {
                 answer,
-                receiverId,
                 callerId,
+                receiverId,
                 callRecordId,
-                timestamp: Date.now()
+                timestamp: Date.now(),
             });
 
-        } catch (error) {
-            logger.error(`Answer handling error:`, error);
+            if (!sent) {
+                throw Object.assign(new Error('Caller offline'), { code: 'OFFLINE' });
+            }
+
+            logger.debug('[ANSWER] Forwarded', logCtx);
+        } catch (err) {
+            this.emitSignalingError(socket, 'ANSWER_ERROR', err, callRecordId);
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────────
+    //  3. ICE CANDIDATE
+    // ─────────────────────────────────────────────────────────────────────────────
     handleIceCandidate(socket, { candidate, callerId, receiverId, callRecordId }) {
-        try {
-            const callKey = this.generateCallKey(callerId, receiverId);
-            const senderState = this.activeCalls.get(callerId);
+        const callKey = this.generateCallKey(callerId, receiverId);
+        const logCtx = {
+            callKey,
+            callRecordId,
+            callerId,
+            receiverId,
+            socketId: socket.id,
+            candidateType: candidate?.type,
+        };
 
-            if (!senderState || senderState.callKey !== callKey) {
-                logger.warn(`[ICE_DROP] Sender not in active call`, { callerId });
+        try {
+            // ── 1. Validation ───────────────────────────────────────────────
+            if (!candidate || !callerId || !receiverId || !callRecordId) {
+                throw Object.assign(new Error('Missing required fields'), { code: 'BAD_REQUEST' });
+            }
+            this.validateIceCandidate(candidate);
+
+            // ── 2. State check ──────────────────────────────────────────────
+            const active = this.activeCalls.get(callerId);
+            if (!active || active.callKey !== callKey || active.status !== CALL_STATES.CONNECTING) {
+                logger.debug('[ICE] Dropped – call not CONNECTING', logCtx);
+                return; // silently drop
+            }
+
+            // ── 3. Buffer if remote description not set yet ───────────────
+            const receiverActive = this.activeCalls.get(receiverId);
+            const remoteDescMissing = !receiverActive?.pc?.remoteDescription;
+
+            if (remoteDescMissing) {
+                // Store in per-call buffer (max 30 candidates)
+                const buf = this.iceBuffer.get(callKey) || [];
+                if (buf.length < 30) {
+                    buf.push({ candidate, callerId, callRecordId });
+                    this.iceBuffer.set(callKey, buf);
+                }
+                logger.debug('[ICE] Buffered (remote desc missing)', { ...logCtx, buffered: buf.length });
                 return;
             }
 
-            logger.debug(`[ICE_CANDIDATE] ${callerId} -> ${receiverId}`);
-
+            // ── 4. Forward ─────────────────────────────────────────────────
             const sent = this.emitToUser(receiverId, 'iceCandidate', {
                 candidate,
                 callerId,
                 receiverId,
                 callRecordId,
-                timestamp: Date.now()
+                timestamp: Date.now(),
             });
 
             if (!sent) {
-                logger.warn(`[ICE_BUFFER] Receiver offline, candidate buffered`, { receiverId });
-                // Optional: buffer for 10s then drop
+                logger.warn('[ICE] Receiver offline – candidate lost', logCtx);
+            } else {
+                logger.debug('[ICE] Forwarded', logCtx);
             }
-
-        } catch (error) {
-            logger.error(`ICE candidate error:`, error);
+        } catch (err) {
+            this.emitSignalingError(socket, 'ICE_CANDIDATE_ERROR', err, callRecordId);
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    //  Helper: flush buffered ICE when remote description arrives
+    //  Call this from handleAnswer / handleOffer after setRemoteDescription
+    // ─────────────────────────────────────────────────────────────────────────────
+    flushBufferedIce(callKey, targetUserId) {
+        const buf = this.iceBuffer.get(callKey) || [];
+        if (!buf.length) return;
+
+        buf.forEach(item => {
+            this.emitToUser(targetUserId, 'iceCandidate', {
+                candidate: item.candidate,
+                callerId: item.callerId,
+                receiverId: targetUserId,
+                callRecordId: item.callRecordId,
+                timestamp: Date.now(),
+            });
+        });
+
+        this.iceBuffer.delete(callKey);
+        logger.debug('[ICE] Flushed buffered candidates', { callKey, count: buf.length });
     }
 
     // Call Features
@@ -1073,7 +1217,6 @@ export class WebRTCService {
             });
         }
     }
-
 
     // Get service statistics (for monitoring)
     getServiceStats() {
