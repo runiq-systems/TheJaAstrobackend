@@ -10,6 +10,7 @@ export class WebRTCService {
         this.pendingCalls = new Map(); // callKey -> callData
         this.callTimings = new Map(); // callKey -> timingData
         this.callTimeouts = new Map(); // callKey -> timeout
+        this.iceBuffer = new Map();
 
         this.CALL_TIMEOUT = 45000; // 45 seconds
         this.RING_TIMEOUT = 30000; // 30 seconds
@@ -638,7 +639,7 @@ export class WebRTCService {
     // ─────────────────────────────────────────────────────────────────────────────
     //  1. OFFER
     // ─────────────────────────────────────────────────────────────────────────────
- async   handleOffer(socket, { offer, callerId, receiverId, callRecordId }) {
+    async handleOffer(socket, { offer, callerId, receiverId, callRecordId }) {
         const callKey = this.generateCallKey(callerId, receiverId);
         const logCtx = { callKey, callRecordId, callerId, receiverId, socketId: socket.id };
 
@@ -651,7 +652,7 @@ export class WebRTCService {
 
             // ── 2. State check (must be CONNECTING) ───────────────────────
             const active = this.activeCalls.get(callerId);
-                        console.log("active",active)
+            console.log("active", active)
 
             if (!active || active.callKey !== callKey) {
                 throw Object.assign(new Error('Call not in CONNECTING state'), { code: 'INVALID_STATE' });
@@ -692,7 +693,7 @@ export class WebRTCService {
 
             // ── 2. State check ──────────────────────────────────────────────
             const active = this.activeCalls.get(receiverId);
-            console.log("active",active)
+            console.log("active", active)
             if (!active || active.callKey !== callKey) {
                 throw Object.assign(new Error('Call not in CONNECTING state'), { code: 'INVALID_STATE' });
             }
@@ -707,7 +708,7 @@ export class WebRTCService {
             });
 
             if (!sent) {
-               await this.flushBufferedIce(callKey, callerId); // ← ADD
+                await this.flushBufferedIce(callKey, callerId); // ← ADD
             }
 
             logger.debug('[ANSWER] Forwarded', logCtx);
@@ -719,7 +720,8 @@ export class WebRTCService {
     // ─────────────────────────────────────────────────────────────────────────────
     //  3. ICE CANDIDATE
     // ─────────────────────────────────────────────────────────────────────────────
-    handleIceCandidate(socket, { candidate, callerId, receiverId, callRecordId }) {
+    // 🧩 Use arrow function to auto-bind `this`
+    handleIceCandidate = (socket, { candidate, callerId, receiverId, callRecordId }) => {
         const callKey = this.generateCallKey(callerId, receiverId);
         const logCtx = {
             callKey,
@@ -731,25 +733,29 @@ export class WebRTCService {
         };
 
         try {
-            // ── 1. Validation ───────────────────────────────────────────────
+            // ── 1. Validate inputs ──────────────────────────────
             if (!candidate || !callerId || !receiverId || !callRecordId) {
                 throw Object.assign(new Error('Missing required fields'), { code: 'BAD_REQUEST' });
             }
             this.validateIceCandidate(candidate);
 
-            // ── 2. State check ──────────────────────────────────────────────
+            // ── 2. Ensure maps exist ─────────────────────────────
+            if (!this.activeCalls || !this.iceBuffer) {
+                throw new Error('Server maps not initialized');
+            }
+
+            // ── 3. State check ──────────────────────────────────
             const active = this.activeCalls.get(callerId);
             if (!active || active.callKey !== callKey) {
                 logger.debug('[ICE] Dropped – call not CONNECTING', logCtx);
-                return; // silently drop
+                return;
             }
 
-            // ── 3. Buffer if remote description not set yet ───────────────
+            // ── 4. Buffer if remote description not set yet ─────
             const receiverActive = this.activeCalls.get(receiverId);
             const remoteDescMissing = !receiverActive?.pc?.remoteDescription;
 
             if (remoteDescMissing) {
-                // Store in per-call buffer (max 30 candidates)
                 const buf = this.iceBuffer.get(callKey) || [];
                 if (buf.length < 30) {
                     buf.push({ candidate, callerId, callRecordId });
@@ -759,7 +765,7 @@ export class WebRTCService {
                 return;
             }
 
-            // ── 4. Forward ─────────────────────────────────────────────────
+            // ── 5. Forward to receiver ───────────────────────────
             const sent = this.emitToUser(receiverId, 'iceCandidate', {
                 candidate,
                 callerId,
@@ -773,10 +779,11 @@ export class WebRTCService {
             } else {
                 logger.debug('[ICE] Forwarded', logCtx);
             }
+
         } catch (err) {
             this.emitSignalingError(socket, 'ICE_CANDIDATE_ERR', err, callRecordId);
         }
-    }
+    };
 
     // ─────────────────────────────────────────────────────────────────────────────
     //  Helper: flush buffered ICE when remote description arrives
