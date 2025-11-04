@@ -222,34 +222,49 @@ export class WebRTCService {
             });
         }
     }
+    // Helper: Get primary socket ID for a user
+    getSocketIdForUser(userId) {
+        const sockets = this.users.get(userId);
+        if (sockets && sockets.size > 0) {
+            return Array.from(sockets)[0]; // Return first active socket
+        }
+        return null;
+    }
 
+    // === IN handleAcceptCall ===
     async handleAcceptCall(socket, { receiverId, callerId, callRecordId }) {
-        try {
-            const callKey = this.generateCallKey(callerId, receiverId);
+        const callKey = this.generateCallKey(callerId, receiverId);
 
+        try {
             logger.info(`[CALL_ACCEPT] ${receiverId} accepting call from ${callerId}`, {
                 callRecordId,
                 socketId: socket.id
             });
 
-            // Fetch call record
+            // Fetch and validate call record
             const callRecord = await Call.findById(callRecordId);
             if (!callRecord) {
                 throw new Error('Call record not found');
             }
 
-            // Clear ring timeout
+            // Clear ringing timeout
             this.clearCallTimeout(callKey);
 
-            // Update call record to connected
-            callRecord.status = 'CONNECTED';
+            // === UPDATE CALL STATUS & TIMING ===
+            callRecord.status = CALL_STATES.CONNECTING; // or 'CONNECTING' if using string
             callRecord.connectTime = new Date();
-            // set receiver socket id
-            if (!callRecord.socketIds) callRecord.socketIds = {};
+
+            // === STORE SOCKET IDS ===
+            callRecord.socketIds = callRecord.socketIds || {};
+            callRecord.socketIds.caller = this.getSocketIdForUser(callerId);
             callRecord.socketIds.receiver = socket.id;
+
             await callRecord.save();
 
-            // Start call timing
+            // === TRANSITION TO CONNECTING (WebRTC begins) ===
+            await this.transitionCallState(callKey, CALL_STATES.CONNECTING);
+
+            // Start timing
             this.callTimings.set(callKey, {
                 startTime: new Date(),
                 callRecordId: callRecord._id,
@@ -258,60 +273,28 @@ export class WebRTCService {
                 connectTime: callRecord.connectTime
             });
 
-            // Optionally fetch caller/receiver user meta for nicer payload
-            const [callerUser, receiverUser] = await Promise.all([
-                User.findById(callerId).select('name fullName profilePicture'),
-                User.findById(receiverId).select('name fullName profilePicture')
-            ]);
-
-            // Prepare payloads
-            const payloadForCaller = {
-                callerId,               // original caller id
-                receiverId,             // who accepted
-                receiverSocketId: socket.id,
-                receiverName: receiverUser?.fullName || undefined,
-                receiverPicture: receiverUser?.profilePicture || undefined,
+            // === NOTIFY BOTH USERS ===
+            const payload = {
                 callRecordId: callRecord._id,
-                callType: callRecord.callType,
-                timestamp: new Date()
-            };
-
-            const payloadForReceiver = {
                 callerId,
-                callerSocketId: callRecord.socketIds?.caller || null,
-                callerName: callerUser?.fullName || undefined,
-                callerPicture: callerUser?.profilePicture || undefined,
-                callRecordId: callRecord._id,
+                receiverId,
                 callType: callRecord.callType,
-                timestamp: new Date()
             };
 
-            // Emit to caller
-            const sentToCaller = this.emitToUser(callerId, 'callAccepted', payloadForCaller);
+            const sentToCaller = this.emitToUser(callerId, 'callAccepted', payload);
+            const sentToReceiver = this.emitToUser(receiverId, 'callAccepted', payload);
+
             if (!sentToCaller) {
-                logger.warn(`[EMIT_WARN] callAccepted NOT delivered to caller ${callerId}. They may not be connected.`);
-            } else {
-                logger.info(`[EMIT] callAccepted delivered to caller ${callerId}`, { callRecordId: callRecord._id });
+                logger.warn(`[EMIT] callAccepted not delivered to caller ${callerId}`);
             }
-
-            // Emit to receiver (so receiver UI can also transition if it listens for the same event)
-            const sentToReceiver = this.emitToUser(receiverId, 'callAccepted', payloadForReceiver);
             if (!sentToReceiver) {
-                logger.warn(`[EMIT_WARN] callAccepted NOT delivered to receiver ${receiverId}.`);
-            } else {
-                logger.info(`[EMIT] callAccepted delivered to receiver ${receiverId}`, { callRecordId: callRecord._id });
+                logger.warn(`[EMIT] callAccepted not delivered to receiver ${receiverId}`);
             }
 
-            // Stop caller tune (existing behavior)
-            this.emitToUser(callerId, 'stopCallerTune', { callerId });
-
-            // Remove pending call and keep activeCalls as-is (connected)
+            // Remove from pending calls
             this.pendingCalls.delete(callKey);
 
-            logger.info(`[CALL_CONNECTED] ${callKey}`, {
-                callRecordId: callRecord._id,
-                connectTime: callRecord.connectTime
-            });
+            logger.info(`[CALL_CONNECTING] ${callKey} - WebRTC signaling started`);
 
         } catch (error) {
             logger.error(`Call accept error:`, error);
@@ -571,71 +554,91 @@ export class WebRTCService {
     // WebRTC Signaling
     handleOffer(socket, { offer, callerId, receiverId, callRecordId }) {
         try {
-            logger.debug(`[OFFER] ${callerId} -> ${receiverId}`, {
-                callRecordId,
-                socketId: socket.id
-            });
+            const callKey = this.generateCallKey(callerId, receiverId);
+
+            // CRITICAL: Verify this call exists and is in correct state
+            const activeCall = this.activeCalls.get(callerId);
+            if (!activeCall || activeCall.callKey !== callKey) {
+                logger.warn(`[OFFER_REJECTED] Invalid call state`, { callerId, receiverId });
+                socket.emit('error', { type: 'INVALID_CALL', message: 'Call not active' });
+                return;
+            }
+
+            // Verify receiver is expecting this offer
+            const receiverState = this.activeCalls.get(receiverId);
+            if (!receiverState || receiverState.callKey !== callKey) {
+                logger.warn(`[OFFER_REJECTED] Receiver not in call`, { receiverId });
+                return;
+            }
+
+            logger.debug(`[OFFER] ${callerId} -> ${receiverId}`, { callRecordId });
 
             this.emitToUser(receiverId, 'offer', {
                 offer,
                 callerId,
-                callRecordId,
-                timestamp: Date.now()
-            });
-
-        } catch (error) {
-            logger.error(`Offer handling error:`, error);
-            socket.emit('error', {
-                type: 'OFFER_ERROR',
-                message: error.message
-            });
-        }
-    }
-
-    handleAnswer(socket, { answer, receiverId, callerId, callRecordId }) {
-        try {
-            logger.debug(`[ANSWER] ${receiverId} -> ${callerId}`, {
-                callRecordId,
-                socketId: socket.id
-            });
-
-            this.emitToUser(callerId, 'answer', {
-                answer,
                 receiverId,
                 callRecordId,
                 timestamp: Date.now()
             });
 
         } catch (error) {
-            logger.error(`Answer handling error:`, error);
-            socket.emit('error', {
-                type: 'ANSWER_ERROR',
-                message: error.message
-            });
+            logger.error(`Offer handling error:`, error);
+            socket.emit('error', { type: 'OFFER_ERROR', message: error.message });
         }
     }
 
-    handleIceCandidate(socket, { candidate, callerId, receiverId, callRecordId }) {
+    handleAnswer(socket, { answer, receiverId, callerId, callRecordId }) {
         try {
-            logger.debug(`[ICE_CANDIDATE] ${callerId} -> ${receiverId}`, {
-                callRecordId,
-                socketId: socket.id,
-                candidateType: candidate?.type
-            });
+            const callKey = this.generateCallKey(callerId, receiverId);
 
-            this.emitToUser(receiverId, 'iceCandidate', {
-                candidate,
+            const receiverState = this.activeCalls.get(receiverId);
+            if (!receiverState || receiverState.callKey !== callKey) {
+                logger.warn(`[ANSWER_REJECTED] Invalid receiver state`);
+                return;
+            }
+
+            logger.debug(`[ANSWER] ${receiverId} -> ${callerId}`);
+
+            this.emitToUser(callerId, 'answer', {
+                answer,
+                receiverId,
                 callerId,
                 callRecordId,
                 timestamp: Date.now()
             });
 
         } catch (error) {
-            logger.error(`ICE candidate error:`, error);
-            socket.emit('error', {
-                type: 'ICE_CANDIDATE_ERROR',
-                message: error.message
+            logger.error(`Answer handling error:`, error);
+        }
+    }
+
+    handleIceCandidate(socket, { candidate, callerId, receiverId, callRecordId }) {
+        try {
+            const callKey = this.generateCallKey(callerId, receiverId);
+            const senderState = this.activeCalls.get(callerId);
+
+            if (!senderState || senderState.callKey !== callKey) {
+                logger.warn(`[ICE_DROP] Sender not in active call`, { callerId });
+                return;
+            }
+
+            logger.debug(`[ICE_CANDIDATE] ${callerId} -> ${receiverId}`);
+
+            const sent = this.emitToUser(receiverId, 'iceCandidate', {
+                candidate,
+                callerId,
+                receiverId,
+                callRecordId,
+                timestamp: Date.now()
             });
+
+            if (!sent) {
+                logger.warn(`[ICE_BUFFER] Receiver offline, candidate buffered`, { receiverId });
+                // Optional: buffer for 10s then drop
+            }
+
+        } catch (error) {
+            logger.error(`ICE candidate error:`, error);
         }
     }
 
@@ -1070,6 +1073,7 @@ export class WebRTCService {
             });
         }
     }
+
 
     // Get service statistics (for monitoring)
     getServiceStats() {
