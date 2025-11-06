@@ -948,6 +948,30 @@ export class WebRTCService {
         }
     }
 
+    // ---------------- Broadcast User Status ----------------
+   async broadcastUserStatus(userId, status, userData = {}) {
+        try {
+            const payload = {
+                userId,
+                status,
+                isOnline: status === 'Online',
+                lastSeen: userData.lastSeen || new Date(),
+                name: userData.fullName || userData.name,
+                profilePicture: userData.profilePicture || null
+            };
+
+            // Broadcast to all connected users
+            this.io.emit('userStatusUpdated', payload);
+
+            logger.info(`[USER_STATUS_BROADCAST] ${userId} -> ${status}`, {
+                name: userData.fullName || userData.name,
+                isOnline: payload.isOnline
+            });
+        } catch (err) {
+            logger.error(`[BROADCAST_STATUS_ERROR] user ${userId}`, err);
+        }
+    }
+
     async updateUserStatus(userId, status) {
         try {
             const updateData = { status, isOnline: status === 'Online' };
