@@ -540,11 +540,10 @@ export class WebRTCService {
         logger.error(`[SIGNALING_ERROR] ${type}`, payload);
         socket.emit('signalingError', payload);
     }
-
     // -------- OFFER --------
     async handleOffer(socket, { offer, callerId, receiverId, callRecordId }) {
         const callKey = this.generateCallKey(callerId, receiverId);
-        const logCtx = { callKey, callRecordId, callerId, receiverId, socketId: socket.id };
+        const logCtx = { callKey, callRecordId, callerId, receiverId, socketId: socket?.id };
 
         try {
             if (!offer?.sdp || !callerId || !receiverId || !callRecordId) {
@@ -552,9 +551,15 @@ export class WebRTCService {
             }
             this.validateSDP('offer', offer);
 
-            const active = this.activeCalls.get(callerId);
-            logger.debug("active", active);
-            if (!active || active.callKey !== callKey) {
+            // Be tolerant: accept if either side has an active entry with same callKey
+            const activeCaller = this.activeCalls.get(callerId);
+            const activeReceiver = this.activeCalls.get(receiverId);
+            const okState = (activeCaller && activeCaller.callKey === callKey) ||
+                (activeReceiver && activeReceiver.callKey === callKey);
+
+            logger.debug("activeCaller", activeCaller, "activeReceiver", activeReceiver);
+
+            if (!okState) {
                 throw Object.assign(new Error('Call not in CONNECTING state'), { code: 'INVALID_STATE' });
             }
 
@@ -566,13 +571,19 @@ export class WebRTCService {
                 timestamp: Date.now()
             });
 
-            console.log("sent",sent);
-            // if receiver not online, keep offer and allow buffering of ICE — doesn't drop.
-            if (!sent) {
-                logger.warn('[OFFER] Receiver offline, not delivered, keeping pending state', { receiverId, callKey });
-            }
+            logger.info('[OFFER] forwarded', { callKey, receiverId, sent });
 
-            logger.debug('[OFFER] Forwarded', logCtx);
+            // If we delivered it, flush any buffered ICE for the receiver immediately
+            if (sent) {
+                // flush buffered ICE (if any)
+                try {
+                    this.flushBufferedIce(callKey, receiverId);
+                } catch (err) {
+                    logger.warn('[OFFER] flushBufferedIce failed', { callKey, err: err.message });
+                }
+            } else {
+                logger.warn('[OFFER] Receiver offline, keeping pending state', { receiverId, callKey });
+            }
         } catch (err) {
             this.emitSignalingError(socket, 'OFFER_ERROR', err, callRecordId);
         }
@@ -581,7 +592,7 @@ export class WebRTCService {
     // -------- ANSWER --------
     async handleAnswer(socket, { answer, receiverId, callerId, callRecordId }) {
         const callKey = this.generateCallKey(callerId, receiverId);
-        const logCtx = { callKey, callRecordId, callerId, receiverId, socketId: socket.id };
+        const logCtx = { callKey, callRecordId, callerId, receiverId, socketId: socket?.id };
 
         try {
             if (!answer?.sdp || !callerId || !receiverId || !callRecordId) {
@@ -589,9 +600,15 @@ export class WebRTCService {
             }
             this.validateSDP('answer', answer);
 
-            const active = this.activeCalls.get(receiverId);
-            logger.debug("active", active);
-            if (!active || active.callKey !== callKey) {
+            // Be tolerant: accept if either side has an active entry with same callKey
+            const activeCaller = this.activeCalls.get(callerId);
+            const activeReceiver = this.activeCalls.get(receiverId);
+            const okState = (activeCaller && activeCaller.callKey === callKey) ||
+                (activeReceiver && activeReceiver.callKey === callKey);
+
+            logger.debug("activeCaller", activeCaller, "activeReceiver", activeReceiver);
+
+            if (!okState) {
                 throw Object.assign(new Error('Call not in CONNECTING state'), { code: 'INVALID_STATE' });
             }
 
@@ -603,44 +620,55 @@ export class WebRTCService {
                 timestamp: Date.now()
             });
 
-            // If caller offline, still flush buffered ICE when they come online
-            if (!sent) {
+            logger.info('[ANSWER] forwarded', { callKey, callerId, sent });
+
+            // If delivered, flush buffered ICE for caller immediately
+            if (sent) {
+                try {
+                    this.flushBufferedIce(callKey, callerId);
+                } catch (err) {
+                    logger.warn('[ANSWER] flushBufferedIce failed', { callKey, err: err.message });
+                }
+            } else {
                 logger.warn('[ANSWER] Caller offline, answer not delivered', { callerId, callKey });
             }
-
-            // after answer/offer ideally remote description set on client -> flush buffered ICE
-            // (Flushing is handled by flushBufferedIce when needed)
-            logger.debug('[ANSWER] Forwarded', logCtx);
         } catch (err) {
             this.emitSignalingError(socket, 'ANSWER_ERROR', err, callRecordId);
         }
     }
 
     // -------- ICE candidate handler (robust + normalize incoming keys) --------
-    handleIceCandidate(socket, payload) {
+    async handleIceCandidate(socket, payload) {
         try {
             // Accept candidate fields with multiple possible names from clients
-            const candidate = payload?.candidate;
+            const rawCandidate = payload?.candidate;
             const callerId = payload?.signalingCallerId || payload?.callerId || payload?.from || payload?.senderId;
             const receiverId = payload?.signalingReceiverId || payload?.receiverId || payload?.to || payload?.targetId;
             const callRecordId = payload?.callRecordId || payload?.callId || null;
 
-            if (!candidate || !callerId || !receiverId) {
-                console.warn("Invalid ICE candidate payload:", { candidate, callerId, receiverId });
+            if (!rawCandidate || !callerId || !receiverId) {
+                console.warn("Invalid ICE candidate payload:", { rawCandidate, callerId, receiverId });
                 return;
             }
+
+            // Normalize candidate into plain object (avoid any prototype issues)
+            const candidate = (typeof rawCandidate === 'object' && rawCandidate.candidate) ? {
+                candidate: String(rawCandidate.candidate),
+                sdpMid: rawCandidate.sdpMid ?? rawCandidate.sdpMid ?? null,
+                sdpMLineIndex: rawCandidate.sdpMLineIndex ?? rawCandidate.sdpMLineIndex ?? null
+            } : { candidate: String(rawCandidate) };
 
             const callKey = this.generateCallKey(callerId, receiverId);
 
             logger.debug("🧊 ICE candidate received:", {
                 callKey,
                 callRecordId,
-                candidateType: candidate?.candidate?.split(" ")[7] || "unknown",
+                candidateType: (candidate.candidate || '').split(" ")[7] || "unknown",
                 from: callerId,
                 to: receiverId
             });
 
-            // If receiver is online -> forward immediately
+            // Try forward immediately
             const forwarded = this.emitToUser(receiverId, 'iceCandidate', {
                 candidate,
                 callerId,
@@ -950,7 +978,7 @@ export class WebRTCService {
     }
 
     // ---------------- Broadcast User Status ----------------
-   async broadcastUserStatus(userId, status, userData = {}) {
+    async broadcastUserStatus(userId, status, userData = {}) {
         try {
             const payload = {
                 userId,
