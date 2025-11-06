@@ -566,6 +566,7 @@ export class WebRTCService {
                 timestamp: Date.now()
             });
 
+            console.log("sent",sent);
             // if receiver not online, keep offer and allow buffering of ICE — doesn't drop.
             if (!sent) {
                 logger.warn('[OFFER] Receiver offline, not delivered, keeping pending state', { receiverId, callKey });
