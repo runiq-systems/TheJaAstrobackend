@@ -572,12 +572,12 @@ export class WebRTCService {
 
 
     // -------- ANSWER --------
-    async handleAnswer(socket, { answer, receiverId, callerId, callRecordId }) {
+    async handleAnswer(socket, { answer, receiverId, callerId }) {
         const callKey = this.generateCallKey(callerId, receiverId);
-        const logCtx = { callKey, callRecordId, callerId, receiverId, socketId: socket?.id };
+        const logCtx = { callKey, callerId, receiverId, socketId: socket?.id };
 
         try {
-            if (!answer?.sdp || !callerId || !receiverId || !callRecordId) {
+            if (!answer?.sdp || !callerId || !receiverId ) {
                 throw Object.assign(new Error('Missing required fields'), { code: 'BAD_REQUEST' });
             }
             this.validateSDP('answer', answer);
@@ -598,7 +598,6 @@ export class WebRTCService {
                 answer,
                 callerId,
                 receiverId,
-                callRecordId,
                 timestamp: Date.now()
             });
 
@@ -615,7 +614,7 @@ export class WebRTCService {
                 logger.warn('[ANSWER] Caller offline, answer not delivered', { callerId, callKey });
             }
         } catch (err) {
-            this.emitSignalingError(socket, 'ANSWER_ERROR', err, callRecordId);
+            this.emitSignalingError(socket, 'ANSWER_ERROR', err,);
         }
     }
 
