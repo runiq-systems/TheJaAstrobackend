@@ -541,53 +541,35 @@ export class WebRTCService {
         socket.emit('signalingError', payload);
     }
     // -------- OFFER --------
-    async handleOffer(socket, { offer, callerId, receiverId, callRecordId }) {
-        const callKey = this.generateCallKey(callerId, receiverId);
-        const logCtx = { callKey, callRecordId, callerId, receiverId, socketId: socket?.id };
 
+
+
+    async handleOffer(socket, { offer, callerId, receiverId }) {
         try {
-            if (!offer?.sdp || !callerId || !receiverId || !callRecordId) {
-                throw Object.assign(new Error('Missing required fields'), { code: 'BAD_REQUEST' });
-            }
-            this.validateSDP('offer', offer);
+            console.log(`User ${callerId} sending offer to User ${receiverId}`);
 
-            // Be tolerant: accept if either side has an active entry with same callKey
-            const activeCaller = this.activeCalls.get(callerId);
-            const activeReceiver = this.activeCalls.get(receiverId);
-            const okState = (activeCaller && activeCaller.callKey === callKey) ||
-                (activeReceiver && activeReceiver.callKey === callKey);
+            // Update active call mapping
+            this.activeCalls.set(callerId, receiverId);
+            this.activeCalls.set(receiverId, callerId);
 
-            logger.debug("activeCaller", activeCaller, "activeReceiver", activeReceiver);
+            if (this.users.has(receiverId)) {
+                const receiverSockets = this.users.get(receiverId);
 
-            if (!okState) {
-                throw Object.assign(new Error('Call not in CONNECTING state'), { code: 'INVALID_STATE' });
-            }
-
-            const sent = this.emitToUser(receiverId, 'offer', {
-                offer,
-                callerId,
-                receiverId,
-                callRecordId,
-                timestamp: Date.now()
-            });
-
-            logger.info('[OFFER] forwarded', { callKey, receiverId, sent });
-
-            // If we delivered it, flush any buffered ICE for the receiver immediately
-            if (sent) {
-                // flush buffered ICE (if any)
-                try {
-                    this.flushBufferedIce(callKey, receiverId);
-                } catch (err) {
-                    logger.warn('[OFFER] flushBufferedIce failed', { callKey, err: err.message });
+                for (const socketId of receiverSockets) {
+                    socket.to(socketId).emit('offer', { offer, callerId });
                 }
+
+                console.log(`Offer sent to User ${receiverId}`);
             } else {
-                logger.warn('[OFFER] Receiver offline, keeping pending state', { receiverId, callKey });
+                socket.emit('userUnavailable', { receiverId });
+                console.warn(`User ${receiverId} not found during offer`);
             }
-        } catch (err) {
-            this.emitSignalingError(socket, 'OFFER_ERROR', err, callRecordId);
+        } catch (error) {
+            console.error(`Error in handleOffer: ${error.message}`);
+            socket.emit('callError', { message: 'Failed to process offer' });
         }
     }
+
 
     // -------- ANSWER --------
     async handleAnswer(socket, { answer, receiverId, callerId, callRecordId }) {
