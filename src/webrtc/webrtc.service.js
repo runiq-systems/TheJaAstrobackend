@@ -638,64 +638,59 @@ export class WebRTCService {
     }
 
     // -------- ICE candidate handler (robust + normalize incoming keys) --------
-    async handleIceCandidate(socket, payload) {
+    async handleIceCandidate(socket, { candidate, callerId, receiverId }) {
         try {
-            // Accept candidate fields with multiple possible names from clients
-            const rawCandidate = payload?.candidate;
-            const callerId = payload?.signalingCallerId || payload?.callerId || payload?.from || payload?.senderId;
-            const receiverId = payload?.signalingReceiverId || payload?.receiverId || payload?.to || payload?.targetId;
-            const callRecordId = payload?.callRecordId || payload?.callId || null;
+            console.log('ICE candidate received:', { callerId, receiverId });
 
-            if (!rawCandidate || !callerId || !receiverId) {
-                console.warn("Invalid ICE candidate payload:", { rawCandidate, callerId, receiverId });
+            // Validate ICE candidate
+            if (!candidate) {
+                console.warn('Invalid ICE candidate received');
+                socket.emit('error', {
+                    type: 'ICE_CANDIDATE_ERROR',
+                    message: 'Invalid ICE candidate',
+                });
                 return;
             }
 
-            // Normalize candidate into plain object (avoid any prototype issues)
-            const candidate = (typeof rawCandidate === 'object' && rawCandidate.candidate) ? {
-                candidate: String(rawCandidate.candidate),
-                sdpMid: rawCandidate.sdpMid ?? rawCandidate.sdpMid ?? null,
-                sdpMLineIndex: rawCandidate.sdpMLineIndex ?? rawCandidate.sdpMLineIndex ?? null
-            } : { candidate: String(rawCandidate) };
+            // Check if receiver exists
+            if (!this.users.has(receiverId)) {
+                console.warn(`Receiver ${receiverId} not found in users`);
+                socket.emit('error', {
+                    type: 'ICE_CANDIDATE_ERROR',
+                    message: 'Receiver not found',
+                });
+                return;
+            }
 
-            const callKey = this.generateCallKey(callerId, receiverId);
+            // Get all receiver socket IDs
+            const receiverSockets = this.users.get(receiverId);
+            if (!receiverSockets || receiverSockets.size === 0) {
+                console.warn(`No active sockets for receiver ${receiverId}`);
+                socket.emit('error', {
+                    type: 'ICE_CANDIDATE_ERROR',
+                    message: 'Receiver not connected',
+                });
+                return;
+            }
 
-            logger.debug("🧊 ICE candidate received:", {
-                callKey,
-                callRecordId,
-                candidateType: (candidate.candidate || '').split(" ")[7] || "unknown",
-                from: callerId,
-                to: receiverId
-            });
-
-            // Try forward immediately
-            const forwarded = this.emitToUser(receiverId, 'iceCandidate', {
-                candidate,
-                callerId,
-                receiverId,
-                callRecordId,
-                timestamp: Date.now()
-            });
-
-            if (!forwarded) {
-                // buffer candidate for later flushing when remote description is set
-                if (!this.iceBuffer.has(callKey)) this.iceBuffer.set(callKey, []);
-                this.iceBuffer.get(callKey).push({
+            // Forward ICE candidate to all receiver sockets
+            for (const socketId of receiverSockets) {
+                socket.to(socketId).emit('iceCandidate', {
                     candidate,
                     callerId,
-                    receiverId,
-                    callRecordId,
-                    timestamp: Date.now()
+                    timestamp: Date.now(),
                 });
-                logger.debug('[ICE] Receiver offline, buffered candidate', { callKey, buffered: this.iceBuffer.get(callKey).length });
-            } else {
-                logger.debug('✅ ICE candidate forwarded to receiver', { callerId, receiverId });
+                console.log(`ICE candidate forwarded to ${receiverId} via socket ${socketId}`);
             }
-        } catch (err) {
-            console.error("❌ Error in handleIceCandidate:", err);
+
+        } catch (error) {
+            console.error('Error in handleIceCandidate:', error.message);
+            socket.emit('error', {
+                type: 'ICE_CANDIDATE_ERROR',
+                message: 'Failed to process ICE candidate',
+            });
         }
     }
-
     // Flush buffered ICE (to be called when remote description is set on target user)
     flushBufferedIce(callKey, targetUserId) {
         const buf = this.iceBuffer.get(callKey) || [];
