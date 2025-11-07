@@ -573,50 +573,30 @@ export class WebRTCService {
 
     // -------- ANSWER --------
     async handleAnswer(socket, { answer, receiverId, callerId }) {
-        const callKey = this.generateCallKey(callerId, receiverId);
-        const logCtx = { callKey, callerId, receiverId, socketId: socket?.id };
-
         try {
-            if (!answer?.sdp || !callerId || !receiverId ) {
-                throw Object.assign(new Error('Missing required fields'), { code: 'BAD_REQUEST' });
-            }
-            this.validateSDP('answer', answer);
+            console.log(`User ${receiverId} sending answer to User ${callerId}`);
 
-            // Be tolerant: accept if either side has an active entry with same callKey
-            const activeCaller = this.activeCalls.get(callerId);
-            const activeReceiver = this.activeCalls.get(receiverId);
-            const okState = (activeCaller && activeCaller.callKey === callKey) ||
-                (activeReceiver && activeReceiver.callKey === callKey);
+            // Example: Future async DB call can go here
+            // await CallModel.updateOne({ callerId, receiverId }, { status: 'ANSWERED' });
 
-            logger.debug("activeCaller", activeCaller, "activeReceiver", activeReceiver);
+            if (this.users.has(callerId)) {
+                const callerSockets = this.users.get(callerId);
 
-            if (!okState) {
-                throw Object.assign(new Error('Call not in CONNECTING state'), { code: 'INVALID_STATE' });
-            }
-
-            const sent = this.emitToUser(callerId, 'answer', {
-                answer,
-                callerId,
-                receiverId,
-                timestamp: Date.now()
-            });
-
-            logger.info('[ANSWER] forwarded', { callKey, callerId, sent });
-
-            // If delivered, flush buffered ICE for caller immediately
-            if (sent) {
-                try {
-                    this.flushBufferedIce(callKey, callerId);
-                } catch (err) {
-                    logger.warn('[ANSWER] flushBufferedIce failed', { callKey, err: err.message });
+                for (const socketId of callerSockets) {
+                    socket.to(socketId).emit('answer', { answer, receiverId });
                 }
+
+                console.log(`Answer sent to User ${callerId}`);
             } else {
-                logger.warn('[ANSWER] Caller offline, answer not delivered', { callerId, callKey });
+                socket.emit('userUnavailable', { callerId });
+                console.warn(`User ${callerId} not found during answer`);
             }
-        } catch (err) {
-            this.emitSignalingError(socket, 'ANSWER_ERROR', err,);
+        } catch (error) {
+            console.error(`Error in handleAnswer: ${error.message}`);
+            socket.emit('callError', { message: 'Failed to process answer' });
         }
     }
+
 
     // -------- ICE candidate handler (robust + normalize incoming keys) --------
     async handleIceCandidate(socket, { candidate, callerId, receiverId }) {
