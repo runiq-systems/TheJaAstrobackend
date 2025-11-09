@@ -3,27 +3,29 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Parse the service account JSON safely
 let serviceAccount = null;
 
 try {
-  if (process.env.serviceAccount) {
-    serviceAccount = JSON.parse(process.env.serviceAccount);
-  } else if (process.env.serviceAccount1) {
-    serviceAccount = JSON.parse(process.env.serviceAccount1);
+  const jsonStr = process.env.serviceAccount || process.env.serviceAccount1;
+  if (!jsonStr) throw new Error('Firebase service account not set');
+  serviceAccount = JSON.parse(jsonStr);
+
+  // Fix private key newlines
+  if (serviceAccount.private_key?.includes('\\n')) {
+    serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
   }
-} catch (error) {
-  console.error("Error parsing Firebase service account JSON:", error);
-  process.exit(1); // Exit if there's an issue with the credentials
+} catch (err) {
+  console.error('❌ Error parsing Firebase credentials:', err);
+  process.exit(1);
 }
 
-if (!serviceAccount) {
-  throw new Error("No valid Firebase service account found.");
+try {
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
+  console.log('✅ Firebase initialized successfully');
+} catch (err) {
+  console.error('❌ Firebase init failed:', err);
 }
-
-// Initialize Firebase Admin SDK
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});
 
 export default admin;
