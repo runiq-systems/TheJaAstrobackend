@@ -7,7 +7,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { rateLimiter } from "./middleware/ratelimiter.js";
 import errorHandler from "./middleware/errorHandler.js";
-
+import admin from "./utils/firabse.js";
 import indexRoute from "./routes/indexRoute.js"
 import authRoute from "./routes/authRoute.js"
 import chatmessageRoute from './routes/chatapp/chatRoutes.js'
