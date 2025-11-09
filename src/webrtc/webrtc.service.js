@@ -18,6 +18,17 @@ export class WebRTCService {
         this.RING_TIMEOUT = 30000; // 30 seconds
         this.CONFLICT_WINDOW = 5000; // 5 seconds
 
+        this.CALL_STATES = {
+            INITIATED: 'INITIATED',
+            RINGING: 'RINGING',
+            CONNECTING: 'CONNECTING',
+            CONNECTED: 'CONNECTED',
+            ENDED: 'ENDED',
+            CANCELLED: 'CANCELLED',
+            REJECTED: 'REJECTED',
+            MISSED: 'MISSED',
+        };
+
         this.setupSocketHandlers();
     }
 
@@ -184,15 +195,14 @@ export class WebRTCService {
             const callKey = this.generateCallKey(callerId, receiverId);
             logger.info(`[CALL_ACCEPT] ${receiverId} accepting call from ${callerId}`, { callRecordId, socketId: socket.id });
 
-            // Get call record only
             const callRecord = await Call.findById(callRecordId);
             if (!callRecord) throw new Error('Call record not found');
 
             this.clearCallTimeout(callKey);
 
-            // Update call record
             callRecord.status = 'CONNECTED';
             callRecord.connectTime = new Date();
+            if (!callRecord.socketIds) callRecord.socketIds = {};
             callRecord.socketIds.receiver = socket.id;
             await callRecord.save();
 
@@ -204,10 +214,17 @@ export class WebRTCService {
                 connectTime: callRecord.connectTime
             });
 
-            // ✅ SIMPLIFIED: Notify caller without user details
-            this.emitToUser(callerId, 'callerAccepted', {
+            const [callerUser, receiverUser] = await Promise.all([
+                User.findById(callerId).select('name fullName profilePicture'),
+                User.findById(receiverId).select('name fullName profilePicture')
+            ]);
+
+            const payloadForCaller = {
+                callerId,
                 receiverId,
                 receiverSocketId: socket.id,
+                receiverName: receiverUser?.fullName,
+                receiverPicture: receiverUser?.profilePicture,
                 callRecordId: callRecord._id,
                 callType: callRecord.callType,
                 timestamp: new Date()
@@ -215,16 +232,21 @@ export class WebRTCService {
 
             const payloadForReceiver = {
                 callerId,
-                callerSocketId: socket.id,
+                callerSocketId: callRecord.socketIds?.caller || null,
+                callerName: callerUser?.fullName,
+                callerPicture: callerUser?.profilePicture,
                 callRecordId: callRecord._id,
                 callType: callRecord.callType,
                 timestamp: new Date()
-            });
+            };
 
-            // Stop caller tune
+            const sentToCaller = this.emitToUser(callerId, 'callAccepted', payloadForCaller);
+            if (!sentToCaller) logger.warn(`[EMIT_WARN] callAccepted NOT delivered to caller ${callerId}.`);
+
+            const sentToReceiver = this.emitToUser(receiverId, 'callAccepted', payloadForReceiver);
+            if (!sentToReceiver) logger.warn(`[EMIT_WARN] callAccepted NOT delivered to receiver ${receiverId}.`);
+
             this.emitToUser(callerId, 'stopCallerTune', { callerId });
-
-            // Cleanup pending call
             this.pendingCalls.delete(callKey);
 
             logger.info(`[CALL_CONNECTED] ${callKey}`, { callRecordId: callRecord._id, connectTime: callRecord.connectTime });
@@ -233,7 +255,6 @@ export class WebRTCService {
             socket.emit('callError', { message: 'Failed to accept call', details: error.message });
         }
     }
-
 
     async handleEndCall(socket, { callerId, receiverId, callRecordId, reason = 'normal' }) {
         try {
@@ -480,79 +501,50 @@ export class WebRTCService {
         }
     }
 
-    // WebRTC Signaling
-    handleOffer(socket, { offer, callerId, receiverId, callRecordId }) {
-        try {
-            logger.debug(`[OFFER] ${callerId} -> ${receiverId}`, {
-                callRecordId,
-                socketId: socket.id
-            });
+    // ---------- Signaling helpers ----------
+    generateCallKey(a, b) {
+        return [a, b].sort().join('_');
+    }
 
-            this.emitToUser(receiverId, 'offer', {
-                offer,
-                callerId,
-                callRecordId,
-                timestamp: Date.now()
-            });
+    // Single, consistent emitToUser implementation
+    emitToUser(userId, event, payload) {
+        const sockets = this.users.get(userId);
+        if (!sockets || sockets.size === 0) {
+            logger.warn(`[EMIT] User offline – ${event}`, { userId, payload });
+            return false;
+        }
+        sockets.forEach(sid => this.io.to(sid).emit(event, payload));
+        return true;
+    }
 
-        } catch (error) {
-            logger.error(`Offer handling error:`, error);
-            socket.emit('error', {
-                type: 'OFFER_ERROR',
-                message: error.message
-            });
+    validateSDP(type, data) {
+        if (!data || typeof data.sdp !== 'string' || !data.sdp.includes('m=')) {
+            throw new Error(`Invalid ${type} SDP`);
         }
     }
 
-    handleAnswer(socket, { answer, receiverId, callerId, callRecordId }) {
-        try {
-            logger.debug(`[ANSWER] ${receiverId} -> ${callerId}`, {
-                callRecordId,
-                socketId: socket.id
-            });
-
-            this.emitToUser(callerId, 'answer', {
-                answer,
-                receiverId,
-                callRecordId,
-                timestamp: Date.now()
-            });
-
-        } catch (error) {
-            logger.error(`Answer handling error:`, error);
-            socket.emit('error', {
-                type: 'ANSWER_ERROR',
-                message: error.message
-            });
+    validateIceCandidate(candidate) {
+        if (!candidate || typeof candidate.candidate !== 'string') {
+            throw new Error('Invalid ICE candidate');
         }
     }
 
-    handleIceCandidate(socket, { candidate, callerId, receiverId, callRecordId }) {
-        try {
-            logger.debug(`[ICE_CANDIDATE] ${callerId} -> ${receiverId}`, {
-                callRecordId,
-                socketId: socket.id,
-                candidateType: candidate?.type
-            });
-
-            this.emitToUser(receiverId, 'iceCandidate', {
-                candidate,
-                callerId,
-                callRecordId,
-                timestamp: Date.now()
-            });
-
-        } catch (error) {
-            logger.error(`ICE candidate error:`, error);
-            socket.emit('error', {
-                type: 'ICE_CANDIDATE_ERROR',
-                message: error.message
-            });
-        }
+    emitSignalingError(socket, type, err, callRecordId) {
+        const payload = {
+            type,
+            code: err.code || 'UNKNOWN',
+            message: err.message || 'Signaling error',
+            callRecordId,
+            timestamp: Date.now(),
+        };
+        logger.error(`[SIGNALING_ERROR] ${type}`, payload);
+        socket.emit('signalingError', payload);
     }
+    // -------- OFFER --------
 
-    // Call Features
-    handleToggleVideo(socket, { callRecordId, enabled, userId }) {
+
+
+    async handleOffer(socket, { offer, callerId, receiverId }) {
         try {
             console.log(`User ${callerId} sending offer to User ${receiverId}`);
 
@@ -718,16 +710,6 @@ export class WebRTCService {
         return pendingCall ? pendingCall.callRecordId : null;
     }
 
-
-    getCallRecordId(callKey) {
-        const pendingCall = this.pendingCalls.get(callKey);
-        return pendingCall ? pendingCall.callRecordId : null;
-    }
-
-    getCallRecordIdByUsers(callerId, receiverId) {
-        const callKey = this.generateCallKey(callerId, receiverId);
-        return this.getCallRecordId(callKey);
-    }
     setActiveCallState(callerId, receiverId, callKey) {
         // Save both entries for quick lookups, with otherUserId for easier disconnection handling
         this.activeCalls.set(callerId, {
