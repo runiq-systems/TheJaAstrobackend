@@ -1,19 +1,29 @@
 import admin from 'firebase-admin';
 import dotenv from 'dotenv';
+
 dotenv.config();
 
-// Parse the service account JSON from environment variable
-// console.log("process.env.serviceAccount",process.env.serviceAccount)
-const serviceAccount = JSON.parse(process.env.serviceAccount);
+// Parse the service account JSON safely
+let serviceAccount = null;
 
-// Fix private_key (replace escaped "\n" with actual newlines)
-serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+try {
+  if (process.env.serviceAccount) {
+    serviceAccount = JSON.parse(process.env.serviceAccount);
+  } else if (process.env.serviceAccount1) {
+    serviceAccount = JSON.parse(process.env.serviceAccount1);
+  }
+} catch (error) {
+  console.error("Error parsing Firebase service account JSON:", error);
+  process.exit(1); // Exit if there's an issue with the credentials
+}
+
+if (!serviceAccount) {
+  throw new Error("No valid Firebase service account found.");
+}
 
 // Initialize Firebase Admin SDK
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
-
-console.log("Firebase Admin SDK initialized with service account",serviceAccount);
 
 export default admin;
