@@ -25,6 +25,7 @@
     "express": "^5.1.0",
     "express-rate-limit": "^8.1.0",
     "express-session": "^1.18.2",
+    "firebase-admin": "^13.6.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.19.1",
     "mongose": "^0.0.2-security",
