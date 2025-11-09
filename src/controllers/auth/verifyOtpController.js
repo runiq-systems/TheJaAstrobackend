@@ -3,8 +3,10 @@ import { User } from "../../models/user.js";
 import logger from "../../utils/logger.js";
 import jwt from "jsonwebtoken";
 
+import admin from "../../utils/firabse.js";
+
 export async function verifyOtpController(req, res) {
-  const { phone, otp } = req.body;
+  const { phone, otp, deviceToken } = req.body;
   if (!phone || !otp) {
     logger.warn("Missing fields required");
     return res.status(400).json({
@@ -47,9 +49,19 @@ export async function verifyOtpController(req, res) {
     const refreshToken = jwt.sign(payload, JWT_SECRET_KEY);
 
     currentUser.refreshToken = refreshToken;
-
+    if (deviceToken) {
+      currentUser.deviceToken = deviceToken;
+      logger.info(`📱 Device token bound to user ${currentUser.phone}`);
+    }
     await currentUser.save();
 
+
+    try {
+      await admin.app(); // ensures Firebase is initialized
+      logger.info('🔥 Firebase app ready for notifications');
+    } catch (e) {
+      logger.warn('⚠️ Firebase not initialized:', e.message);
+    }
     return res.status(200).json({
       success: true,
       message: "OTP verified successfully.",
