@@ -83,3 +83,56 @@ export async function verifyOtpController(req, res) {
     });
   }
 }
+
+
+
+export async function sendNotification(req, res) {
+  try {
+    const { userId, title, description } = req.body;
+    // 1️⃣ Find user and check token
+    const user = await User.findById(userId);
+    if (!user || !user.deviceToken) {
+      console.warn(`❌ No device token found for user ${userId}`);
+      return;
+    }
+
+    const deviceToken = user.deviceToken;
+
+    // 2️⃣ Prepare payload
+    const message = {
+      token: deviceToken,
+      notification: {
+        title,
+        body: description,
+      },
+      android: {
+        priority: "high",
+      },
+      apns: {
+        payload: {
+          aps: {
+            alert: {
+              title,
+              body: description,
+            },
+            sound: "default",
+          },
+        },
+      },
+    };
+
+    // 3️⃣ Send the notification
+    const response = await admin.messaging().send(message);
+    console.log("✅ Notification sent successfully:", response);
+
+  } catch (error) {
+    console.error("⚠️ Error sending notification:", error);
+
+    // 4️⃣ Handle invalid or expired token
+    if (error.errorInfo?.code === "messaging/registration-token-not-registered" ||
+      error.errorInfo?.code === "messaging/invalid-registration-token") {
+      console.warn("⚠️ Invalid token detected. Removing it from DB...");
+      await User.findByIdAndUpdate(userId, { $unset: { deviceToken: 1 } });
+    }
+  }
+}
