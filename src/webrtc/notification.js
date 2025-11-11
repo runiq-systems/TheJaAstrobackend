@@ -1,5 +1,6 @@
 import admin from "../utils/firabse.js";
 import logger from "../utils/logger.js";
+import { User } from "../models/user.js";
 
 export class CallNotificationService {
     static async sendCallNotification({
