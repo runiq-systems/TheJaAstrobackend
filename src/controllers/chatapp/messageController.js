@@ -7,7 +7,7 @@ import { asyncHandler } from "../../utils/asyncHandler.js";
 import { emitSocketEvent } from "../../socket/index.js";
 import { ChatEventsEnum } from "../../constants.js";
 import { uploadOnCloudinary, deleteFromCloudinary } from "../../utils/cloudinary.js";
-
+import admin from "../../utils/firabse.js";
 /**
  * @desc    Get all messages in a chat
  * @route   GET /api/v1/messages/:chatId
@@ -103,35 +103,144 @@ export const getAllMessages = asyncHandler(async (req, res) => {
  * @route   POST /api/v1/messages/:chatId
  * @access  Private
  */
+// export const sendMessage = asyncHandler(async (req, res) => {
+//   try {
+
+
+//     const { chatId } = req.params;
+//     const userId = req.user.id;
+//     const { content, type = "text", replyTo, isForwarded = false } = req.body;
+
+//     // Validate required fields
+//     if (!content && (!req.files || req.files.length === 0)) {
+//       throw new ApiError(400, "Message content or media is required");
+//     }
+
+//     // Verify chat exists and user is participant
+//     const chat = await Chat.findOne({
+//       _id: chatId,
+//       participants: userId
+//     }).populate("participants", "_id");
+
+//     if (!chat) {
+//       throw new ApiError(404, "Chat not found or access denied");
+//     }
+
+//     // Check if replying to valid message
+//     if (replyTo) {
+//       const repliedMessage = await Message.findOne({
+//         _id: replyTo,
+//         chat: chatId,
+//         "deleted.isDeleted": false
+//       });
+
+//       if (!repliedMessage) {
+//         throw new ApiError(404, "Replied message not found");
+//       }
+//     }
+
+//     let messageData = {
+//       chat: chatId,
+//       sender: userId,
+//       type,
+//       isForwarded
+//     };
+
+//     // Handle text messages
+//     if (content && type === "text") {
+//       messageData.content = { text: content.trim() };
+//     }
+
+//     // Handle media uploads
+//     if (req.files && req.files.length > 0) {
+//       const mediaFiles = [];
+
+//       for (const file of req.files) {
+//         try {
+//           const uploadResult = await uploadOnCloudinary(file.path, "chat_media");
+
+//           mediaFiles.push({
+//             type: getMediaType(file.mimetype),
+//             url: uploadResult.url,
+//             publicId: uploadResult.public_id,
+//             filename: file.originalname,
+//             size: file.size
+//           });
+//         } catch (error) {
+//           console.error("Media upload failed:", error);
+//           throw new ApiError(500, "Failed to upload media files");
+//         }
+//       }
+
+//       messageData.content = { media: mediaFiles };
+//       messageData.type = mediaFiles[0].type;
+//     }
+
+//     // Add reply reference if exists
+//     if (replyTo) {
+//       messageData.replyTo = replyTo;
+//     }
+
+//     // Create message
+//     const message = await Message.create(messageData);
+
+//     // Populate message for response
+//     await message.populate([
+//       { path: "sender", select: "fullName username avatar" },
+//       {
+//         path: "replyTo",
+//         populate: {
+//           path: "sender",
+//           select: "fullName username avatar"
+//         }
+//       }
+//     ]);
+
+//     // Update chat's last message
+//     chat.lastMessage = message._id;
+//     await chat.save();
+
+//     // Emit socket event to the chat room only (removed individual participant emits to avoid duplicates)
+//     emitSocketEvent(req, chatId, ChatEventsEnum.NEW_MESSAGE_EVENT, message);
+
+//     return res.status(201).json(
+//       new ApiResponse(201, message, "Message sent successfully")
+//     );
+//   } catch (error) {
+//     return res
+//       .status(500)
+//       .json(new ApiResponse(500, null, "Internal Server Error"));
+
+//   }
+// });
+
+
 export const sendMessage = asyncHandler(async (req, res) => {
   try {
-
-
     const { chatId } = req.params;
     const userId = req.user.id;
     const { content, type = "text", replyTo, isForwarded = false } = req.body;
 
-    // Validate required fields
     if (!content && (!req.files || req.files.length === 0)) {
       throw new ApiError(400, "Message content or media is required");
     }
 
-    // Verify chat exists and user is participant
+    // ✅ Check chat exists
     const chat = await Chat.findOne({
       _id: chatId,
-      participants: userId
-    }).populate("participants", "_id");
+      participants: userId,
+    }).populate("participants", "_id fullName deviceToken");
 
     if (!chat) {
       throw new ApiError(404, "Chat not found or access denied");
     }
 
-    // Check if replying to valid message
+    // ✅ If reply message exists
     if (replyTo) {
       const repliedMessage = await Message.findOne({
         _id: replyTo,
         chat: chatId,
-        "deleted.isDeleted": false
+        "deleted.isDeleted": false,
       });
 
       if (!repliedMessage) {
@@ -139,81 +248,95 @@ export const sendMessage = asyncHandler(async (req, res) => {
       }
     }
 
+    // ✅ Prepare message data
     let messageData = {
       chat: chatId,
       sender: userId,
       type,
-      isForwarded
+      isForwarded,
     };
 
-    // Handle text messages
     if (content && type === "text") {
       messageData.content = { text: content.trim() };
     }
 
-    // Handle media uploads
+    // ✅ Handle media files
     if (req.files && req.files.length > 0) {
       const mediaFiles = [];
 
       for (const file of req.files) {
-        try {
-          const uploadResult = await uploadOnCloudinary(file.path, "chat_media");
+        const uploadResult = await uploadOnCloudinary(file.path, "chat_media");
 
-          mediaFiles.push({
-            type: getMediaType(file.mimetype),
-            url: uploadResult.url,
-            publicId: uploadResult.public_id,
-            filename: file.originalname,
-            size: file.size
-          });
-        } catch (error) {
-          console.error("Media upload failed:", error);
-          throw new ApiError(500, "Failed to upload media files");
-        }
+        mediaFiles.push({
+          type: getMediaType(file.mimetype),
+          url: uploadResult.url,
+          publicId: uploadResult.public_id,
+          filename: file.originalname,
+          size: file.size,
+        });
       }
 
       messageData.content = { media: mediaFiles };
       messageData.type = mediaFiles[0].type;
     }
 
-    // Add reply reference if exists
-    if (replyTo) {
-      messageData.replyTo = replyTo;
-    }
+    if (replyTo) messageData.replyTo = replyTo;
 
-    // Create message
+    // ✅ Create message
     const message = await Message.create(messageData);
 
-    // Populate message for response
+    // ✅ Populate sender details
     await message.populate([
       { path: "sender", select: "fullName username avatar" },
       {
         path: "replyTo",
-        populate: {
-          path: "sender",
-          select: "fullName username avatar"
-        }
-      }
+        populate: { path: "sender", select: "fullName username avatar" },
+      },
     ]);
 
-    // Update chat's last message
+    // ✅ Update chat last message
     chat.lastMessage = message._id;
     await chat.save();
 
-    // Emit socket event to the chat room only (removed individual participant emits to avoid duplicates)
+    // ✅ Emit real-time socket event
     emitSocketEvent(req, chatId, ChatEventsEnum.NEW_MESSAGE_EVENT, message);
 
-    return res.status(201).json(
-      new ApiResponse(201, message, "Message sent successfully")
+    // ✅ Send notifications to all other participants
+    const sender = message.sender;
+    const receiverList = chat.participants.filter(
+      (u) => u._id.toString() !== userId.toString()
     );
+
+    for (const receiver of receiverList) {
+      await sendNotification({
+        userId: receiver._id,
+        title: sender.fullName || "New Message",
+        message:
+          type === "text"
+            ? content
+            : type === "image"
+              ? "📸 Sent an image"
+              : "📎 Sent a file",
+        chatId,
+        messageId: message._id,
+        senderId: sender._id,
+        senderName: sender.fullName,
+        senderAvatar: sender.avatar,
+        type: "chat_message",
+        channelId: "chat_messages", // 👈 make sure this matches the channel you’ve created in Notifee
+      });
+    }
+
+    return res
+      .status(201)
+      .json(new ApiResponse(201, message, "Message sent successfully"));
   } catch (error) {
+    console.error("❌ Error in sendMessage:", error);
     return res
       .status(500)
       .json(new ApiResponse(500, null, "Internal Server Error"));
-
   }
 });
-
 /**
  * @desc    Delete a message
  * @route   DELETE /api/v1/messages/:messageId
@@ -358,3 +481,85 @@ const getMediaType = (mimetype) => {
   if (mimetype.startsWith("audio/")) return "audio";
   return "file";
 };
+
+
+
+export async function sendNotification({
+  userId,
+  title,
+  message,
+  chatId,
+  messageId,
+  senderId,
+  senderName,
+  senderAvatar,
+  type = "chat_message",
+  channelId = "chat_messages",
+}) {
+  try {
+    // 1️⃣ Fetch user's device token
+    const user = await User.findById(userId).select("deviceToken fullName");
+    if (!user) {
+      console.warn(`⚠️ No user found with ID: ${userId}`);
+      return;
+    }
+
+    if (!user.deviceToken) {
+      console.warn(`⚠️ No device token for user: ${userId}`);
+      return;
+    }
+
+    const deviceToken = user.deviceToken;
+
+    // 2️⃣ Prepare payload
+    const payload = {
+      token: deviceToken,
+      notification: {
+        title,
+        body: message,
+      },
+      data: {
+        type, // 'chat_message', 'incoming_call', etc.
+        channelId,
+        screen: "Chat",
+        chatId: chatId?.toString() || "",
+        messageId: messageId?.toString() || "",
+        senderId: senderId?.toString() || "",
+        senderName: senderName || "",
+        senderAvatar: senderAvatar || "",
+      },
+      android: {
+        priority: "high",
+        notification: {
+          channelId, // 👈 must match a created Notifee channel
+          sound: "default",
+          clickAction: "FLUTTER_NOTIFICATION_CLICK", // helps Android navigation
+        },
+      },
+      apns: {
+        headers: {
+          "apns-priority": "10",
+        },
+        payload: {
+          aps: {
+            alert: {
+              title,
+              body: message,
+            },
+            sound: "default",
+            contentAvailable: true,
+          },
+        },
+      },
+    };
+
+    // 3️⃣ Send FCM notification
+    const response = await admin.messaging().send(payload);
+    console.log(
+      `✅ Notification sent to ${user.fullName || userId} (${channelId}):`,
+      response
+    );
+  } catch (error) {
+    console.error("❌ Error sending notification:", error);
+  }
+}
