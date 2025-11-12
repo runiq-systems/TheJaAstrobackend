@@ -359,7 +359,7 @@ export class WebRTCService {
 
             const caller = await User.findById(callerId);
 
-            
+
 
             this.emitToUser(receiverId, "callCancelled", { callerId, callRecordId: callRecord._id });
             this.emitToUser(receiverId, "stopIncomingCall", { callerId, callRecordId: callRecord._id });
@@ -447,8 +447,8 @@ export class WebRTCService {
                 User.findById(receiverId).select('name fullName profilePicture')
             ]);
 
-            
-            
+
+
             // Notify both parties via socket
             this.emitToUser(receiverId, 'callEnded', {
                 callerId,
@@ -1145,25 +1145,32 @@ async function sendNotification_call(userId, title, message, type, receiverId, s
 
         const deviceToken = user.deviceToken;
 
-        // Construct the payload for FCM
+
+
         const payload = {
             android: {
                 priority: 'high',
+                notification: {
+                    channel_id: 'IncomingCall', // Add your channel ID here
+                },
+            },
+            notification: {
+                title: title,
+                body: message,
             },
             data: {
-                screen: 'incoming_Call', // Target screen
+                screen: 'Incomingcall', // Target screen
                 type: type, // Type of call
                 caller_name: senderName,
                 caller_id: userId,
                 time: Math.floor(Date.now() / 1000).toString(),
                 call_type: "audio", // or "video"
                 params: JSON.stringify({
-                    user_id: userId, // Include Call ID
-                    agent_id: receiverId, // Receiver ID
-                    username: senderName, // Sender name
-                    imageurl: senderAvatar || 'https://investogram.ukvalley.com/avatars/default.png', // Sender avatar with default fallback
+                    user_id: userId,
+                    agent_id: receiverId,
+                    username: senderName,
+                    imageurl: senderAvatar || 'https://investogram.ukvalley.com/avatars/default.png',
                 }),
-                // Add any additional parameters if needed
             },
 
 
@@ -1193,6 +1200,12 @@ async function sendNotification(userId, title, message, type, receiverId, sender
 
         // Construct the payload for FCM
         const payload = {
+            android: {
+                priority: 'high',
+                notification: {
+                    channel_id: 'IncomingCall', // Add your channel ID here
+                },
+            },
             notification: {
                 title: title,
                 body: message,
@@ -1236,12 +1249,15 @@ async function sendMNotification(userId, title, message, type, receiverId, sende
         // Construct the payload for FCM
         const payload = {
 
+            android: {
+                priority: 'high',
+                notification: {
+                    channel_id: 'IncomingCall', // Add your channel ID here
+                },
+            },
             notification: {
                 title: title,
                 body: message,
-            },
-            android: {
-                priority: 'high',
             },
             data: {
                 screen: 'Call_list', // Target screen
