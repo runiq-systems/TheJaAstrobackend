@@ -1,8 +1,9 @@
-import { User } from '../models/user.js';
-import { NotificationService } from './notification.service.js';
-import logger from '../utils/logger.js';
-import Call from '../models/calllogs/call.js';
-import admin from '../utils/firabse.js';
+import { User } from "../models/user.js";
+import { NotificationService } from "./notification.service.js";
+import logger from "../utils/logger.js";
+import Call from "../models/calllogs/call.js";
+import admin from "../utils/firabse.js";
+import { CallNotificationService } from "./notification.js";
 
 export class WebRTCService {
   constructor(io) {
@@ -136,91 +137,87 @@ export class WebRTCService {
     }
   }
 
-    // ---------------- Call management (unchanged logic, improved fields) ----------------
-    async handleCall(socket, { callerId, receiverId, callType = "AUDIO" }) {
-        let callKey;
+  // ---------------- Call management (unchanged logic, improved fields) ----------------
+  async handleCall(socket, { callerId, receiverId, callType = "AUDIO" }) {
+    let callKey;
+    try {
+      if (!callerId || !receiverId)
+        throw new Error("Caller and receiver IDs are required");
+      if (callerId === receiverId) throw new Error("You cannot call yourself");
 
-        try {
-            // 🧩 1️⃣ Validation
-            if (!callerId || !receiverId) throw new Error("Caller and receiver IDs are required");
-            if (callerId === receiverId) throw new Error("You cannot call yourself");
+      callKey = this.generateCallKey(callerId, receiverId);
+      await this.validateUserAvailability(callerId, receiverId, socket);
 
-            callKey = this.generateCallKey(callerId, receiverId);
+      if (this.isUserInCall(callerId) || this.isUserInCall(receiverId)) {
+        socket.emit("userBusy", {
+          userId: receiverId,
+          message: "User is currently in another call",
+        });
+        return;
+      }
 
-            // Ensure both users are valid and online
-            await this.validateUserAvailability(callerId, receiverId, socket);
+      const callRecord = await this.createCallRecord({
+        callerId,
+        receiverId,
+        callType,
+        socketId: socket.id,
+        status: "INITIATED",
+      });
 
-            // 🧩 2️⃣ Prevent overlapping calls
-            if (this.isUserInCall(callerId) || this.isUserInCall(receiverId)) {
-                socket.emit("userBusy", { userId: receiverId, message: "User is currently in another call" });
-                return;
-            }
+      this.setupPendingCall(callKey, {
+        callerId,
+        receiverId,
+        callType,
+        callRecordId: callRecord._id,
+        socketId: socket.id,
+        timestamp: Date.now(),
+        status: "INITIATED",
+      });
 
-            // 🧩 3️⃣ Create call record
-            const callRecord = await this.createCallRecord({
-                callerId,
-                receiverId,
-                callType,
-                socketId: socket.id,
-                status: "INITIATED",
-            });
+      this.setActiveCallState(callerId, receiverId, callKey);
+      await callRecord.markRinging();
 
-            // 🧩 4️⃣ Store pending call state
-            this.setupPendingCall(callKey, {
-                callerId,
-                receiverId,
-                callType,
-                callRecordId: callRecord._id,
-                socketId: socket.id,
-                timestamp: Date.now(),
-                status: "INITIATED",
-            });
+      // Get caller info for notification
 
-            // Mark both users as “in call” temporarily
-            this.setActiveCallState(callerId, receiverId, callKey);
+      // ✅ Send incoming call notification
+      // Inside handleCall after you fetch the caller info
+      const caller = await User.findById(callerId);
 
-            // 🧩 5️⃣ Update DB record
-            await callRecord.markRinging();
+      // ✅ Send incoming call notification
+      await sendNotification_call({
+        targetUserId: receiverId, // receiver (target) user id
+        title: "Incoming Call",
+        body: `${caller?.fullName || "Unknown"} is calling you`,
+        type: "incoming",
+        callerId: callerId,
+        callerName: caller?.fullName || caller?.name || "Unknown",
+        callerAvatar: caller?.profilePicture,
+        callRecordId: callRecord._id,
+        callType: callType === "VIDEO" ? "video" : "audio",
+      });
 
-            // 🧩 6️⃣ Notify receiver via socket (if connected)
-            await this.notifyReceiver(callerId, receiverId, callType, callRecord);
+      // ✅ Emit socket event for real-time UI
+      this.emitToUser(receiverId, "incomingCall", {
+        callerId,
+        receiverId,
+        callerName: caller?.name,
+        callerPicture: caller?.profilePicture,
+        callType,
+        callRecordId: callRecord._id,
+        timestamp: Date.now(),
+      });
 
-            // 🧩 7️⃣ Send incoming call push notification (Firebase)
-            const caller = await User.findById(callerId);
-            const callerName = caller?.name || "Unknown Caller";
-            const callerAvatar =
-                caller?.profilePicture || "https://investogram.ukvalley.com/avatars/default.png";
-            const callerEmail = caller?.email || "N/A";
-
-            await sendCallNotification({
-                targetUserId: receiverId,
-                title: "Incoming Call",
-                message: `${callerName} is calling you`,
-                type: "incoming",
-                fromUserId: callerId,
-                fromName: callerName,
-                fromAvatar: callerAvatar,
-                fromEmail: callerEmail,
-                screen: "IncomingCall",
-                callType: callType.toLowerCase(), // "audio" or "video"
-            });
-
-            // 🧩 8️⃣ Set timeout for unanswered calls (auto-cancel after 30s)
-            this.setRingTimeout(callKey, callerId, receiverId, callRecord._id, 30000);
-
-            logger.info(`[📞 CALL_SETUP_COMPLETE] Key: ${callKey}`, { callRecordId: callRecord._id });
-        } catch (error) {
-            logger.error(`[❌ CALL_ERROR] ${callKey || "UNKNOWN_KEY"}:`, error);
-
-            // 🧩 9️⃣ Cleanup and notify caller
-            this.cleanupCallResources(callKey, callerId, receiverId, socket);
-
-            socket.emit("callError", {
-                message: "Failed to initiate call",
-                details: error.message,
-            });
-        }
+      this.setRingTimeout(callKey, callerId, receiverId, callRecord._id);
+      logger.info(`[📞 CALL_SETUP_COMPLETE] ${callKey}`);
+    } catch (error) {
+      logger.error(`[❌ CALL_ERROR] ${callKey || "UNKNOWN"}:`, error);
+      this.cleanupCallResources(callKey, callerId, receiverId, socket);
+      socket.emit("callError", {
+        message: "Failed to initiate call",
+        details: error.message,
+      });
     }
+  }
 
   setRingTimeout(
     callKey,
@@ -236,25 +233,24 @@ export class WebRTCService {
         await this.updateCallStatus(callRecordId, "MISSED");
         this.cleanupCallResources(callKey, callerId, receiverId);
 
-                // Notify both parties
-                this.io.to(pending.socketId).emit("callMissed", { receiverId });
-                this.io.to(receiverId).emit("callMissed", { callerId });
+        // Notify both parties
+        this.io.to(pending.socketId).emit("callMissed", { receiverId });
+        this.io.to(receiverId).emit("callMissed", { callerId });
+        const caller = await User.findById(callerId);
 
-                // Send missed call push notification
-                await sendCallNotification({
-                    targetUserId: receiverId,
-                    title: "Missed Call",
-                    message: `You missed a call from ${callerId}`,
-                    type: "missed",
-                    fromUserId: callerId,
-                    fromName: "Missed Call",
-                    screen: "CallHistory",
-                });
-            }
-        }, timeoutMs);
-    }
-
-
+        // ✅ Send call cancelled notification
+        await sendMNotification(
+          receiverId, // userId → receiver
+          "Call Cancelled", // title
+          `${caller?.fullName || "Caller"} cancelled the call`, // message
+          "cancelled", // type
+          callerId, // receiverId (from caller)
+          caller?.fullName, // senderName
+          caller?.profilePicture // senderAvatar
+        );
+      }
+    }, timeoutMs);
+  }
 
   async handleAcceptCall(socket, { receiverId, callerId, callRecordId }) {
     try {
@@ -332,12 +328,137 @@ export class WebRTCService {
       this.emitToUser(callerId, "stopCallerTune", { callerId });
       this.pendingCalls.delete(callKey);
 
-            logger.info(`[CALL_CONNECTED] ${callKey}`, { callRecordId: callRecord._id, connectTime: callRecord.connectTime });
-        } catch (error) {
-            logger.error(`Call accept error:`, error);
-            socket.emit('callError', { message: 'Failed to accept call', details: error.message });
-        }
+      logger.info(`[CALL_CONNECTED] ${callKey}`, {
+        callRecordId: callRecord._id,
+        connectTime: callRecord.connectTime,
+      });
+    } catch (error) {
+      logger.error(`Call accept error:`, error);
+      socket.emit("callError", {
+        message: "Failed to accept call",
+        details: error.message,
+      });
     }
+  }
+
+  async handleRejectCall(
+    socket,
+    { receiverId, callerId, callRecordId, reason = "user_busy" }
+  ) {
+    try {
+      const callKey = this.generateCallKey(callerId, receiverId);
+
+      const callRecord = await Call.findByIdAndUpdate(
+        callRecordId,
+        { status: "REJECTED", endTime: new Date(), feedback: reason },
+        { new: true }
+      );
+
+      const receiver = await User.findById(receiverId);
+
+      // ✅ Send call rejected notification
+      await sendNotification(
+        callerId, // userId → caller receives it
+        "Call Rejected", // title
+        `${receiver?.fullName || "User"} rejected your call`, // message
+        "rejected", // type
+        receiverId, // receiverId
+        receiver?.fullName, // senderName
+        receiver?.profilePicture // senderAvatar
+      );
+
+      this.emitToUser(callerId, "callRejected", {
+        receiverId,
+        callRecordId: callRecord._id,
+        reason,
+        timestamp: new Date(),
+      });
+
+      this.emitToUser(callerId, "stopCallerTune", { callerId });
+
+      this.cleanupCallResources(callKey, callerId, receiverId, socket);
+      logger.info(`[CALL_REJECTED] ${callKey}`);
+    } catch (error) {
+      logger.error(`Call reject error:`, error);
+      socket.emit("callError", {
+        message: "Failed to reject call",
+        details: error.message,
+      });
+    }
+  }
+
+  async handleCancelCall(socket, { callerId, receiverId, callRecordId }) {
+    const callKey = this.generateCallKey(callerId, receiverId);
+
+    try {
+      if (!callRecordId) callRecordId = this.getCallRecordId(callKey);
+      if (!callRecordId) throw new Error("Call record ID not found");
+
+      const callRecord = await Call.findByIdAndUpdate(
+        callRecordId,
+        { status: "CANCELLED", endTime: new Date() },
+        { new: true }
+      );
+
+      const caller = await User.findById(callerId);
+
+      this.emitToUser(receiverId, "callCancelled", {
+        callerId,
+        callRecordId: callRecord._id,
+      });
+      this.emitToUser(receiverId, "stopIncomingCall", {
+        callerId,
+        callRecordId: callRecord._id,
+      });
+
+      logger.info(`[CALL_CANCELLED] ${callKey}`);
+    } catch (error) {
+      logger.error(`[CALL_CANCEL_ERROR] ${callerId} → ${receiverId}:`, error);
+      socket.emit("callError", {
+        message: "Failed to cancel call",
+        details: error.message,
+      });
+    } finally {
+      this.cleanupCallResources(callKey, callerId, receiverId, socket);
+    }
+  }
+
+  async handleMissedCall(socket, { receiverId, callerId, callRecordId }) {
+    try {
+      const callKey = this.generateCallKey(callerId, receiverId);
+
+      const callRecord = await Call.findByIdAndUpdate(
+        callRecordId,
+        { status: "MISSED", endTime: new Date() },
+        { new: true }
+      );
+
+      const caller = await User.findById(callerId);
+
+      // ✅ Send missed call notification to receiver
+
+      // ✅ Send missed call notification
+      await sendMNotification(
+        receiverId, // userId → receiver
+        "Missed Call", // title
+        `You missed a call from ${caller?.fullName || "Unknown Caller"}`, // message
+        "missed", // type
+        callerId, // receiverId (from caller)
+        caller?.fullName, // senderName
+        caller?.profilePicture // senderAvatar
+      );
+
+      this.emitToUser(callerId, "callMissed", { receiverId, callRecordId });
+      this.cleanupCallResources(callKey, callerId, receiverId, socket);
+      logger.info(`[CALL_MISSED] ${callKey}`);
+    } catch (error) {
+      logger.error(`Missed call error:`, error);
+      socket.emit("callError", {
+        message: "Failed to process missed call",
+        details: error.message,
+      });
+    }
+  }
 
   async handleEndCall(
     socket,
@@ -377,31 +498,31 @@ export class WebRTCService {
         .populate("userId", "name fullName")
         .populate("astrologerId", "name fullName");
 
-            // Notify both parties
-            this.emitToUser(receiverId, 'callEnded', {
-                callerId,
-                receiverId,
-                duration: callDuration,
-                totalDuration: duration,
-                reason,
-                timestamp: endTime,
-                callRecordId: callRecord._id
-            });
+      const [callerUser, receiverUser] = await Promise.all([
+        User.findById(callerId).select("name fullName profilePicture"),
+        User.findById(receiverId).select("name fullName profilePicture"),
+      ]);
 
-            // Send push notifications
-            if (callRecord.userId && callRecord.astrologerId) {
-                const callerData = callRecord.userId._id.toString() === callerId ?
-                    callRecord.userId : callRecord.astrologerId;
-                const receiverData = callRecord.userId._id.toString() === receiverId ?
-                    callRecord.userId : callRecord.astrologerId;
+      // Notify both parties via socket
+      this.emitToUser(receiverId, "callEnded", {
+        callerId,
+        receiverId,
+        duration: callDuration,
+        totalDuration: duration,
+        reason,
+        timestamp: endTime,
+        callRecordId: callRecord._id,
+      });
 
-                await NotificationService.sendCallEndedNotification(
-                    receiverId,
-                    callerData,
-                    callRecord._id,
-                    callDuration
-                );
-            }
+      this.emitToUser(callerId, "callEnded", {
+        callerId,
+        receiverId,
+        duration: callDuration,
+        totalDuration: duration,
+        reason,
+        timestamp: endTime,
+        callRecordId: callRecord._id,
+      });
 
       // Cleanup resources
       this.cleanupCallResources(callKey, callerId, receiverId, socket);
@@ -422,159 +543,54 @@ export class WebRTCService {
     }
   }
 
-    async handleRejectCall(socket, { receiverId, callerId, callRecordId, reason = "user_busy" }) {
-        try {
-            const callKey = this.generateCallKey(callerId, receiverId);
+  // Enhanced ring timeout with notification
+  setRingTimeout(
+    callKey,
+    callerId,
+    receiverId,
+    callRecordId,
+    timeoutMs = 30000
+  ) {
+    const timeout = setTimeout(async () => {
+      const pending = this.getPendingCall(callKey);
+      if (pending && pending.status === "INITIATED") {
+        logger.info(`⏰ Call timed out (no answer): ${callKey}`);
 
-            const callRecord = await Call.findByIdAndUpdate(
-                callRecordId,
-                { status: "REJECTED", endTime: new Date(), feedback: reason },
-                { new: true }
-            );
+        const callRecord = await Call.findByIdAndUpdate(
+          callRecordId,
+          { status: "MISSED", endTime: new Date() },
+          { new: true }
+        );
 
-            // Notify via socket
-            this.emitToUser(callerId, "callRejected", {
-                receiverId,
-                callRecordId: callRecord._id,
-                reason,
-                timestamp: new Date(),
-            });
+        const caller = await User.findById(callerId);
 
-            this.emitToUser(callerId, "stopCallerTune", { callerId });
+        // ✅ Send missed call notification
+        await CallNotificationService.sendCallNotification({
+          targetUserId: receiverId,
+          title: "Missed Call",
+          message: `You missed a call from ${caller?.name || "Unknown Caller"}`,
+          type: "missed",
+          fromUserId: callerId,
+          fromName: caller?.name,
+          fromAvatar: caller?.profilePicture,
+          fromEmail: caller?.email,
+          screen: "CallHistory",
+          callRecordId: callRecord._id.toString(),
+        });
 
-            // 🔔 Send rejected call notification
-            const receiver = await User.findById(receiverId);
-            await sendCallNotification({
-                targetUserId: callerId,
-                title: "Call Rejected",
-                message: `${receiver?.name || "User"} rejected your call`,
-                type: "rejected",
-                fromUserId: receiverId,
-                fromName: receiver?.name,
-                fromAvatar: receiver?.profilePicture,
-                screen: "Call_list",
-            });
+        // Notify both parties
+        this.emitToUser(callerId, "callMissed", { receiverId, callRecordId });
+        this.emitToUser(receiverId, "stopIncomingCall", {
+          callerId,
+          callRecordId,
+        });
 
-            this.cleanupCallResources(callKey, callerId, receiverId, socket);
+        this.cleanupCallResources(callKey, callerId, receiverId);
+      }
+    }, timeoutMs);
 
-            logger.info(`[CALL_REJECTED] ${callKey}`, { callRecordId: callRecord._id, reason });
-        } catch (error) {
-            logger.error(`Call reject error:`, error);
-            socket.emit("callError", { message: "Failed to reject call", details: error.message });
-        }
-    }
-
-
-
-    async handleCancelCall(socket, { callerId, receiverId, callRecordId }) {
-        const callKey = this.generateCallKey(callerId, receiverId);
-
-        try {
-            // ✅ If callRecordId not provided, get it from pending calls
-            if (!callRecordId) {
-                callRecordId = this.getCallRecordId(callKey);
-            }
-
-            if (!callRecordId) {
-                throw new Error('Call record ID not found');
-            }
-
-            logger.info(`[CALL_CANCEL] ${callerId} cancelling call to ${receiverId}`, {
-                callRecordId,
-                socketId: socket.id
-            });
-
-            // Update call record
-            const callRecord = await Call.findByIdAndUpdate(
-                callRecordId,
-                {
-                    status: 'CANCELLED',
-                    endTime: new Date()
-                },
-                { new: true }
-            );
-
-            // Notify receiver
-            this.emitToUser(receiverId, 'callCancelled', {
-                callerId,
-                callRecordId: callRecord._id,
-                timestamp: new Date()
-            });
-
-            // Stop incoming call notification for receiver
-            this.emitToUser(receiverId, 'stopIncomingCall', {
-                callerId,
-                callRecordId: callRecord._id
-            });
-
-            logger.info(`[CALL_CANCELLED] ${callKey}`, {
-                callRecordId: callRecord._id
-            });
-
-        } catch (error) {
-            logger.error(`[CALL_CANCEL_ERROR] ${callerId} → ${receiverId}:`, error);
-
-            socket.emit('callError', {
-                message: 'Failed to cancel call',
-                details: error.message
-            });
-        } finally {
-            // ✅ Always clean up resources even if something fails
-            this.cleanupCallResources(callKey, callerId, receiverId, socket);
-        }
-    }
-
-
-    async handleMissedCall(socket, { receiverId, callerId, callRecordId }) {
-        try {
-            const callKey = this.generateCallKey(callerId, receiverId);
-
-            logger.info(`[CALL_MISSED] ${receiverId} missed call from ${callerId}`, {
-                callRecordId,
-                socketId: socket.id
-            });
-
-            // Update call record
-            const callRecord = await Call.findByIdAndUpdate(
-                callRecordId,
-                {
-                    status: 'MISSED',
-                    endTime: new Date()
-                },
-                { new: true }
-            ).populate('userId', 'name fullName profilePicture');
-
-            // Send push notification
-            if (callRecord.userId) {
-                await NotificationService.sendCallMissedNotification(
-                    receiverId,
-                    callRecord.userId,
-                    callRecord._id
-                );
-            }
-
-            // Notify caller
-            this.emitToUser(callerId, 'callMissed', {
-                receiverId,
-                callRecordId: callRecord._id,
-                timestamp: new Date()
-            });
-
-            // Cleanup resources
-            this.cleanupCallResources(callKey, callerId, receiverId, socket);
-
-            logger.info(`[CALL_MISSED] ${callKey}`, {
-                callRecordId: callRecord._id
-            });
-
-        } catch (error) {
-            logger.error(`Missed call handling error:`, error);
-            socket.emit('callError', {
-                message: 'Failed to process missed call',
-                details: error.message
-            });
-        }
-    }
+    this.callTimeouts.set(callKey, timeout);
+  }
 
   // ---------- Signaling helpers ----------
   generateCallKey(a, b) {
@@ -1163,19 +1179,17 @@ export const setupWebRTC = (io) => {
   return new WebRTCService(io);
 };
 
-
-
 export async function sendCallNotification({
-    targetUserId,        // receiver ID
-    title,               // notification title
-    message,             // notification message
-    type,                // 'incoming', 'accepted', 'rejected', 'missed', etc.
-    fromUserId,          // sender ID
-    fromName,            // sender name
-    fromAvatar,          // sender profile image
-    fromEmail,           // sender email
-    screen = "IncomingCall", // frontend screen to open
-    callType = "audio",  // 'audio' or 'video'
+  targetUserId,
+  title,
+  message,
+  type, // 'incoming', 'accepted', 'rejected', 'missed', 'cancelled'
+  fromUserId,
+  fromName,
+  fromAvatar,
+  fromEmail,
+  screen = "IncomingCall",
+  callType = "audio",
 }) {
   try {
     const user = await User.findById(targetUserId);
@@ -1186,66 +1200,238 @@ export async function sendCallNotification({
 
     const timestamp = Math.floor(Date.now() / 1000).toString();
 
-        // Main payload for FCM
-        const payload = {
-            token: user.deviceToken,
-            android: {
-                priority: "high",
-                notification: {
-                    sound: "default",
-                    channelId: "calls", // must match your Android channel ID
-                    vibrationPattern: [200, 500, 200],
-                    visibility: "public",
-                    importance: "max",
-                    badge: 1,
-                },
-            },
-            apns: {
-                payload: {
-                    aps: {
-                        sound: "default",
-                        badge: 1,
-                        contentAvailable: true,
-                        mutableContent: true,
-                    },
-                },
-            },
-            data: {
-                type,                     // incoming, rejected, missed, etc.
-                screen,                   // which screen to open on app
-                call_type: callType,      // 'audio' or 'video'
-                caller_id: fromUserId,
-                caller_name: fromName || "Unknown Caller",
-                caller_avatar: fromAvatar || "https://investogram.ukvalley.com/avatars/default.png",
-                caller_email: fromEmail || "N/A",
-                timestamp,
-                badge: "1",
-                sound: "default",
-                vibration: "true",
-                params: JSON.stringify({
-                    user_id: fromUserId,
-                    username: fromName,
-                    email: fromEmail,
-                    imageurl: fromAvatar,
-                    act_tab: type === "rejected" ? "1" : "0",
-                    navigate_to: screen,
-                    call_type: callType,
-                }),
-            },
-        };
+    const payload = {
+      token: user.deviceToken,
+      android: {
+        priority: "high",
+        notification: {
+          sound: "default",
+          channelId: "calls", // must exist in app
+          visibility: "public",
+        },
+      },
+      apns: {
+        payload: {
+          aps: {
+            sound: "default",
+            badge: 1,
+            contentAvailable: true,
+            mutableContent: true,
+          },
+        },
+      },
+      data: {
+        type,
+        screen,
+        call_type: callType,
+        caller_id: fromUserId,
+        caller_name: fromName || "Unknown Caller",
+        caller_avatar:
+          fromAvatar || "https://investogram.ukvalley.com/avatars/default.png",
+        timestamp,
+        params: JSON.stringify({
+          user_id: fromUserId,
+          username: fromName,
+          email: fromEmail,
+          imageurl: fromAvatar,
+          act_tab: type === "rejected" ? "1" : "0",
+          navigate_to: screen,
+          call_type: callType,
+          callerId: fromUserId,
+          receiverId: targetUserId,
+          callRecordId: String(/* generate or send call id */ Date.now()),
+          callerName: fromName,
+          callerImage: fromAvatar,
+        }),
+      },
+    };
 
-        // Add visible notification for non-incoming types
-        if (type !== "incoming") {
-            payload.notification = {
-                title: title || "Call Update",
-                body: message || "Call event received.",
-            };
-        }
-
-        const response = await admin.messaging().send(payload);
-        logger.info(`✅ Call notification sent (${type}) → ${targetUserId} (${response})`);
-    } catch (error) {
-        logger.error(`❌ Error sending ${type} notification:`, error);
+    if (type !== "incoming") {
+      payload.notification = {
+        title: title || "Call Update",
+        body: message || "Call event received.",
+      };
     }
+
+    const response = await admin.messaging().send(payload);
+    logger.info(
+      `✅ [FCM] ${type} notification sent → ${targetUserId} (${response})`
+    );
+  } catch (error) {
+    logger.error(`❌ Error sending ${type} notification:`, error);
+  }
 }
 
+async function sendNotification_call(
+  userId,
+  title,
+  message,
+  type,
+  receiverId,
+  senderName,
+  senderAvatar
+) {
+  try {
+    // Fetch the user from the database
+    const user = await User.findById(userId);
+    if (!user || !user.deviceToken) {
+      console.error("No device token found for user:", userId);
+      return;
+    }
+
+    const deviceToken = user.deviceToken;
+
+    const payload = {
+      android: {
+        priority: "high",
+        notification: {
+          channel_id: "IncomingCall", // Add your channel ID here
+        },
+      },
+      notification: {
+        title: title,
+        body: message,
+      },
+      data: {
+        screen: "Incomingcall", // Target screen
+        type: type, // Type of call
+        caller_name: senderName,
+        caller_id: userId,
+        time: Math.floor(Date.now() / 1000).toString(),
+        call_type: "audio", // or "video"
+        params: JSON.stringify({
+          user_id: userId,
+          agent_id: receiverId,
+          username: senderName,
+          imageurl:
+            senderAvatar ||
+            "https://investogram.ukvalley.com/avatars/default.png",
+        }),
+      },
+
+      token: deviceToken,
+    };
+    logger.info(`Push notification sent to User  in  notification  function`);
+
+    // Send the notification
+    const response = await admin.messaging().send(payload);
+    console.log("Notification sent successfully:", response);
+  } catch (error) {
+    console.error("Error sending notification:", error);
+  }
+}
+
+async function sendNotification(
+  userId,
+  title,
+  message,
+  type,
+  receiverId,
+  senderName,
+  senderAvatar
+) {
+  try {
+    // Fetch the user from the database
+    const user = await User.findById(userId);
+    if (!user || !user.deviceToken) {
+      console.error("No device token found for user:", userId);
+      return;
+    }
+
+    const deviceToken = user.deviceToken;
+
+    // Construct the payload for FCM
+    const payload = {
+      android: {
+        priority: "high",
+        notification: {
+          channel_id: "IncomingCall", // Add your channel ID here
+        },
+      },
+      notification: {
+        title: title,
+        body: message,
+      },
+      data: {
+        screen: "incoming_Call", // Target screen
+        params: JSON.stringify({
+          user_id: userId, // Include Call ID
+          type: type, // Type of call
+          agent_id: receiverId, // Receiver ID
+          username: senderName, // Sender name
+          imageurl:
+            senderAvatar ||
+            "https://investogram.ukvalley.com/avatars/default.png", // Sender avatar with default fallback
+        }),
+        // Add any additional parameters if needed
+      },
+
+      token: deviceToken,
+    };
+    logger.info(`Push notification sent to User  in  notification  function`);
+
+    // Send the notification
+    const response = await admin.messaging().send(payload);
+    console.log("Notification sent successfully:", response);
+  } catch (error) {
+    console.error("Error sending notification:", error);
+  }
+}
+
+async function sendMNotification(
+  userId,
+  title,
+  message,
+  type,
+  receiverId,
+  senderName,
+  senderAvatar
+) {
+  try {
+    // Fetch the user from the database
+    const user = await User.findById(userId);
+    if (!user || !user.deviceToken) {
+      console.error("No device token found for user:", userId);
+      return;
+    }
+
+    const deviceToken = user.deviceToken;
+
+    // Construct the payload for FCM
+    const payload = {
+      android: {
+        priority: "high",
+        notification: {
+          channel_id: "IncomingCall", // Add your channel ID here
+        },
+      },
+      notification: {
+        title: title,
+        body: message,
+      },
+      data: {
+        screen: "Call_list", // Target screen
+        params: JSON.stringify({
+          act_tab: "1",
+          user_id: userId, // Include Call ID
+          type: type, // Type of call
+          agent_id: receiverId, // Receiver ID
+          username: senderName, // Sender name
+          imageurl:
+            senderAvatar ||
+            "https://investogram.ukvalley.com/avatars/default.png", // Sender avatar with default fallback
+        }),
+        // Add any additional parameters if needed
+      },
+
+      token: deviceToken,
+    };
+    logger.info(`Push notification sent to User  in  notification  function`);
+
+    // Send the notification
+    const response = await admin.messaging().send(payload);
+    console.log("Notification sent successfully:", response);
+  } catch (error) {
+    console.error("Error sending notification:", error);
+  }
+}
