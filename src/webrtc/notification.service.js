@@ -94,9 +94,9 @@ class NotificationService {
     );
   }
 
-   static async sendCallEvent({
+  static async sendCallEvent({
     toUserId,
-    event,        // incoming | accepted | rejected | missed | cancelled
+    event,
     callerId,
     receiverId,
     callRecordId,
@@ -107,34 +107,38 @@ class NotificationService {
     const user = await User.findById(toUserId);
     if (!user?.deviceToken) return;
 
+    // Always convert to safe strings
+    const safePayload = {
+      callerId: String(callerId),
+      receiverId: String(receiverId),
+      callRecordId: String(callRecordId),
+      callerName: callerName || "",
+      callerAvatar: callerAvatar || "",
+      callType: String(callType || ""),
+      event: String(event),
+    };
+
     const payload = {
       token: user.deviceToken,
-      notification: event !== "incoming" ? {
-        title: this.title(event),
-        body: this.body(event, callerName),
-      } : undefined,
+
+      // Notification only for events other than "incoming"
+      notification:
+        event !== "incoming"
+          ? {
+              title: this.title(event),
+              body: this.body(event, safePayload.callerName),
+            }
+          : undefined,
 
       data: {
-        type: event,
+        ...safePayload,
+        type: safePayload.event,
         screen: this.screen(event),
-        callType,
-        callerId: String(callerId),
-        receiverId: String(receiverId),
-        callRecordId: String(callRecordId),
-        callerName,
-        callerAvatar,
-        params: JSON.stringify({
-          callerId,
-          receiverId,
-          callRecordId,
-          callerName,
-          callerAvatar,
-          callType,
-        })
+        params: JSON.stringify(safePayload), // 🔥 STRINGIFIED SAFE PARAMS
       },
 
       android: { priority: "high" },
-      apns: { payload: { aps: { contentAvailable: true } } }
+      apns: { payload: { aps: { contentAvailable: 1 } } },
     };
 
     return admin.messaging().send(payload);
