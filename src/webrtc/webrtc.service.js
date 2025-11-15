@@ -1,5 +1,5 @@
 import { User } from "../models/user.js";
-import { NotificationService } from "./notification.service.js";
+import NotificationService from "./notification.service.js";
 import logger from "../utils/logger.js";
 import Call from "../models/calllogs/call.js";
 import admin from "../utils/firabse.js";
@@ -184,23 +184,22 @@ export class WebRTCService {
       const caller = await User.findById(callerId);
 
       // ✅ Send incoming call notification
-      await sendNotification_call({
-        targetUserId: receiverId, // receiver (target) user id
-        title: "Incoming Call",
-        body: `${caller?.fullName || "Unknown"} is calling you`,
-        type: "incoming",
-        callerId: callerId,
-        callerName: caller?.fullName || caller?.name || "Unknown",
-        callerAvatar: caller?.profilePicture,
+      await NotificationService.sendCallEvent({
+        toUserId: receiverId,
+        event: "incoming",
+        callerId,
+        receiverId,
         callRecordId: callRecord._id,
-        callType: callType === "VIDEO" ? "video" : "audio",
+        callerName: caller.fullName,
+        callerAvatar: caller.profilePicture,
+        callType,
       });
 
       // ✅ Emit socket event for real-time UI
       this.emitToUser(receiverId, "incomingCall", {
         callerId,
         receiverId,
-        callerName: caller?.name,
+        callerName: caller?.fullName,
         callerPicture: caller?.profilePicture,
         callType,
         callRecordId: callRecord._id,
@@ -357,15 +356,15 @@ export class WebRTCService {
       const receiver = await User.findById(receiverId);
 
       // ✅ Send call rejected notification
-      await sendNotification(
-        callerId, // userId → caller receives it
-        "Call Rejected", // title
-        `${receiver?.fullName || "User"} rejected your call`, // message
-        "rejected", // type
-        receiverId, // receiverId
-        receiver?.fullName, // senderName
-        receiver?.profilePicture // senderAvatar
-      );
+      await NotificationService.sendCallEvent({
+        toUserId: callerId,
+        event: "rejected",
+        callerId,
+        receiverId,
+        callRecordId,
+        callerName: receiver.fullName,
+        callerAvatar: receiver.profilePicture,
+      });
 
       this.emitToUser(callerId, "callRejected", {
         receiverId,
@@ -1293,19 +1292,25 @@ async function sendNotification_call(
         body: message,
       },
       data: {
-        screen: "Incomingcall", // Target screen
-        type: type, // Type of call
-        caller_name: senderName,
-        caller_id: userId,
-        time: Math.floor(Date.now() / 1000).toString(),
-        call_type: "audio", // or "video"
+        // top-level primitives (handy)
+        type: "incoming",
+        screen: "Incomingcall", // EXACT string must match RootStackParamList
+        call_type: "audio",
+        callRecordId: String(callRecordId), // top-level for convenience
+
+        // caller metadata
+        caller_id: String(callerId),
+        caller_name: callerName,
+        caller_avatar: callerAvatar,
+
+        // params: JSON string matching Incomingcall route shape
         params: JSON.stringify({
-          user_id: userId,
-          agent_id: receiverId,
-          username: senderName,
-          imageurl:
-            senderAvatar ||
-            "https://investogram.ukvalley.com/avatars/default.png",
+          callerId: String(callerId),
+          receiverId: String(targetUserId),
+          callRecordId: String(callRecordId),
+          callerName: callerName,
+          callerImage: callerAvatar,
+          callType: callType === "VIDEO" ? "video" : "audio",
         }),
       },
 

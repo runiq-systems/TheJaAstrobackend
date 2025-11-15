@@ -1,208 +1,173 @@
-import admin from 'firebase-admin';
-import { User } from '../models/user.js';
-import logger from '../utils/logger.js';
+import admin from "firebase-admin";
+import logger from "../utils/logger.js";
+import { User } from "../models/user.js";
 
-async function sendNotification({
-  userId,
-  title,
-  message,
-  screen = 'IncomingCall',
-  type = 'info',
-  receiverId = '',
-  senderName = '',
-  senderAvatar = '',
-  callType = 'audio',
-  extraData = {},
-}) {
-  try {
-    const user = await User.findById(userId);
-    if (!user || !user.deviceToken) {
-      logger.warn(`User ${userId} has no device token.`);
-      return { success: false, error: 'No device token' };
-    }
+class NotificationService {
+  static async sendPushNotification(userId, title, body, data = {}) {
+    try {
+      const user = await User.findById(userId);
+      if (!user?.deviceToken) {
+        logger.warn(`User ${userId} has no device token`);
+        return false;
+      }
 
-    const payload = {
-      android: { priority: 'high' },
-      apns: {
-        headers: { 'apns-priority': '10' },
-        payload: { aps: { sound: 'default', contentAvailable: true } },
-      },
-      data: {
-        screen,
-        type,
-        call_type: callType,
-        title,
-        body,
-        data: {
-          ...data,
-          timestamp: Date.now(),
+      const payload = {
+        token: user.deviceToken,
+        android: {
+          priority: "high",
+          notification: {
+            sound: "default",
+            channelId: data.type === "INCOMING_CALL" ? "calls" : "messages",
+          },
         },
-        priority: 'high',
-        channelId: 'calls',
+        apns: {
+          payload: {
+            aps: {
+              sound: "default",
+              contentAvailable: 1,
+            },
+          },
+        },
+        data: {
+          title,
+          body,
+          ...Object.fromEntries(
+            Object.entries(data).map(([k, v]) => [k, String(v)])
+          ),
+        },
       };
 
-      const receipt = await expo.sendPushNotificationsAsync([message]);
-      logger.info(`Push notification sent to user ${userId}`, { receipt });
-
+      await admin.messaging().send(payload);
+      logger.info(`FCM sent to ${userId}`);
       return true;
     } catch (error) {
-      logger.error(`Error sending push notification to user ${userId}:`, error);
+      logger.error("FCM error:", error);
       return false;
     }
   }
 
-  static async sendIncomingCallNotification(receiverId, callerData, callRecordId) {
-    try {
-      const user = await User.findById(receiverId);
-      if (!user) return false;
-
-      const title = 'Incoming Call';
-      const body = `${callerData.name || callerData.username} is calling you`;
-      
-      const data = {
-        type: 'INCOMING_CALL',
-        callRecordId: callRecordId.toString(),
-        callerId: callerData._id.toString(),
-        callerName: callerData.name || callerData.username,
-        callerPicture: callerData.profilePicture,
-        timestamp: Date.now(),
-      };
-
-      return await this.sendPushNotification(receiverId, title, body, data);
-    } catch (error) {
-      logger.error(`Error sending incoming call notification:`, error);
-      return false;
-    }
-  }
-
-  static async sendCallMissedNotification(receiverId, callerData, callRecordId) {
-    try {
-      const title = 'Missed Call';
-      const body = `You missed a call from ${callerData.name || callerData.username}`;
-      
-      const data = {
-        type: 'MISSED_CALL',
-        callRecordId: callRecordId.toString(),
-        callerId: callerData._id.toString(),
-        callerName: callerData.name || callerData.username,
-        timestamp: Date.now(),
-      };
-
-      return await this.sendPushNotification(receiverId, title, body, data);
-    } catch (error) {
-      logger.error(`Error sending missed call notification:`, error);
-      return false;
-    }
-  }
-
-  static async sendCallAcceptedNotification(callerId, receiverData, callRecordId) {
-    try {
-      const title = 'Call Connected';
-      const body = `Call connected with ${receiverData.name || receiverData.username}`;
-      
-      const data = {
-        type: 'CALL_ACCEPTED',
-        callRecordId: callRecordId.toString(),
-        receiverId: receiverData._id.toString(),
-        timestamp: Date.now(),
-      };
-
-      return await this.sendPushNotification(callerId, title, body, data);
-    } catch (error) {
-      logger.error(`Error sending call accepted notification:`, error);
-      return false;
-    }
-  }
-
-  static async sendCallEndedNotification(userId, otherUserData, callRecordId, duration) {
-    try {
-      const title = 'Call Ended';
-      const body = `Call with ${otherUserData.name || otherUserData.username} ended (${this.formatDuration(duration)})`;
-      
-      const data = {
-        type: 'CALL_ENDED',
-        callRecordId: callRecordId.toString(),
-        duration,
-        timestamp: Date.now(),
-      };
-
-      return await this.sendPushNotification(userId, title, body, data);
-    } catch (error) {
-      logger.error(`Error sending call ended notification:`, error);
-      return false;
-    }
-  }
-
-  static async sendMultipleNotifications(userIds, title, body, data = {}) {
-    try {
-      const messages = [];
-      
-      for (const userId of userIds) {
-        const user = await User.findById(userId);
-        if (user && user.deviceToken && Expo.isExpoPushToken(user.deviceToken)) {
-          messages.push({
-            to: user.deviceToken,
-            sound: 'default',
-            title,
-            body,
-            data: { ...data, userId: userId.toString() },
-          });
-        }
+  // INCOMING CALL
+  static async sendIncomingCallNotification(receiverId, caller, callRecordId) {
+    return this.sendPushNotification(
+      receiverId,
+      "Incoming Call",
+      `${caller.fullName} is calling you`,
+      {
+        type: "INCOMING_CALL",
+        screen: "Incomingcall",
+        callerId: caller._id,
+        callerName: caller.fullName,
+        callerImage: caller.profilePicture,
+        callRecordId,
       }
-
-      if (messages.length > 0) {
-        const receipts = await expo.sendPushNotificationsAsync(messages);
-        logger.info(`Sent ${messages.length} push notifications`);
-        return receipts;
-      }
-      
-      return [];
-    } catch (error) {
-      logger.error('Error sending multiple notifications:', error);
-      return [];
-    }
+    );
   }
 
-  static formatDuration(seconds) {
-    if (!seconds) return '0s';
-    
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-
-    if (hours > 0) {
-      return `${hours}h ${minutes}m ${secs}s`;
-    } else if (minutes > 0) {
-      return `${minutes}m ${secs}s`;
-    } else {
-      return `${secs}s`;
-    }
+  // CHAT MESSAGE
+  static async sendChatMessageNotification(receiverId, chat, sender) {
+    return this.sendPushNotification(
+      receiverId,
+      sender.fullName,
+      chat.lastMessage,
+      {
+        type: "CHAT_MESSAGE",
+        screen: "AstrologerChat",
+        chatId: chat._id,
+        senderId: sender._id,
+        senderName: sender.fullName,
+        senderImage: sender.profilePicture,
+      }
+    );
   }
 
-  // Batch notification sending for better performance
-  static async sendBatchNotifications(notifications) {
-    try {
-      const validNotifications = notifications.filter(notification => 
-        notification.token && Expo.isExpoPushToken(notification.token)
-      );
-
-      const chunks = expo.chunkPushNotifications(validNotifications);
-      const tickets = [];
-
-      for (const chunk of chunks) {
-        try {
-          const chunkTickets = await expo.sendPushNotificationsAsync(chunk);
-          tickets.push(...chunkTickets);
-        } catch (error) {
-          logger.error('Error sending notification chunk:', error);
-        }
+  // MISSED CALL
+  static async sendMissedCall(receiverId, caller, callRecordId) {
+    return this.sendPushNotification(
+      receiverId,
+      "Missed Call",
+      `You missed a call from ${caller.fullName}`,
+      {
+        type: "MISSED_CALL",
+        screen: "CallHistory",
+        callRecordId,
       }
+    );
+  }
 
-      return tickets;
-    } catch (error) {
-      logger.error('Error in batch notification sending:', error);
-      return [];
-    }
+   static async sendCallEvent({
+    toUserId,
+    event,        // incoming | accepted | rejected | missed | cancelled
+    callerId,
+    receiverId,
+    callRecordId,
+    callerName,
+    callerAvatar,
+    callType,
+  }) {
+    const user = await User.findById(toUserId);
+    if (!user?.deviceToken) return;
+
+    const payload = {
+      token: user.deviceToken,
+      notification: event !== "incoming" ? {
+        title: this.title(event),
+        body: this.body(event, callerName),
+      } : undefined,
+
+      data: {
+        type: event,
+        screen: this.screen(event),
+        callType,
+        callerId: String(callerId),
+        receiverId: String(receiverId),
+        callRecordId: String(callRecordId),
+        callerName,
+        callerAvatar,
+        params: JSON.stringify({
+          callerId,
+          receiverId,
+          callRecordId,
+          callerName,
+          callerAvatar,
+          callType,
+        })
+      },
+
+      android: { priority: "high" },
+      apns: { payload: { aps: { contentAvailable: true } } }
+    };
+
+    return admin.messaging().send(payload);
+  }
+
+  static title(event) {
+    return {
+      incoming: "Incoming Call",
+      accepted: "Call Accepted",
+      rejected: "Call Rejected",
+      missed: "Missed Call",
+      cancelled: "Call Cancelled",
+    }[event];
+  }
+
+  static body(event, name) {
+    return {
+      incoming: `${name} is calling you`,
+      accepted: `${name} accepted your call`,
+      rejected: `${name} rejected your call`,
+      missed: `You missed a call from ${name}`,
+      cancelled: `${name} cancelled the call`,
+    }[event];
+  }
+
+  static screen(event) {
+    return {
+      incoming: "IncomingCall",
+      accepted: "CallScreen",
+      rejected: "CallHistory",
+      missed: "CallHistory",
+      cancelled: "CallHistory",
+    }[event];
   }
 }
 
