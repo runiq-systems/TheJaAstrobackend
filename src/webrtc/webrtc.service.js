@@ -191,7 +191,7 @@ export class WebRTCService {
         receiverId,
         callRecordId: callRecord._id,
         callerName: caller.fullName,
-        callerAvatar: caller.profilePicture,
+        callerAvatar: caller.profilePicture || "",
         callType,
       });
 
