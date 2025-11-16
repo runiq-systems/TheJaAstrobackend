@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { kycSchema } from "./astrologerkyc.js";
 
 const bankDetailsSchema = new mongoose.Schema({
   bankName: {
@@ -28,11 +29,7 @@ const astrologerSchema = new mongoose.Schema(
       required: true,
       unique: true,
     },
-    name: {
-      type: String,
-      required: true,
-      trim: true,
-    },
+    
     photo: {
       type: String,
       default: "",
@@ -42,10 +39,11 @@ const astrologerSchema = new mongoose.Schema(
         type: String,
       },
     ],
-    yearOfExp: {
-      type: Number,
-      required: true,
-      min: 0,
+    yearOfExpertise: {
+      type: String,
+    },
+    yearOfExperience: {
+      type: String,
     },
     bio: {
       type: String,
@@ -63,26 +61,22 @@ const astrologerSchema = new mongoose.Schema(
     qualification: {
       type: String,
     },
-    idProof: {
-      type: {
-        type: String,
-        enum: ["passport", "driver_license", "national_id", "other"  ]
-      },
-      number: {
-        type: String,
-      },
-      documentUrl: {
-        type: String,
-      },
-    },
     accountStatus: {
       type: String,
       enum: ["pending", "approved", "rejected", "suspended"],
       default: "pending",
     },
+    isProfilecomplet: {
+      type: Boolean,
+      default: false,
+    },
     bankDetails: {
       type: [bankDetailsSchema], // Array of bank details
       default: [], // Default to an empty array
+    },
+    kyc: {
+      type: kycSchema,
+      default: null,
     },
   },
   { timestamps: true }
