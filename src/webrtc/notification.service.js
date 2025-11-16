@@ -1,275 +1,147 @@
-import admin from 'firebase-admin';
-import { Expo } from 'expo-server-sdk';
-import { User } from '../models/user.js';
-import logger from '../utils/logger.js';
-
-// Initialize Expo SDK
-const expo = new Expo();
+import admin from "firebase-admin";
+import logger from "../utils/logger.js";
+import { User } from "../models/user.js";
 
 class NotificationService {
-  async sendNotification({
-    userId,
-    title,
-    message,
-    screen = 'IncomingCall',
-    type = 'info',
-    receiverId = '',
-    senderName = '',
-    senderAvatar = '',
-    callType = 'audio',
-    extraData = {},
-  }) {
+  // Generic push (keep for chat, wallet, etc.)
+  static async sendPushNotification(userId, title, body, data = {}) {
     try {
       const user = await User.findById(userId);
-      if (!user || !user.deviceToken) {
-        logger.warn(`User ${userId} has no device token.`);
-        return { success: false, error: 'No device token' };
-      }
-
-      // Check if device token is valid
-      if (!Expo.isExpoPushToken(user.deviceToken)) {
-        logger.warn(`Invalid Expo push token for user ${userId}`);
-        return { success: false, error: 'Invalid device token' };
+      if (!user?.deviceToken) {
+        logger.warn(`User ${userId} has no device token`);
+        return false;
       }
 
       const payload = {
-        to: user.deviceToken,
-        sound: 'default',
-        title,
-        body: message,
-        data: {
-          screen,
-          type,
-          callType,
-          receiverId,
-          senderName,
-          senderAvatar,
-          ...extraData,
-          timestamp: Date.now().toString(),
+        token: user.deviceToken,
+        notification: { title, body },
+        data: Object.fromEntries(
+          Object.entries(data).map(([k, v]) => [k, String(v)])
+        ),
+        android: {
+          priority: "high",
+          notification: {
+            sound: "default",
+            channelId: data.type?.includes("CALL") ? "call_channel" : "default_channel",
+          },
         },
-        priority: 'high',
-        channelId: 'calls',
       };
 
-      const receipt = await expo.sendPushNotificationsAsync([payload]);
-      logger.info(`Push notification sent to user ${userId}`, { receipt });
-
-      return { success: true, receipt };
+      await admin.messaging().send(payload);
+      logger.info(`FCM sent to ${userId}`);
+      return true;
     } catch (error) {
-      logger.error(`Error sending push notification to user ${userId}:`, error);
-      return { success: false, error: error.message };
+      logger.error("FCM error:", error);
+      return false;
     }
   }
 
-  async sendIncomingCallNotification(receiverId, callerData, callRecordId) {
+  // ──────────────────────────────
+  // CRITICAL: sendCallEvent (Android-only – works when app killed)
+  // ──────────────────────────────
+  static async sendCallEvent({
+    toUserId,
+    event,
+    callerId,
+    receiverId,
+    callRecordId,
+    callerName = "Astrologer",
+    callerAvatar = "",
+    callType = "AUDIO",
+  }) {
     try {
-      const user = await User.findById(receiverId);
-      if (!user) return { success: false, error: 'User not found' };
-
-      const title = 'Incoming Call';
-      const body = `${callerData.name || callerData.username} is calling you`;
-      
-      const data = {
-        type: 'INCOMING_CALL',
-        callRecordId: callRecordId.toString(),
-        callerId: callerData._id.toString(),
-        callerName: callerData.name || callerData.username,
-        callerPicture: callerData.profilePicture || '',
-        timestamp: Date.now().toString(),
-      };
-
-      return await this.sendNotification({
-        userId: receiverId,
-        title,
-        message: body,
-        screen: 'IncomingCall',
-        type: 'incoming_call',
-        extraData: data,
-      });
-    } catch (error) {
-      logger.error(`Error sending incoming call notification:`, error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  async sendCallMissedNotification(receiverId, callerData, callRecordId) {
-    try {
-      const title = 'Missed Call';
-      const body = `You missed a call from ${callerData.name || callerData.username}`;
-      
-      const data = {
-        type: 'MISSED_CALL',
-        callRecordId: callRecordId.toString(),
-        callerId: callerData._id.toString(),
-        callerName: callerData.name || callerData.username,
-        timestamp: Date.now().toString(),
-      };
-
-      return await this.sendNotification({
-        userId: receiverId,
-        title,
-        message: body,
-        screen: 'CallHistory',
-        type: 'missed_call',
-        extraData: data,
-      });
-    } catch (error) {
-      logger.error(`Error sending missed call notification:`, error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  async sendCallAcceptedNotification(callerId, receiverData, callRecordId) {
-    try {
-      const title = 'Call Connected';
-      const body = `Call connected with ${receiverData.name || receiverData.username}`;
-      
-      const data = {
-        type: 'CALL_ACCEPTED',
-        callRecordId: callRecordId.toString(),
-        receiverId: receiverData._id.toString(),
-        timestamp: Date.now().toString(),
-      };
-
-      return await this.sendNotification({
-        userId: callerId,
-        title,
-        message: body,
-        screen: 'CallScreen',
-        type: 'call_accepted',
-        extraData: data,
-      });
-    } catch (error) {
-      logger.error(`Error sending call accepted notification:`, error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  async sendCallEndedNotification(userId, otherUserData, callRecordId, duration) {
-    try {
-      const title = 'Call Ended';
-      const body = `Call with ${otherUserData.name || otherUserData.username} ended (${this.formatDuration(duration)})`;
-      
-      const data = {
-        type: 'CALL_ENDED',
-        callRecordId: callRecordId.toString(),
-        duration: duration.toString(),
-        timestamp: Date.now().toString(),
-      };
-
-      return await this.sendNotification({
-        userId,
-        title,
-        message: body,
-        screen: 'CallHistory',
-        type: 'call_ended',
-        extraData: data,
-      });
-    } catch (error) {
-      logger.error(`Error sending call ended notification:`, error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  async sendMultipleNotifications(userIds, title, body, data = {}) {
-    try {
-      const messages = [];
-      
-      for (const userId of userIds) {
-        const user = await User.findById(userId);
-        if (user && user.deviceToken && Expo.isExpoPushToken(user.deviceToken)) {
-          messages.push({
-            to: user.deviceToken,
-            sound: 'default',
-            title,
-            body,
-            data: { ...data, userId: userId.toString() },
-          });
-        }
+      const user = await User.findById(toUserId);
+      if (!user?.deviceToken) {
+        logger.warn(`No FCM token for user ${toUserId}`);
+        return false;
       }
 
-      if (messages.length > 0) {
-        const receipts = await expo.sendPushNotificationsAsync(messages);
-        logger.info(`Sent ${messages.length} push notifications`);
-        return { success: true, receipts };
-      }
-      
-      return { success: false, error: 'No valid tokens found' };
+      const payload = {
+        event: String(event),
+        type: event === "incoming" ? "incoming" : event, // matches your frontend
+        screen: "IncomingCall", // matches your logs
+        callRecordId: String(callRecordId),
+        callerId: String(callerId),
+        receiverId: String(receiverId),
+        callerName: String(callerName),
+        callerAvatar: String(callerAvatar),
+        callType: String(callType).toUpperCase(),
+
+        // 100% safe fallback – used when app is killed
+        params: JSON.stringify({
+          callRecordId: String(callRecordId),
+          callerId: String(callerId),
+          receiverId: String(receiverId),
+          callerName: String(callerName),
+          callerAvatar: String(callerAvatar),
+          callType: String(callType).toUpperCase(),
+          event: String(event),
+        }),
+      };
+
+      const message = {
+        token: user.deviceToken,
+
+        // DO NOT show visible notification for incoming call
+        // (we show it via Notifee on frontend)
+        notification: event !== "incoming" ? {
+          title: this.title(event),
+          body: this.body(event, callerName),
+        } : undefined,
+
+        data: payload,
+
+        // THIS IS THE KEY: wakes app even in Doze/killed state
+        android: {
+          priority: "high",
+          ttl: 60 * 1000, // 60 seconds
+          collapseKey: `call_${callRecordId}`,
+        },
+      };
+
+      await admin.messaging().send(message);
+      logger.info(`Call event "${event}" sent → ${toUserId} | ${callRecordId}`);
+      return true;
     } catch (error) {
-      logger.error('Error sending multiple notifications:', error);
-      return { success: false, error: error.message };
+      logger.error("sendCallEvent FCM failed:", error);
+      return false;
     }
   }
 
-  formatDuration(seconds) {
-    if (!seconds) return '0s';
-    
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-
-    if (hours > 0) {
-      return `${hours}h ${minutes}m ${secs}s`;
-    } else if (minutes > 0) {
-      return `${minutes}m ${secs}s`;
-    } else {
-      return `${secs}s`;
-    }
+  // Keep your old ones if you want
+  static async sendIncomingCallNotification(receiverId, caller, callRecordId) {
+    return this.sendCallEvent({
+      toUserId: receiverId,
+      event: "incoming",
+      callerId: caller._id,
+      receiverId,
+      callRecordId,
+      callerName: caller.fullName,
+      callerAvatar: caller.profilePicture,
+      callType: "AUDIO",
+    });
   }
 
-  // Batch notification sending for better performance
-  async sendBatchNotifications(notifications) {
-    try {
-      const validNotifications = notifications.filter(notification => 
-        notification.token && Expo.isExpoPushToken(notification.token)
-      );
-
-      const chunks = expo.chunkPushNotifications(validNotifications);
-      const tickets = [];
-
-      for (const chunk of chunks) {
-        try {
-          const chunkTickets = await expo.sendPushNotificationsAsync(chunk);
-          tickets.push(...chunkTickets);
-        } catch (error) {
-          logger.error('Error sending notification chunk:', error);
-        }
-      }
-
-      return { success: true, tickets };
-    } catch (error) {
-      logger.error('Error in batch notification sending:', error);
-      return { success: false, error: error.message, tickets: [] };
-    }
+  static title(event) {
+    const titles = {
+      incoming: "Incoming Call",
+      accepted: "Call Connected",
+      rejected: "Call Rejected",
+      missed: "Missed Call",
+      cancelled: "Call Cancelled",
+    };
+    return titles[event] || "Call Update";
   }
 
-  // New method to handle notification receipts and errors
-  async checkNotificationReceipts(receiptIds) {
-    try {
-      const receipts = await expo.getPushNotificationReceiptsAsync(receiptIds);
-      
-      // The receipts specify whether Apple or Google successfully received the
-      // notification and information about an error, if one occurred.
-      for (let receiptId in receipts) {
-        const { status, message, details } = receipts[receiptId];
-        
-        if (status === 'ok') {
-          continue;
-        } else if (status === 'error') {
-          logger.error(`There was an error sending a notification: ${message}`);
-          if (details && details.error) {
-            // The error codes are listed in the Expo documentation:
-            // https://docs.expo.io/push-notifications/sending-notifications/#individual-errors
-            logger.error(`The error code is ${details.error}`);
-          }
-        }
-      }
-      
-      return receipts;
-    } catch (error) {
-      logger.error('Error checking notification receipts:', error);
-      throw error;
-    }
+  static body(event, name) {
+    const bodies = {
+      incoming: `${name} is calling you`,
+      accepted: `${name} accepted your call`,
+      rejected: `${name} rejected the call`,
+      missed: `Missed call from ${name}`,
+      cancelled: `${name} cancelled the call`,
+    };
+    return bodies[event] || "Call update";
   }
 }
 
