@@ -86,7 +86,6 @@ class NotificationService {
           callerAvatar: String(callerAvatar),
           callType: String(callType).toUpperCase(),
           event: String(event),
-          socket: null, // Explicitly null since socket can't be serialized
         }),
       };
 
