@@ -140,10 +140,16 @@ export class WebRTCService {
   // ---------------- Call management (unchanged logic, improved fields) ----------------
   async handleCall(socket, { callerId, receiverId, callType = "AUDIO" }) {
     let callKey;
+
     try {
       if (!callerId || !receiverId)
         throw new Error("Caller and receiver IDs are required");
       if (callerId === receiverId) throw new Error("You cannot call yourself");
+
+      console.log(`[CALL_INIT] ${callerId} → ${receiverId}`, {
+        callType,
+        socketId: socket.id,
+      });
 
       callKey = this.generateCallKey(callerId, receiverId);
       await this.validateUserAvailability(callerId, receiverId, socket);
@@ -191,7 +197,7 @@ export class WebRTCService {
         receiverId,
         callRecordId: callRecord._id,
         callerName: caller.fullName,
-        callerAvatar: caller.profilePicture,
+        callerAvatar: caller.profilePicture || "",
         callType,
       });
 

@@ -3,6 +3,7 @@ import logger from "../utils/logger.js";
 import { User } from "../models/user.js";
 
 class NotificationService {
+  // Generic push (keep for chat, wallet, etc.)
   static async sendPushNotification(userId, title, body, data = {}) {
     try {
       const user = await User.findById(userId);
@@ -13,27 +14,18 @@ class NotificationService {
 
       const payload = {
         token: user.deviceToken,
+        notification: { title, body },
+        data: Object.fromEntries(
+          Object.entries(data).map(([k, v]) => [k, String(v)])
+        ),
         android: {
           priority: "high",
           notification: {
             sound: "default",
-            channelId: data.type === "INCOMING_CALL" ? "calls" : "messages",
+            channelId: data.type?.includes("CALL")
+              ? "call_channel"
+              : "default_channel",
           },
-        },
-        apns: {
-          payload: {
-            aps: {
-              sound: "default",
-              contentAvailable: 1,
-            },
-          },
-        },
-        data: {
-          title,
-          body,
-          ...Object.fromEntries(
-            Object.entries(data).map(([k, v]) => [k, String(v)])
-          ),
         },
       };
 
@@ -46,132 +38,129 @@ class NotificationService {
     }
   }
 
-  // INCOMING CALL
-  static async sendIncomingCallNotification(receiverId, caller, callRecordId) {
-    return this.sendPushNotification(
-      receiverId,
-      "Incoming Call",
-      `${caller.fullName} is calling you`,
-      {
-        type: "INCOMING_CALL",
-        screen: "Incomingcall",
-        callerId: caller._id,
-        callerName: caller.fullName,
-        callerImage: caller.profilePicture,
-        callRecordId,
-      }
-    );
-  }
-
-  // CHAT MESSAGE
-  static async sendChatMessageNotification(receiverId, chat, sender) {
-    return this.sendPushNotification(
-      receiverId,
-      sender.fullName,
-      chat.lastMessage,
-      {
-        type: "CHAT_MESSAGE",
-        screen: "AstrologerChat",
-        chatId: chat._id,
-        senderId: sender._id,
-        senderName: sender.fullName,
-        senderImage: sender.profilePicture,
-      }
-    );
-  }
-
-  // MISSED CALL
-  static async sendMissedCall(receiverId, caller, callRecordId) {
-    return this.sendPushNotification(
-      receiverId,
-      "Missed Call",
-      `You missed a call from ${caller.fullName}`,
-      {
-        type: "MISSED_CALL",
-        screen: "CallHistory",
-        callRecordId,
-      }
-    );
-  }
-
+  // ──────────────────────────────
+  // CRITICAL: sendCallEvent (Android-only – works when app killed)
+  // ──────────────────────────────
   static async sendCallEvent({
     toUserId,
     event,
     callerId,
-    receiverId,
+    receiverId, // THIS IS CRITICAL - ensure this is passed
     callRecordId,
-    callerName,
-    callerAvatar,
-    callType,
+    callerName = "Astrologer",
+    callerAvatar = "",
+    callType = "AUDIO",
   }) {
-    const user = await User.findById(toUserId);
-    if (!user?.deviceToken) return;
+    try {
+      const user = await User.findById(toUserId);
+      if (!user?.deviceToken) {
+        logger.warn(`No FCM token for user ${toUserId}`);
+        return false;
+      }
 
-    // Always convert to safe strings
-    const safePayload = {
-      callerId: String(callerId),
-      receiverId: String(receiverId),
-      callRecordId: String(callRecordId),
-      callerName: callerName || "",
-      callerAvatar: callerAvatar || "",
-      callType: String(callType || ""),
-      event: String(event),
-    };
+      // VALIDATE REQUIRED FIELDS
+      if (!receiverId) {
+        logger.error(
+          `Missing receiverId for call event ${event} to user ${toUserId}`
+        );
+        receiverId = toUserId; // Fallback: current user is the receiver
+      }
 
-    const payload = {
-      token: user.deviceToken,
+      const payload = {
+        event: String(event),
+        type: event === "incoming" ? "incoming" : event,
+        screen: "Incomingcall", // Fixed: match your actual screen name
+        callRecordId: String(callRecordId),
+        callerId: String(callerId),
+        receiverId: String(receiverId), // THIS MUST BE INCLUDED
+        callerName: String(callerName),
+        callerAvatar: String(callerAvatar),
+        callType: String(callType).toUpperCase(),
 
-      // Notification only for events other than "incoming"
-      notification:
-        event !== "incoming"
-          ? {
-              title: this.title(event),
-              body: this.body(event, safePayload.callerName),
-            }
-          : undefined,
+        // Complete params for killed state
+        params: JSON.stringify({
+          callRecordId: String(callRecordId),
+          callerId: String(callerId),
+          receiverId: String(receiverId), // INCLUDED HERE TOO
+          callerName: String(callerName),
+          callerAvatar: String(callerAvatar),
+          callType: String(callType).toUpperCase(),
+          event: String(event),
+          socket: null, // Explicitly null since socket can't be serialized
+        }),
+      };
 
-      data: {
-        ...safePayload,
-        type: safePayload.event,
-        screen: this.screen(event),
-        params: JSON.stringify(safePayload), // 🔥 STRINGIFIED SAFE PARAMS
-      },
+      const message = {
+        token: user.deviceToken,
+        data: payload,
+        android: {
+          priority: "high",
+          ttl: 45 * 1000, // 45 seconds
+          collapseKey: `call_${callRecordId}`,
+        },
+        apns: {
+          payload: {
+            aps: {
+              contentAvailable: 1,
+              sound: "rington.caf",
+            },
+          },
+        },
+      };
 
-      android: { priority: "high" },
-      apns: { payload: { aps: { contentAvailable: 1 } } },
-    };
+      // Only add notification for non-incoming events
+      if (event !== "incoming") {
+        message.notification = {
+          title: this.title(event),
+          body: this.body(event, callerName),
+        };
+      }
 
-    return admin.messaging().send(payload);
+      await admin.messaging().send(message);
+      logger.info(
+        `📞 Call "${event}" sent → ${toUserId} | receiver: ${receiverId}`
+      );
+      return true;
+    } catch (error) {
+      logger.error("sendCallEvent FCM failed:", error);
+      return false;
+    }
+  }
+
+  // Keep your old ones if you want
+  static async sendIncomingCallNotification(receiverId, caller, callRecordId) {
+    return this.sendCallEvent({
+      toUserId: receiverId,
+      event: "incoming",
+      callerId: caller._id,
+      receiverId,
+      callRecordId,
+      callerName: caller.fullName,
+      callerAvatar: caller.profilePicture,
+      callType: "AUDIO",
+    });
   }
 
   static title(event) {
-    return {
+    const titles = {
       incoming: "Incoming Call",
-      accepted: "Call Accepted",
+      accepted: "Call Connected",
       rejected: "Call Rejected",
       missed: "Missed Call",
       cancelled: "Call Cancelled",
-    }[event];
+    };
+    return titles[event] || "Call Update";
   }
 
   static body(event, name) {
-    return {
+    const bodies = {
       incoming: `${name} is calling you`,
       accepted: `${name} accepted your call`,
-      rejected: `${name} rejected your call`,
-      missed: `You missed a call from ${name}`,
+      rejected: `${name} rejected the call`,
+      missed: `Missed call from ${name}`,
       cancelled: `${name} cancelled the call`,
-    }[event];
-  }
-
-  static screen(event) {
-    return {
-      incoming: "IncomingCall",
-      accepted: "CallScreen",
-      rejected: "CallHistory",
-      missed: "CallHistory",
-      cancelled: "CallHistory",
-    }[event];
+    };
+    return bodies[event] || "Call update";
   }
 }
 
