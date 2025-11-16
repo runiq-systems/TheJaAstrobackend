@@ -1,12 +1,8 @@
 import mongoose, { Schema } from "mongoose";
-
 const userSchema = new mongoose.Schema(
   {
     fullName: {
       type: String,
-      // lowercase: true,
-      // trim: true,
-      // index: true,
     },
     phone: {
       type: String,
@@ -17,6 +13,12 @@ const userSchema = new mongoose.Schema(
     email: {
       type: String,
       lowercase: true,
+    },
+    role: {
+      type: String,
+      enum: ['User', 'Astrologer'],
+      default: 'Astrologer',
+      require: true
     },
     dateOfBirth: {
       type: Date,
@@ -41,11 +43,6 @@ const userSchema = new mongoose.Schema(
       type: String,
       enum: ["male", "female", "other"],
     },
-    languages: [
-      {
-        type: String,
-      },
-    ],
     deviceToken: {
       type: String,
     },
@@ -66,6 +63,7 @@ const userSchema = new mongoose.Schema(
     refreshToken: {
       type: String,
     },
+
     userStatus: {
       type: String,
       enum: ["Active", "InActive", "Blocked"],
@@ -84,38 +82,6 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: Date.now,
     },
-    privacy: {
-      lastSeen: {
-        type: String,
-        enum: ["everyone", "myContacts", "nobody"],
-        default: "everyone",
-      },
-      profilePhoto: {
-        type: String,
-        enum: ["everyone", "myContacts", "nobody"],
-        default: "everyone",
-      },
-      status: {
-        type: String,
-        enum: ["everyone", "myContacts", "nobody"],
-        default: "everyone",
-      },
-    },
-    blockedUsers: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User",
-      },
-    ],
-    chatBackgrounds: [
-      {
-        chat: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "Chat",
-        },
-        background: String,
-      },
-    ],
   },
   { timestamps: true }
 );

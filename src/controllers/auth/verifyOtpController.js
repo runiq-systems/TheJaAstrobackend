@@ -44,7 +44,7 @@ export async function verifyOtpController(req, res) {
     currentUser.otp = null;
     currentUser.otpExpires = null;
 
-    const payload = { id: currentUser._id, phone: currentUser.phone };
+    const payload = { id: currentUser._id, phone: currentUser.phone, role:currentUser.role };
     const token = jwt.sign(payload, JWT_SECRET_KEY);
     const refreshToken = jwt.sign(payload, JWT_SECRET_KEY);
 
@@ -72,6 +72,7 @@ export async function verifyOtpController(req, res) {
           _id: currentUser._id,
           phone: currentUser.phone,
           isVerified: currentUser.isVerified,
+          role:currentUser.role
         },
       },
     });

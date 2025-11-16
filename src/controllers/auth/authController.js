@@ -1,50 +1,100 @@
 import logger from "../../utils/logger.js";
 import { User } from "../../models/user.js";
 import { generateOtp } from "../../utils/generateOtp.js";
+import { Astrologer } from "../../models/astrologer.js";
+
+
 
 export async function registerController(req, res) {
-  const { phone } = req.body;
-
-  if (!phone) {
-    logger.warn("Phone number missing in request");
-    return res.status(400).json({
-      success: false,
-      message: "Phone number is required.",
-    });
-  }
-
-  const phoneRegex = /^[6-9]\d{9}$/;
-  if (!phoneRegex.test(phone)) {
-    logger.warn(`Invalid phone format: ${phone}`);
-    return res.status(400).json({
-      success: false,
-      message: "Invalid phone number format.",
-    });
-  }
-
   try {
+    const { phone, role } = req.body;
+
+    // -----------------------------
+    // Validate Phone
+    //------------------------------
+    if (!phone) {
+      logger.warn("Phone number missing in request");
+      return res.status(400).json({
+        success: false,
+        message: "Phone number is required.",
+      });
+    }
+
+    const phoneRegex = /^[6-9]\d{9}$/;
+    if (!phoneRegex.test(phone)) {
+      logger.warn(`Invalid phone format: ${phone}`);
+      return res.status(400).json({
+        success: false,
+        message: "Invalid phone number format.",
+      });
+    }
+
+    // -----------------------------
+    // Validate Role
+    //------------------------------
+    const allowedRoles = ["User", "Astrologer"];
+    let finalRole = "User"; // default
+
+    if (role) {
+      if (!allowedRoles.includes(role)) {
+        logger.warn(`Invalid role attempted: ${role}`);
+        return res.status(400).json({
+          success: false,
+          message: "Invalid role. Allowed: User, Astrologer",
+        });
+      }
+      finalRole = role;
+    }
+
+    // -----------------------------
+    // Existing User
+    //------------------------------
     let currentUser = await User.findOne({ phone });
 
     const otp = generateOtp();
     const otpExpires = new Date(Date.now() + 15 * 60 * 1000);
 
     if (currentUser) {
-      // User exists, update OTP
+      // update OTP only
       currentUser.otp = otp;
       currentUser.otpExpires = otpExpires;
       await currentUser.save();
+
       logger.info(`OTP resent to existing user: ${phone}`);
+
     } else {
-      // New user registration
+      // -----------------------------
+      // Register New User
+      //------------------------------
       currentUser = new User({
         phone,
+        role: finalRole,
         otp,
         otpExpires,
         isVerified: false,
         userStatus: "InActive",
       });
+
       await currentUser.save();
-      // logger.info(`New user registered: ${phone}`);
+
+      logger.info(`New user registered with role: ${finalRole}`);
+
+      // -----------------------------
+      // If Role = Astrologer → Create Astrologer Profile
+      //------------------------------
+      if (finalRole === "Astrologer") {
+        const alreadyAstrologer = await Astrologer.findOne({
+          userId: currentUser._id,
+        });
+
+        if (!alreadyAstrologer) {
+          await Astrologer.create({
+            userId: currentUser._id,
+            // All other fields remain empty initially
+          });
+          logger.info(`Astrologer profile created for user: ${currentUser._id}`);
+        }
+      }
     }
 
     return res.status(200).json({
@@ -52,9 +102,12 @@ export async function registerController(req, res) {
       message: "OTP sent successfully.",
       data: {
         phone: currentUser.phone,
+        role: currentUser.role,
+        userId: currentUser._id,
         otpExpires: currentUser.otpExpires,
       },
     });
+
   } catch (error) {
     logger.error(`Error in registerController: ${error.message}`);
     return res.status(500).json({
@@ -63,6 +116,8 @@ export async function registerController(req, res) {
     });
   }
 }
+
+
 
 export const LogoutController = async (req, res) => {
   try {
@@ -98,7 +153,7 @@ export const LogoutController = async (req, res) => {
 
 export const UpdateProfileStepController = async (req, res) => {
   try {
-   
+
     const userId = req.user._id || req.user.id;
     const { step } = req.params; // Step number (1, 2, 3, or 4)
     const data = req.body;
@@ -243,7 +298,7 @@ export const GetProfileController = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
     // Fetch user profile with selected fields
-  const user = await User.findById(userId).select(
+    const user = await User.findById(userId).select(
       "fullName gender dateOfBirth timeOfBirth isAccurate placeOfBirth phone"
     );
 
