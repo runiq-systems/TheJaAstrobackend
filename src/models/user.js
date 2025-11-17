@@ -16,8 +16,8 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['User', 'Astrologer'],
-      default: 'Astrologer',
+      enum: ['user' , 'astrologer'],
+      default: 'astrologer',
       require: true
     },
     dateOfBirth: {
