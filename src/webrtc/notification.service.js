@@ -22,7 +22,9 @@ class NotificationService {
           priority: "high",
           notification: {
             sound: "default",
-            channelId: data.type?.includes("CALL") ? "call_channel" : "default_channel",
+            channelId: data.type?.includes("CALL")
+              ? "call_channel"
+              : "default_channel",
           },
         },
       };
@@ -43,7 +45,7 @@ class NotificationService {
     toUserId,
     event,
     callerId,
-    receiverId,
+    receiverId, // THIS IS CRITICAL - ensure this is passed
     callRecordId,
     callerName = "Astrologer",
     callerAvatar = "",
@@ -56,22 +58,30 @@ class NotificationService {
         return false;
       }
 
+      // VALIDATE REQUIRED FIELDS
+      if (!receiverId) {
+        logger.error(
+          `Missing receiverId for call event ${event} to user ${toUserId}`
+        );
+        receiverId = toUserId; // Fallback: current user is the receiver
+      }
+
       const payload = {
         event: String(event),
-        type: event === "incoming" ? "incoming" : event, // matches your frontend
-        screen: "IncomingCall", // matches your logs
+        type: event === "incoming" ? "incoming" : event,
+        screen: "Incomingcall", // Fixed: match your actual screen name
         callRecordId: String(callRecordId),
         callerId: String(callerId),
-        receiverId: String(receiverId),
+        receiverId: String(receiverId), // THIS MUST BE INCLUDED
         callerName: String(callerName),
         callerAvatar: String(callerAvatar),
         callType: String(callType).toUpperCase(),
 
-        // 100% safe fallback – used when app is killed
+        // Complete params for killed state
         params: JSON.stringify({
           callRecordId: String(callRecordId),
           callerId: String(callerId),
-          receiverId: String(receiverId),
+          receiverId: String(receiverId), // INCLUDED HERE TOO
           callerName: String(callerName),
           callerAvatar: String(callerAvatar),
           callType: String(callType).toUpperCase(),
@@ -81,26 +91,34 @@ class NotificationService {
 
       const message = {
         token: user.deviceToken,
-
-        // DO NOT show visible notification for incoming call
-        // (we show it via Notifee on frontend)
-        notification: event !== "incoming" ? {
-          title: this.title(event),
-          body: this.body(event, callerName),
-        } : undefined,
-
         data: payload,
-
-        // THIS IS THE KEY: wakes app even in Doze/killed state
         android: {
           priority: "high",
-          ttl: 60 * 1000, // 60 seconds
+          ttl: 45 * 1000, // 45 seconds
           collapseKey: `call_${callRecordId}`,
+        },
+        apns: {
+          payload: {
+            aps: {
+              contentAvailable: 1,
+              sound: "rington.caf",
+            },
+          },
         },
       };
 
+      // Only add notification for non-incoming events
+      if (event !== "incoming") {
+        message.notification = {
+          title: this.title(event),
+          body: this.body(event, callerName),
+        };
+      }
+
       await admin.messaging().send(message);
-      logger.info(`Call event "${event}" sent → ${toUserId} | ${callRecordId}`);
+      logger.info(
+        `📞 Call "${event}" sent → ${toUserId} | receiver: ${receiverId}`
+      );
       return true;
     } catch (error) {
       logger.error("sendCallEvent FCM failed:", error);
