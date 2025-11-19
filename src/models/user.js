@@ -16,7 +16,7 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['user' , 'astrologer'],
+      enum: ['user', 'astrologer'],
       default: 'astrologer',
       require: true
     },
@@ -39,6 +39,12 @@ const userSchema = new mongoose.Schema(
     password: {
       type: String,
     },
+    blockedUsers: {
+      type: [mongoose.Schema.Types.ObjectId],
+      ref: "User",
+      default: [], // important to prevent undefined errors
+    },
+
     gender: {
       type: String,
       enum: ["male", "female", "other"],
