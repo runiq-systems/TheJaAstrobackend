@@ -16,8 +16,6 @@ import mongoose from "mongoose";
  */
 export const createOrGetAOneOnOneChat = asyncHandler(async (req, res) => {
   try {
-
-
     const { participantId } = req.body;
     const currentUserId = req.user.id;
 
@@ -30,26 +28,30 @@ export const createOrGetAOneOnOneChat = asyncHandler(async (req, res) => {
       throw new ApiError(400, "Cannot create chat with yourself");
     }
 
-    // Check if participant exists and is not blocked
+    // Fetch participant
     const participant = await User.findById(participantId);
     if (!participant) {
       throw new ApiError(404, "Participant not found");
     }
 
-    if (req.user.blockedUsers.includes(participantId)) {
+    // Safe blockedUsers check
+    const currentUserBlocked = Array.isArray(req.user.blockedUsers) ? req.user.blockedUsers : [];
+    const participantBlocked = Array.isArray(participant.blockedUsers) ? participant.blockedUsers : [];
+
+    if (currentUserBlocked.includes(participantId)) {
       throw new ApiError(403, "You have blocked this user");
     }
 
-    if (participant.blockedUsers.includes(currentUserId)) {
+    if (participantBlocked.includes(currentUserId)) {
       throw new ApiError(403, "This user has blocked you");
     }
 
-    // Find or create personal chat
-    const chat = await Chat.findOrCreatePersonalChat(
-      currentUserId,
-      participantId
-    );
+    // Find or create 1-on-1 chat
+    const chat = await Chat.findOrCreatePersonalChat(currentUserId, participantId);
 
+    if (!chat) {
+      throw new ApiError(500, "Unable to create or retrieve chat");
+    }
 
     // Populate necessary fields
     await chat.populate([
@@ -66,23 +68,27 @@ export const createOrGetAOneOnOneChat = asyncHandler(async (req, res) => {
       },
     ]);
 
-    // Emit socket event for real-time updates
-    emitSocketEvent(
-      req,
-      participantId.toString(),
-      ChatEventsEnum.NEW_CHAT_EVENT,
-      chat
+    // Emit socket event (optional, safe)
+    if (typeof emitSocketEvent === "function") {
+      emitSocketEvent(
+        req,
+        participantId.toString(),
+        ChatEventsEnum.NEW_CHAT_EVENT,
+        chat
+      );
+    }
+
+    return res.status(200).json(
+      new ApiResponse(200, chat, "Chat retrieved/created successfully")
     );
-
-    return res
-      .status(200)
-      .json(new ApiResponse(200, chat, "Chat retrieved/created successfully"));
   } catch (error) {
-    console.error("Create/Get Chat Error:", error); // ye line add karo
-    return res.status(500).json(new ApiResponse(500, null, error.message || "Internal Server Error"));
+    console.error("Create/Get Chat Error:", error);
+    return res
+      .status(500)
+      .json(new ApiResponse(500, null, error.message || "Internal Server Error"));
   }
-
 });
+
 
 /**
  * @desc    Delete one-on-one chat
