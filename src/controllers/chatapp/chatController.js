@@ -50,6 +50,7 @@ export const createOrGetAOneOnOneChat = asyncHandler(async (req, res) => {
       participantId
     );
 
+
     // Populate necessary fields
     await chat.populate([
       {
@@ -77,13 +78,10 @@ export const createOrGetAOneOnOneChat = asyncHandler(async (req, res) => {
       .status(200)
       .json(new ApiResponse(200, chat, "Chat retrieved/created successfully"));
   } catch (error) {
-
-    return res
-      .status(500)
-      .json(new ApiResponse(500, null, "Internal Server Error"));
-
-
+    console.error("Create/Get Chat Error:", error); // ye line add karo
+    return res.status(500).json(new ApiResponse(500, null, error.message || "Internal Server Error"));
   }
+
 });
 
 /**
@@ -462,6 +460,6 @@ export const getAllUsers = asyncHandler(async (req, res) => {
     return res
       .status(500)
       .json(new ApiResponse(500, null, "Internal Server Error"));
-      
+
   }
 });
