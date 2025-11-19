@@ -521,7 +521,7 @@ export async function sendNotification({
       data: {
         type, // 'chat_message', 'incoming_call', etc.
         channelId,
-        screen: "Chat",
+        screen: "AstrologerChat",
         chatId: chatId?.toString() || "",
         messageId: messageId?.toString() || "",
         senderId: senderId?.toString() || "",
