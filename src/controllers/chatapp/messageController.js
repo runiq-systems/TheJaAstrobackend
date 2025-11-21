@@ -494,7 +494,7 @@ export async function sendNotification({
   senderName,
   senderAvatar,
   type = "chat_message",
-  channelId = "chat_messages",
+  channelId = "chat_channel",
 }) {
   try {
     // 1️⃣ Fetch user's device token

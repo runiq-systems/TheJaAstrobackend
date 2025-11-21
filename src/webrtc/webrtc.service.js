@@ -1290,7 +1290,7 @@ async function sendNotification_call(
       android: {
         priority: "high",
         notification: {
-          channel_id: "IncomingCall", // Add your channel ID here
+          channel_id: "call_channel", // Add your channel ID here
         },
       },
       notification: {
