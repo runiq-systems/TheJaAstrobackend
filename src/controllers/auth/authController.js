@@ -32,8 +32,8 @@ export async function registerController(req, res) {
     // -----------------------------
     // Validate Role
     //------------------------------
-    const allowedRoles = ["User", "Astrologer"];
-    let finalRole = "User"; // default
+    const allowedRoles = ['user', 'astrologer'];
+    let finalRole = "user"; // default
 
     if (role) {
       if (!allowedRoles.includes(role)) {
@@ -82,7 +82,7 @@ export async function registerController(req, res) {
       // -----------------------------
       // If Role = Astrologer → Create Astrologer Profile
       //------------------------------
-      if (finalRole === "Astrologer") {
+      if (finalRole === "astrologer") {
         const alreadyAstrologer = await Astrologer.findOne({
           userId: currentUser._id,
         });
