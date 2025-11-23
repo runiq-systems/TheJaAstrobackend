@@ -70,7 +70,6 @@ app.use(
 app.use("/api/v1", indexRoute)
 app.use("/api/v1", astrorout)
 app.use("/api/v1", authRoute)
-app.use("/api/v1/admin", admin)
 app.use("/api/v1/chat", chatmessageRoute)
 
 app.use(errorHandler)

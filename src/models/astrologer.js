@@ -61,6 +61,10 @@ const astrologerSchema = new mongoose.Schema(
     qualification: {
       type: String,
     },
+    astrologerApproved: {
+      type: Boolean,
+      default: false,
+    },
     accountStatus: {
       type: String,
       enum: ["pending", "approved", "rejected", "suspended"],
