@@ -94,68 +94,244 @@ export const updateAstrologerStep3 = async (req, res) => {
         const {
             panNumber,
             aadhaarNumber,
-            bankDetails,
-            qualificationImage,
+            bankDetails,        // ← this will be parsed below
         } = req.body;
 
+        // === VALIDATE REQUIRED FIELDS ===
         if (!panNumber || !aadhaarNumber || !bankDetails) {
-            return res.status(400).json({ message: "Incomplete KYC details" });
+            return res.status(400).json({ message: "PAN, Aadhaar & Bank details are required" });
+        }
+
+        // === PARSE bankDetails SAFELY (it may come as string from FormData) ===
+        let parsedBankDetails;
+        try {
+            // If frontend sent JSON.stringify(), it comes as string
+            if (typeof bankDetails === "string") {
+                parsedBankDetails = JSON.parse(bankDetails);
+            } else {
+                parsedBankDetails = bankDetails; // already an object
+            }
+        } catch (parseErr) {
+            return res.status(400).json({ message: "Invalid bankDetails format" });
+        }
+
+        // Validate required bank fields
+        const { accountNumber, ifscCode, bankName, accountHolderName } = parsedBankDetails;
+        if (!accountNumber || !ifscCode || !bankName || !accountHolderName) {
+            return res.status(400).json({ message: "All bank fields are required" });
         }
 
         const astrologer = await ensureAstrologer(userId);
 
-        // Process multiple uploaded images
+        // === HANDLE FILE UPLOADS ===
         const files = req.files || {};
 
-        const panCardImg = files.panCardImage?.[0]?.buffer;
-        const adFrontImg = files.aadhaarFrontImage?.[0]?.buffer;
-        const adBackImg = files.aadhaarBackImage?.[0]?.buffer;
-        const passbookImg = files.passbookImage?.[0]?.buffer;
-        const qualImg = files.qualificationImage?.[0]?.buffer;
-
-        // Upload to Cloudinary
-        const uploaded = {};
-
-        if (panCardImg)
-            uploaded.panCardImage = await uploadToCloudinary(panCardImg, "astrologers/kyc");
-
-        if (adFrontImg)
-            uploaded.aadhaarFrontImage = await uploadToCloudinary(adFrontImg, "astrologers/kyc");
-
-        if (adBackImg)
-            uploaded.aadhaarBackImage = await uploadToCloudinary(adBackImg, "astrologers/kyc");
-
-        if (passbookImg)
-            uploaded.passbookImage = await uploadToCloudinary(passbookImg, "astrologers/kyc");
-
-        if (qualImg)
-            uploaded.qualificationImage = await uploadToCloudinary(qualImg, "astrologers/kyc");
-
-        astrologer.kyc = {
-            panNumber,
-            aadhaarNumber,
-            kycVerified: false,
-            kycStatus: "pending",
-            bankDetails,
-            panCardImage: uploaded.panCardImage?.secure_url,
-            aadhaarFrontImage: uploaded.aadhaarFrontImage?.secure_url,
-            aadhaarBackImage: uploaded.aadhaarBackImage?.secure_url,
-            passbookImage: uploaded.passbookImage?.secure_url,
-            qualificationImage: uploaded.qualificationImage?.secure_url,
+        const uploadImage = async (fileBuffer) => {
+            if (!fileBuffer) return null;
+            const result = await uploadToCloudinary(fileBuffer, "astrologers/kyc");
+            return result.secure_url;
         };
 
-        astrologer.bankDetails = [bankDetails];
+        const panCardImage = await uploadImage(files.panCardImage?.[0]?.buffer);
+        const aadhaarFrontImage = await uploadImage(files.aadhaarFrontImage?.[0]?.buffer);
+        const aadhaarBackImage = await uploadImage(files.aadhaarBackImage?.[0]?.buffer);
+        const passbookImage = await uploadImage(files.passbookImage?.[0]?.buffer);
+        const qualificationImage = await uploadImage(files.qualificationImage?.[0]?.buffer);
+
+        // === UPDATE KYC SUB-DOCUMENT ===
+        astrologer.kyc = {
+            panNumber: panNumber.trim(),
+            aadhaarNumber: aadhaarNumber.trim(),
+            kycVerified: false,
+            kycStatus: "pending",
+            bankDetails: {
+                bankName: bankName.trim(),
+                accountNumber: accountNumber.trim(),
+                ifscCode: ifscCode.trim(),
+                accountHolderName: accountHolderName.trim(),
+            },
+            panCardImage,
+            aadhaarFrontImage,
+            aadhaarBackImage,
+            passbookImage,
+            qualificationImage,
+        };
+
+        // === UPDATE TOP-LEVEL bankDetails ARRAY (as per your schema) ===
+        // Remove old bank entry if exists, then push new one
+        astrologer.bankDetails = astrologer.bankDetails.filter(
+            (b) => b.accountNumber !== accountNumber.trim()
+        );
+
+        astrologer.bankDetails.push({
+            bankName: bankName.trim(),
+            accountNumber: accountNumber.trim(),
+            ifscCode: ifscCode.trim(),
+            accountHolderName: accountHolderName.trim(),
+        });
+
         astrologer.isProfilecomplet = true;
+        astrologer.accountStatus = "pending"; // or keep existing logic
 
         await astrologer.save();
 
-        res.json({
-            message: "Step 3 (KYC) completed successfully",
+        return res.status(200).json({
+            success: true,
+            message: "KYC submitted successfully! Awaiting admin approval.",
             astrologer,
         });
-
     } catch (err) {
         console.error("STEP 3 upload error:", err);
-        res.status(500).json({ message: "Server error" });
+        return res.status(500).json({
+            success: false,
+            message: "Server error",
+            error: err.message,
+        });
     }
+};
+
+
+
+
+/* ============================================================
+   GET ASTROLOGER PROFILE — ALL 3 STEPS DATA
+============================================================ */
+export const getAstrologerProfile = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    const astrologer = await Astrologer.findOne({ userId })
+      .select('-__v -createdAt -updatedAt')
+      .lean();
+
+    if (!astrologer) {
+      return res.status(404).json({ message: "Profile not found" });
+    }
+
+    // Return structured data for frontend
+    res.status(200).json({
+      success: true,
+      data: {
+        // Step 1
+        fullName: req.user.fullName || "",
+        gender: req.user.gender || "",
+        specialization: astrologer.specialization || [],
+        yearOfExpertise: astrologer.yearOfExpertise || "",
+
+        // Step 2
+        photo: astrologer.photo || "",
+        yearOfExperience: astrologer.yearOfExperience || "",
+        languages: astrologer.languages || [],
+
+        // Step 3 - KYC
+        kyc: astrologer.kyc
+          ? {
+              panNumber: astrologer.kyc.panNumber || "",
+              aadhaarNumber: astrologer.kyc.aadhaarNumber || "",
+              panCardImage: astrologer.kyc.panCardImage || "",
+              aadhaarFrontImage: astrologer.kyc.aadhaarFrontImage || "",
+              aadhaarBackImage: astrologer.kyc.aadhaarBackImage || "",
+              passbookImage: astrologer.kyc.passbookImage || "",
+              qualificationImage: astrologer.kyc.qualificationImage || "",
+              bankDetails: astrologer.kyc.bankDetails || null,
+              kycStatus: astrologer.kyc.kycStatus || "pending",
+              rejectionReason: astrologer.kyc.rejectionReason || "",
+            }
+          : null,
+
+        // Extra
+        isProfileComplete: astrologer.isProfilecomplet || false,
+        accountStatus: astrologer.accountStatus || "pending",
+      },
+    });
+  } catch (err) {
+    console.error("Get Profile Error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+/* ============================================================
+   GET STEP 1 DATA ONLY
+============================================================ */
+export const getStep1Data = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const user = await User.findById(userId).select('fullName gender').lean();
+    const astrologer = await Astrologer.findOne({ userId }).select('specialization yearOfExpertise').lean();
+
+    res.json({
+      success: true,
+      data: {
+        fullName: user?.fullName || "",
+        gender: user?.gender || "",
+        specialization: astrologer?.specialization || [],
+        yearOfExpertise: astrologer?.yearOfExpertise || "",
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+/* ============================================================
+   GET STEP 2 DATA ONLY
+============================================================ */
+export const getStep2Data = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const astrologer = await Astrologer.findOne({ userId })
+      .select('photo yearOfExperience languages')
+      .lean();
+
+    res.json({
+      success: true,
+      data: {
+        photo: astrologer?.photo || "",
+        yearOfExperience: astrologer?.yearOfExperience || "",
+        languages: astrologer?.languages || [],
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+/* ============================================================
+   GET STEP 3 (KYC) DATA ONLY
+============================================================ */
+export const getStep3Data = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const astrologer = await Astrologer.findOne({ userId }).select('kyc isProfilecomplet accountStatus').lean();
+
+    if (!astrologer?.kyc) {
+      return res.json({
+        success: true,
+        data: { kyc: null, isProfileComplete: false, accountStatus: "pending" },
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        kyc: {
+          panNumber: astrologer.kyc.panNumber || "",
+          aadhaarNumber: astrologer.kyc.aadhaarNumber || "",
+          panCardImage: astrologer.kyc.panCardImage || "",
+          aadhaarFrontImage: astrologer.kyc.aadhaarFrontImage || "",
+          aadhaarBackImage: astrologer.kyc.aadhaarBackImage || "",
+          passbookImage: astrologer.kyc.passbookImage || "",
+          qualificationImage: astrologer.kyc.qualificationImage || "",
+          bankDetails: astrologer.kyc.bankDetails || null,
+          kycStatus: astrologer.kyc.kycStatus || "pending",
+          rejectionReason: astrologer.kyc.rejectionReason || "",
+        },
+        isProfileComplete: astrologer.isProfilecomplet || false,
+        accountStatus: astrologer.accountStatus || "pending",
+      },
+    });
+  } catch (err) {
+    console.error("Get Step 3 Error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
 };

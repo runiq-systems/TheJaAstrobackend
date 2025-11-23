@@ -4,7 +4,11 @@ import multer from "multer";
 import {
     updateAstrologerStep1,
     updateAstrologerStep2,
-    updateAstrologerStep3
+    updateAstrologerStep3,
+    getAstrologerProfile,
+    getStep1Data,
+    getStep2Data,
+    getStep3Data
 } from "../controllers/AstrologerProfile.js";
 const router = express.Router();
 
@@ -50,5 +54,11 @@ router.put(
     ]),
     updateAstrologerStep3
 );
+
+
+router.get('/astro/profile', authMiddleware, getAstrologerProfile);
+router.get('/astro/step1', authMiddleware, getStep1Data);
+router.get('/astro/step2', authMiddleware, getStep2Data);
+router.get('/astro/step3', authMiddleware, getStep3Data);
 
 export default router;
