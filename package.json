@@ -36,6 +36,7 @@
     "simple-peer": "^9.11.1",
     "socket": "^1.1.25",
     "socket.io": "^4.8.1",
+    "streamifier": "^0.1.1",
     "uuid": "^13.0.0",
     "webrtc": "^1.14.1",
     "webrtc-adapter": "^9.0.3",

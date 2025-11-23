@@ -50,6 +50,13 @@ export async function registerController(req, res) {
     // Existing User
     //------------------------------
     let currentUser = await User.findOne({ phone });
+    // if (currentUser && currentUser.role !== finalRole) {
+    //   logger.warn(`Role mismatch for phone ${phone}: existing role ${currentUser.role}, attempted role ${finalRole}`);
+    //   return res.status(400).json({
+    //     success: false,
+    //     message: `User already registered as ${currentUser.role}.`,
+    //   });
+    // }
 
     const otp = generateOtp();
     const otpExpires = new Date(Date.now() + 15 * 60 * 1000);
