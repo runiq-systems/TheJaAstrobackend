@@ -65,6 +65,55 @@ const mountMessageReadEvent = (socket) => {
   });
 };
 
+
+// In your socket initialization file
+const mountChatSessionEvents = (socket) => {
+  // User joins chat room and starts session
+  socket.on(ChatEventsEnum.JOIN_CHAT_EVENT, async (data) => {
+    const { chatId, sessionId } = data;
+
+    try {
+      socket.join(chatId);
+
+      // Find session and update status
+      const session = await ChatSession.findOne({ sessionId });
+      if (session && session.status === "ACCEPTED") {
+        await startChatSession(sessionId, chatId, session.ratePerMinute);
+      }
+
+      console.log(`User joined chat: ${chatId}, session: ${sessionId}`);
+    } catch (error) {
+      console.error("Error joining chat:", error);
+    }
+  });
+
+  // Astrologer leaves chat (pause session)
+  socket.on(ChatEventsEnum.LEAVE_CHAT_EVENT, async (data) => {
+    const { chatId, sessionId } = data;
+
+    try {
+      await sessionTimerService.pauseSession(sessionId, chatId);
+      console.log(`Astrologer left chat: ${chatId}, session paused: ${sessionId}`);
+    } catch (error) {
+      console.error("Error pausing session:", error);
+    }
+  });
+
+  // Astrologer returns to chat (resume session)  
+  socket.on(ChatEventsEnum.RETURN_TO_CHAT_EVENT, async (data) => {
+    const { chatId, sessionId, ratePerMinute } = data;
+
+    try {
+      await sessionTimerService.resumeSession(sessionId, chatId, ratePerMinute);
+      console.log(`Astrologer returned to chat: ${chatId}, session resumed: ${sessionId}`);
+    } catch (error) {
+      console.error("Error resuming session:", error);
+    }
+  });
+};
+
+// Add this to your socket connection handler
+
 /**
  * @description Handle all group-related chat events (create, update, delete, etc.)
  * @param {Socket} socket
@@ -168,7 +217,7 @@ export const initializeSocketIO = (io) => {
       mountTypingEvents(socket);
       mountMessageReadEvent(socket);
       mountGroupChatEvents(socket);
-
+      mountChatSessionEvents(socket);
       // logger.info(`Socket connected: (${socket.user})`);
       /* ------------------------------- Disconnect event ----------------------------- */
       socket.on(ChatEventsEnum.DISCONNECT_EVENT, () => {

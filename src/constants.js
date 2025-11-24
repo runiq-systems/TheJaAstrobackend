@@ -77,6 +77,20 @@ export const ChatEventsEnum = Object.freeze({
   CHAT_ARCHIVED_EVENT: "chatArchived",          // Chat archived
   CHAT_UNARCHIVED_EVENT: "chatUnarchived",      // Chat unarchived
 
+
+  // Chat Session Events
+  CHAT_REQUEST_EVENT: "chatRequest",
+  CHAT_ACCEPTED_EVENT: "chatAccepted",
+  CHAT_REJECTED_EVENT: "chatRejected",
+  CHAT_CANCELLED_EVENT: "chatCancelled",
+  SESSION_STARTED_EVENT: "sessionStarted",
+  SESSION_PAUSED_EVENT: "sessionPaused",
+  SESSION_RESUMED_EVENT: "sessionResumed",
+  SESSION_ENDED_EVENT: "sessionEnded",
+  BILLING_UPDATE_EVENT: "billingUpdate",
+  SESSION_EXPIRED_EVENT: "sessionExpired",
+  MISSED_CHAT_EVENT: "missedChat",
+
   // 🧠 System Logs or AI Responses
   SYSTEM_MESSAGE_EVENT: "systemMessage",        // System or bot message
   AI_RESPONSE_EVENT: "aiResponse",              // AI-generated reply event
@@ -87,6 +101,9 @@ export const ChatEventsEnum = Object.freeze({
   UNKNOWN_EVENT: "unknownEvent",                // Unknown event type
   SERVER_RESTART_EVENT: "serverRestart"         // Server restarted
 });
+
+
+
 
 // ✅ Export as array (optional, useful for validation)
 export const AvailableChatEvents = Object.values(ChatEventsEnum);

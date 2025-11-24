@@ -15,7 +15,7 @@ import { initializeSocketIO } from "./socket/index.js";
 import { setupWebRTC } from "./webrtc/webrtc.service.js";
 import astrorout from "./routes/astrologer.routes.js";
 
-
+import chatSession from './routes/chatapp/chatSessionRoutes.js';
 
 import walletRoutes from './routes/Walllet/walletRoutes.js';
 import rechargeRoutes from './routes/Walllet/rechargeRoutes.js';
@@ -81,6 +81,8 @@ app.use("/api/v1", indexRoute)
 app.use("/api/v1", astrorout)
 app.use("/api/v1", authRoute)
 app.use("/api/v1/chat", chatmessageRoute)
+
+app.use("/api/v1", chatSession)
 
 
 
