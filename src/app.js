@@ -13,7 +13,17 @@ import authRoute from "./routes/authRoute.js"
 import chatmessageRoute from './routes/chatapp/chatRoutes.js'
 import { initializeSocketIO } from "./socket/index.js";
 import { setupWebRTC } from "./webrtc/webrtc.service.js";
-import astrorout from "./routes/astrologer.routes.js"
+import astrorout from "./routes/astrologer.routes.js";
+
+
+
+import walletRoutes from './routes/Walllet/walletRoutes.js';
+import rechargeRoutes from './routes/Walllet/rechargeRoutes.js';
+import couponRoutes from './routes/Walllet/couponRoutes.js';
+import sessionRoutes from './routes/Walllet/sessionRoutes.js';
+import payoutRoutes from './routes/Walllet/payoutRoutes.js ';
+import commissionRoutes from './routes/Walllet/commissionRoutes.js';
+
 const app = express();
 dotenv.config({
     path: "./.env",
@@ -71,6 +81,15 @@ app.use("/api/v1", indexRoute)
 app.use("/api/v1", astrorout)
 app.use("/api/v1", authRoute)
 app.use("/api/v1/chat", chatmessageRoute)
+
+
+
+app.use('/wallet', walletRoutes);
+app.use('/recharge', rechargeRoutes);
+app.use('/coupon', couponRoutes);
+app.use('/session', sessionRoutes);
+app.use('/payout', payoutRoutes);
+app.use('/commission', commissionRoutes);
 
 app.use(errorHandler)
 export default httpserver;
