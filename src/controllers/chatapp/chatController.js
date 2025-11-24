@@ -35,8 +35,12 @@ export const createOrGetAOneOnOneChat = asyncHandler(async (req, res) => {
     }
 
     // Safe blockedUsers check
-    const currentUserBlocked = Array.isArray(req.user.blockedUsers) ? req.user.blockedUsers : [];
-    const participantBlocked = Array.isArray(participant.blockedUsers) ? participant.blockedUsers : [];
+    const currentUserBlocked = Array.isArray(req.user.blockedUsers)
+      ? req.user.blockedUsers
+      : [];
+    const participantBlocked = Array.isArray(participant.blockedUsers)
+      ? participant.blockedUsers
+      : [];
 
     if (currentUserBlocked.includes(participantId)) {
       throw new ApiError(403, "You have blocked this user");
@@ -47,7 +51,10 @@ export const createOrGetAOneOnOneChat = asyncHandler(async (req, res) => {
     }
 
     // Find or create 1-on-1 chat
-    const chat = await Chat.findOrCreatePersonalChat(currentUserId, participantId);
+    const chat = await Chat.findOrCreatePersonalChat(
+      currentUserId,
+      participantId
+    );
 
     if (!chat) {
       throw new ApiError(500, "Unable to create or retrieve chat");
@@ -78,17 +85,18 @@ export const createOrGetAOneOnOneChat = asyncHandler(async (req, res) => {
       );
     }
 
-    return res.status(200).json(
-      new ApiResponse(200, chat, "Chat retrieved/created successfully")
-    );
+    return res
+      .status(200)
+      .json(new ApiResponse(200, chat, "Chat retrieved/created successfully"));
   } catch (error) {
     console.error("Create/Get Chat Error:", error);
     return res
       .status(500)
-      .json(new ApiResponse(500, null, error.message || "Internal Server Error"));
+      .json(
+        new ApiResponse(500, null, error.message || "Internal Server Error")
+      );
   }
 });
-
 
 /**
  * @desc    Delete one-on-one chat
@@ -97,8 +105,6 @@ export const createOrGetAOneOnOneChat = asyncHandler(async (req, res) => {
  */
 export const deleteOneOnOneChat = asyncHandler(async (req, res) => {
   try {
-
-
     const { chatId } = req.params;
     const userId = req.user.id;
 
@@ -143,13 +149,10 @@ export const deleteOneOnOneChat = asyncHandler(async (req, res) => {
     return res
       .status(200)
       .json(new ApiResponse(200, null, "Chat deleted successfully"));
-
   } catch (error) {
     return res
       .status(500)
       .json(new ApiResponse(500, null, "Internal Server Error"));
-
-
   }
 });
 
@@ -160,13 +163,14 @@ export const deleteOneOnOneChat = asyncHandler(async (req, res) => {
  */
 export const searchAvailableUsers = asyncHandler(async (req, res) => {
   try {
-
-
     const { query, page = 1, limit = 20 } = req.query;
     const userId = req.user.id;
 
     if (!query || query.trim().length < 2) {
-      throw new ApiError(400, "Search query must be at least 2 characters long");
+      throw new ApiError(
+        400,
+        "Search query must be at least 2 characters long"
+      );
     }
 
     const searchRegex = new RegExp(query, "i");
@@ -220,7 +224,6 @@ export const searchAvailableUsers = asyncHandler(async (req, res) => {
     return res
       .status(500)
       .json(new ApiResponse(500, null, "Internal Server Error"));
-
   }
 });
 
@@ -231,8 +234,6 @@ export const searchAvailableUsers = asyncHandler(async (req, res) => {
  */
 export const getAllChats = asyncHandler(async (req, res) => {
   try {
-
-
     const userId = req.user._id;
     const { page = 1, limit = 20, type = "all" } = req.query;
 
@@ -337,8 +338,6 @@ export const getAllChats = asyncHandler(async (req, res) => {
  */
 export const markMessageAsRead = asyncHandler(async (req, res) => {
   try {
-
-
     const { chatId } = req.params;
     const userId = req.user.id;
 
@@ -401,7 +400,6 @@ export const markMessageAsRead = asyncHandler(async (req, res) => {
     return res
       .status(500)
       .json(new ApiResponse(500, null, "Internal Server Error"));
-
   }
 });
 /**
@@ -412,8 +410,6 @@ export const markMessageAsRead = asyncHandler(async (req, res) => {
 
 export const getAllUsers = asyncHandler(async (req, res) => {
   try {
-
-
     const userId = req.user?.id || req.user?._id;
     const { page = 1, limit = 20, search = "" } = req.query;
 
@@ -424,13 +420,13 @@ export const getAllUsers = asyncHandler(async (req, res) => {
       _id: { $ne: userId }, // exclude current user
       ...(search
         ? {
-          $or: [
-            { fullName: { $regex: searchRegex } },
-            { username: { $regex: searchRegex } },
-            { email: { $regex: searchRegex } },
-            { phone: { $regex: searchRegex } },
-          ],
-        }
+            $or: [
+              { fullName: { $regex: searchRegex } },
+              { username: { $regex: searchRegex } },
+              { email: { $regex: searchRegex } },
+              { phone: { $regex: searchRegex } },
+            ],
+          }
         : {}),
     };
 
@@ -466,6 +462,5 @@ export const getAllUsers = asyncHandler(async (req, res) => {
     return res
       .status(500)
       .json(new ApiResponse(500, null, "Internal Server Error"));
-
   }
 });

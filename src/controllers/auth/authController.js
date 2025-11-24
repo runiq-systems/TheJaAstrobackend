@@ -3,8 +3,6 @@ import { User } from "../../models/user.js";
 import { generateOtp } from "../../utils/generateOtp.js";
 import { Astrologer } from "../../models/astrologer.js";
 
-
-
 export async function registerController(req, res) {
   try {
     const { phone, role } = req.body;
@@ -32,7 +30,7 @@ export async function registerController(req, res) {
     // -----------------------------
     // Validate Role
     //------------------------------
-    const allowedRoles = ['user', 'astrologer'];
+    const allowedRoles = ["user", "astrologer"];
     let finalRole = "user"; // default
 
     if (role) {
@@ -68,7 +66,6 @@ export async function registerController(req, res) {
       await currentUser.save();
 
       logger.info(`OTP resent to existing user: ${phone}`);
-
     } else {
       // -----------------------------
       // Register New User
@@ -99,7 +96,9 @@ export async function registerController(req, res) {
             userId: currentUser._id,
             // All other fields remain empty initially
           });
-          logger.info(`Astrologer profile created for user: ${currentUser._id}`);
+          logger.info(
+            `Astrologer profile created for user: ${currentUser._id}`
+          );
         }
       }
     }
@@ -114,7 +113,6 @@ export async function registerController(req, res) {
         otpExpires: currentUser.otpExpires,
       },
     });
-
   } catch (error) {
     logger.error(`Error in registerController: ${error.message}`);
     return res.status(500).json({
@@ -123,8 +121,6 @@ export async function registerController(req, res) {
     });
   }
 }
-
-
 
 export const LogoutController = async (req, res) => {
   try {
@@ -138,7 +134,7 @@ export const LogoutController = async (req, res) => {
         otp: null,
         otpExpires: null,
         isOnline: false,
-        lastSeen: new Date()
+        lastSeen: new Date(),
       },
       { new: true }
     );
@@ -160,7 +156,6 @@ export const LogoutController = async (req, res) => {
 
 export const UpdateProfileStepController = async (req, res) => {
   try {
-
     const userId = req.user._id || req.user.id;
     const { step } = req.params; // Step number (1, 2, 3, or 4)
     const data = req.body;
@@ -226,9 +221,7 @@ export const UpdateProfileStepController = async (req, res) => {
       userId,
       { $set: updateFields },
       { new: true, runValidators: true }
-    ).select(
-      "fullName gender timeOfBirth dateOfBirth isAccurate placeOfBirth"
-    );
+    ).select("fullName gender timeOfBirth dateOfBirth isAccurate placeOfBirth");
 
     if (!updatedUser) {
       return res.status(404).json({
@@ -254,13 +247,28 @@ export const UpdateProfileStepController = async (req, res) => {
 export const UpdateProfileCompleteController = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
-    const { fullName, gender, timeOfBirth, isAccurate, dateOfBirth, placeOfBirth } = req.body;
+    const {
+      fullName,
+      gender,
+      timeOfBirth,
+      isAccurate,
+      dateOfBirth,
+      placeOfBirth,
+    } = req.body;
 
     // Validate all required fields
-    if (!fullName || !gender || !timeOfBirth || isAccurate === undefined || !dateOfBirth || !placeOfBirth) {
+    if (
+      !fullName ||
+      !gender ||
+      !timeOfBirth ||
+      isAccurate === undefined ||
+      !dateOfBirth ||
+      !placeOfBirth
+    ) {
       return res.status(400).json({
         success: false,
-        message: "All fields (fullName, gender, timeOfBirth, isAccurate, dateOfBirth, placeOfBirth) are required",
+        message:
+          "All fields (fullName, gender, timeOfBirth, isAccurate, dateOfBirth, placeOfBirth) are required",
       });
     }
 
@@ -306,8 +314,9 @@ export const GetProfileController = async (req, res) => {
     const userId = req.user._id || req.user.id;
     // Fetch user profile with selected fields
     const user = await User.findById(userId).select(
-      "fullName gender dateOfBirth timeOfBirth isAccurate placeOfBirth phone"
+      "fullName gender dateOfBirth timeOfBirth isAccurate placeOfBirth phone role isOnline userStatus isVerified lastSeen"
     );
+    console.log(user.role["astrologer"]);
 
     if (!user) {
       return res.status(404).json({
@@ -323,10 +332,17 @@ export const GetProfileController = async (req, res) => {
         fullName: user.fullName || "",
         gender: user.gender || "",
         phone: user.phone || "", // Now phone will be availablephone: user.phone || "", // Now phone will be available
-        dateOfBirth: user.dateOfBirth ? user.dateOfBirth.toISOString().split("T")[0] : "",
+        dateOfBirth: user.dateOfBirth
+          ? user.dateOfBirth.toISOString().split("T")[0]
+          : "",
         timeOfBirth: user.timeOfBirth || "",
         isAccurate: user.isAccurate || false,
         placeOfBirth: user.placeOfBirth || "",
+        isOnline: user.isOnline || false,
+        userStatus: user.userStatus || "Inactive",
+        isVerified: user.isVerified || false,
+        lastSeen: user.lastSeen || null,
+        role: user.role || "",
       },
     });
   } catch (error) {
