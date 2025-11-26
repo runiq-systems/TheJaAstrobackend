@@ -5,7 +5,7 @@ import {
   searchAvailableUsers,
   markMessageAsRead,
   getAllChats,
-  getAllUsers,
+  getAllAstrologers,
 } from "../../controllers/chatapp/chatController.js";
 import {
   getAllMessages,
@@ -21,7 +21,7 @@ const router = express.Router();
 // Apply JWT verification to all routes
 router.use(authMiddleware);
 
-router.get("/all-users", getAllUsers);
+router.get("/all-users", getAllAstrologers);
 // Chat routes
 router.route("/one-on-one").post(createOrGetAOneOnOneChat);
 

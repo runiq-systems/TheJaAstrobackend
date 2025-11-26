@@ -437,7 +437,7 @@ export const getAllAstrologers = asyncHandler(async (req, res) => {
     // 📌 Fetch users + astrologer profile
     const users = await User.find(criteria)
       .select(
-        "fullName _id phone role isVerified userStatus isOnline status lastSeen"
+        "fullName _id phone role"
       )
       .limit(perPage)
       .skip((currentPage - 1) * perPage)
