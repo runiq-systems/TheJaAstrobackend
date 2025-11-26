@@ -6,6 +6,7 @@ import { ChatEventsEnum } from "../constants.js";
 import { User } from "../models/user.js";
 import { ApiError } from "../utils/ApiError.js";
 import logger from "../utils/logger.js";
+import { ChatSession } from "../models/chatapp/chatSession.js";
 /* -------------------------------------------------------------------------- */
 /*                          🔧  SOCKET EVENT MOUNTERS                         */
 /* -------------------------------------------------------------------------- */
