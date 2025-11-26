@@ -1,3 +1,4 @@
+// models/chatapp/chatSession.js
 import mongoose from "mongoose";
 
 const chatSessionSchema = new mongoose.Schema(
@@ -16,7 +17,7 @@ const chatSessionSchema = new mongoose.Schema(
         },
         astrologerId: {
             type: mongoose.Schema.Types.ObjectId,
-            ref: "User", // Changed from Astrologer to User
+            ref: "User",
             required: true,
             index: true
         },
@@ -26,7 +27,7 @@ const chatSessionSchema = new mongoose.Schema(
             required: true
         },
 
-        // Session Pricing
+        // Enhanced Pricing
         ratePerMinute: {
             type: Number,
             required: true,
@@ -36,46 +37,41 @@ const chatSessionSchema = new mongoose.Schema(
             type: String,
             default: "INR"
         },
+        minimumCharge: {
+            type: Number,
+            default: 10 // Minimum charge for 1 minute
+        },
 
-        // Session Timing
+        // Enhanced Status Management
         status: {
             type: String,
             enum: [
                 "REQUESTED",      // User requested chat
-                "WAITING",        // Waiting for astrologer acceptance
                 "ACCEPTED",       // Astrologer accepted
                 "ACTIVE",         // Chat ongoing
-                "PAUSED",         // Chat paused (astrologer left)
-                "COMPLETED",      // Session completed normally
+                "PAUSED",         // Chat paused
+                "COMPLETED",      // Session completed
                 "REJECTED",       // Astrologer rejected
                 "EXPIRED",        // Request expired
-                "MISSED",         // Astrologer missed the request
-                "CANCELLED"       // User cancelled before acceptance
+                "CANCELLED",      // User cancelled
+                "FAILED"          // Payment failed
             ],
             default: "REQUESTED",
             index: true
         },
 
-        // Timing fields
-        requestedAt: {
-            type: Date,
-            default: Date.now
-        },
-        acceptedAt: {
-            type: Date
-        },
-        startedAt: {
-            type: Date
-        },
-        endedAt: {
-            type: Date
-        },
+        // Enhanced Timing
+        requestedAt: Date,
+        acceptedAt: Date,
+        startedAt: Date,
+        endedAt: Date,
+        lastActivityAt: Date,
         expiresAt: {
             type: Date,
             index: true
         },
 
-        // Duration tracking
+        // Enhanced Duration Tracking
         totalDuration: {
             type: Number, // in seconds
             default: 0
@@ -84,11 +80,12 @@ const chatSessionSchema = new mongoose.Schema(
             type: Number, // in seconds
             default: 0
         },
-        lastActivityAt: {
-            type: Date
+        activeDuration: {
+            type: Number, // in seconds (excluding pauses)
+            default: 0
         },
 
-        // Billing information
+        // Enhanced Billing
         totalCost: {
             type: Number,
             default: 0
@@ -101,28 +98,43 @@ const chatSessionSchema = new mongoose.Schema(
             type: Number,
             default: 0
         },
+        taxAmount: {
+            type: Number,
+            default: 0
+        },
 
-        // Session tracking
+        // Enhanced Session Management
         pauseIntervals: [{
             start: { type: Date, required: true },
             end: { type: Date },
-            duration: { type: Number, default: 0 } // in seconds
+            duration: { type: Number, default: 0 }
         }],
 
-        // User rating after session
-        rating: {
+        // Payment & Reservation
+        reservationId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Reservation"
+        },
+        paymentStatus: {
+            type: String,
+            enum: ["PENDING", "RESERVED", "PAID", "FAILED", "REFUNDED"],
+            default: "PENDING"
+        },
+
+        // User Experience
+        userRating: {
             stars: { type: Number, min: 1, max: 5 },
             review: { type: String, maxlength: 500 },
             ratedAt: { type: Date }
         },
 
-        // System fields
+        // System
         autoExpire: {
             type: Boolean,
             default: true
         },
         timeoutDuration: {
-            type: Number, // in seconds
+            type: Number,
             default: 300 // 5 minutes
         },
 
@@ -136,30 +148,41 @@ const chatSessionSchema = new mongoose.Schema(
     }
 );
 
-// Indexes for efficient querying
+// Indexes
 chatSessionSchema.index({ userId: 1, status: 1 });
 chatSessionSchema.index({ astrologerId: 1, status: 1 });
 chatSessionSchema.index({ status: 1, expiresAt: 1 });
+chatSessionSchema.index({ "meta.requestId": 1 });
 
-// Static method to generate session ID
+// Static Methods
 chatSessionSchema.statics.generateSessionId = function () {
     const timestamp = Date.now().toString(36);
     const random = Math.random().toString(36).substr(2, 9);
     return `CHAT_${timestamp}_${random}`.toUpperCase();
 };
 
-// Method to calculate current cost
+chatSessionSchema.statics.findActiveSession = function (userId, astrologerId) {
+    return this.findOne({
+        userId,
+        astrologerId,
+        status: { $in: ["REQUESTED", "ACCEPTED", "ACTIVE", "PAUSED"] }
+    });
+};
+
+// Instance Methods
 chatSessionSchema.methods.calculateCurrentCost = function () {
-    const minutes = Math.ceil(this.billedDuration / 60);
-    return minutes * this.ratePerMinute;
+    const billedMinutes = Math.ceil(this.billedDuration / 60);
+    return Math.max(this.minimumCharge, billedMinutes * this.ratePerMinute);
 };
 
-// Method to check if session can be billed
-chatSessionSchema.methods.canBill = function () {
-    return this.status === "ACTIVE" || this.status === "PAUSED";
+chatSessionSchema.methods.canStart = function () {
+    return this.status === "ACCEPTED" && !this.isExpired();
 };
 
-// Method to pause session
+chatSessionSchema.methods.isExpired = function () {
+    return this.expiresAt && new Date() > this.expiresAt;
+};
+
 chatSessionSchema.methods.pauseSession = async function () {
     if (this.status !== "ACTIVE") return false;
 
@@ -168,12 +191,12 @@ chatSessionSchema.methods.pauseSession = async function () {
         start: new Date(),
         duration: 0
     });
+    this.lastActivityAt = new Date();
 
     await this.save();
     return true;
 };
 
-// Method to resume session
 chatSessionSchema.methods.resumeSession = async function () {
     if (this.status !== "PAUSED") return false;
 
@@ -190,11 +213,9 @@ chatSessionSchema.methods.resumeSession = async function () {
     return true;
 };
 
-// Method to complete session
 chatSessionSchema.methods.completeSession = async function () {
     if (!["ACTIVE", "PAUSED"].includes(this.status)) return false;
 
-    // Calculate final billing
     this.endedAt = new Date();
     this.status = "COMPLETED";
 
@@ -203,16 +224,36 @@ chatSessionSchema.methods.completeSession = async function () {
         this.totalDuration = Math.floor((this.endedAt - this.startedAt) / 1000);
     }
 
-    // Calculate final cost
-    const totalMinutes = Math.ceil(this.billedDuration / 60);
-    this.totalCost = totalMinutes * this.ratePerMinute;
+    // Calculate active duration (excluding pauses)
+    const totalPauseDuration = this.pauseIntervals.reduce((total, interval) => {
+        return total + (interval.duration || 0);
+    }, 0);
 
-    // Calculate earnings (assuming 20% platform commission)
-    this.platformCommission = this.totalCost * 0.20;
-    this.astrologerEarnings = this.totalCost - this.platformCommission;
+    this.activeDuration = this.totalDuration - totalPauseDuration;
+
+    // Calculate final billing (use active duration for billing)
+    const billedMinutes = Math.ceil(this.billedDuration / 60);
+    this.totalCost = Math.max(this.minimumCharge, billedMinutes * this.ratePerMinute);
+
+    // Calculate earnings (20% platform commission + 18% GST)
+    const commissionRate = 0.20;
+    const taxRate = 0.18;
+
+    const baseAmount = this.totalCost;
+    this.platformCommission = baseAmount * commissionRate;
+    this.taxAmount = baseAmount * taxRate;
+    this.astrologerEarnings = baseAmount - this.platformCommission - this.taxAmount;
 
     await this.save();
     return true;
 };
+
+// Middleware
+chatSessionSchema.pre("save", function (next) {
+    if (this.isModified("status") && this.status === "ACTIVE" && !this.startedAt) {
+        this.startedAt = new Date();
+    }
+    next();
+});
 
 export const ChatSession = mongoose.model("ChatSession", chatSessionSchema);
