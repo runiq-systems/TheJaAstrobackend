@@ -3,6 +3,8 @@ import { User } from "../models/user.js";
 import { Astrologer } from "../models/astrologer.js";
 import { uploadToCloudinary } from "../utils/uplodeimage.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
+import { ApiResponse } from "../utils/ApiResponse.js";
+import { ApiError } from "../utils/ApiError.js";
 
 /**
  * Ensure astrologer exists

@@ -8,7 +8,8 @@ import {
     getAstrologerProfile,
     getStep1Data,
     getStep2Data,
-    getStep3Data
+    getStep3Data,
+    getAstrologersOnlineStatus
 } from "../controllers/AstrologerProfile.js";
 const router = express.Router();
 
@@ -60,5 +61,7 @@ router.get('/astro/profile', authMiddleware, getAstrologerProfile);
 router.get('/astro/step1', authMiddleware, getStep1Data);
 router.get('/astro/step2', authMiddleware, getStep2Data);
 router.get('/astro/step3', authMiddleware, getStep3Data);
+
+router.get('/chat-session/request', authMiddleware, getAstrologersOnlineStatus)
 
 export default router;
