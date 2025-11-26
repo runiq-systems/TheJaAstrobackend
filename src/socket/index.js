@@ -79,7 +79,7 @@ const mountChatSessionEvents = (socket) => {
       // Find session and update status
       const session = await ChatSession.findOne({ sessionId });
       if (session && session.status === "ACCEPTED") {
-        await startChatSession(sessionId, chatId, session.ratePerMinute);
+        await ChatSession(sessionId, chatId, session.ratePerMinute);
       }
 
       console.log(`User joined chat: ${chatId}, session: ${sessionId}`);
