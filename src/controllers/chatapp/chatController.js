@@ -408,34 +408,34 @@ export const markMessageAsRead = asyncHandler(async (req, res) => {
  * @access  Private
  */
 
-export const getAllUsers = asyncHandler(async (req, res) => {
+
+export const getAllAstrologers = asyncHandler(async (req, res) => {
   try {
     const userId = req.user?.id || req.user?._id;
-    const { page = 1, limit = 20, search = "" } = req.query;
 
+    const { page = 1, limit = 20, search = "" } = req.query;
     const searchRegex = new RegExp(search, "i");
 
-    // ✅ Build search criteria
+    // 🔍 Search criteria
     const criteria = {
       _id: { $ne: userId }, // exclude current user
+      role: "astrologer",   // ONLY astrologers
       ...(search
         ? {
-            $or: [
-              { fullName: { $regex: searchRegex } },
-              { username: { $regex: searchRegex } },
-              { email: { $regex: searchRegex } },
-              { phone: { $regex: searchRegex } },
-            ],
-          }
+          $or: [
+            { fullName: { $regex: searchRegex } },
+            { email: { $regex: searchRegex } },
+            { phone: { $regex: searchRegex } },
+          ],
+        }
         : {}),
     };
 
-    // ✅ Convert pagination params
-    const currentPage = parseInt(page, 10) || 1;
-    const perPage = parseInt(limit, 10) || 20;
+    const currentPage = parseInt(page) || 1;
+    const perPage = parseInt(limit) || 20;
 
-    // ✅ Query users
-    const data = await User.find(criteria)
+    // 📌 Fetch users + astrologer profile
+    const users = await User.find(criteria)
       .select(
         "fullName _id phone role isVerified userStatus isOnline status lastSeen"
       )
@@ -443,26 +443,284 @@ export const getAllUsers = asyncHandler(async (req, res) => {
       .skip((currentPage - 1) * perPage)
       .sort({ fullName: 1 });
 
-    // ✅ Count total for pagination
+    // 📌 Pull astrologer details
+    const astrologerIds = users.map((u) => u._id);
+
+    const astrologerData = await Astrologer.find({
+      userId: { $in: astrologerIds },
+    });
+
+    // 📌 Merge astrologer + user data
+    const mergedData = users.map((user) => {
+      const astro = astrologerData.find(
+        (a) => String(a.userId) === String(user._id)
+      );
+      return {
+        ...user.toObject(),
+        astrologerProfile: astro || null,
+      };
+    });
+
+    // 📌 count
     const totalUsers = await User.countDocuments(criteria);
 
-    const response = {
-      data,
-      pagination: {
-        currentPage,
-        totalPages: Math.ceil(totalUsers / perPage),
-        totalUsers,
-        hasNext: currentPage * perPage < totalUsers,
-        hasPrev: currentPage > 1,
+    return res.status(200).json(
+      new ApiResponse(200, {
+        data: mergedData,
+        pagination: {
+          currentPage,
+          totalPages: Math.ceil(totalUsers / perPage),
+          totalUsers,
+          hasNext: currentPage * perPage < totalUsers,
+          hasPrev: currentPage > 1,
+        },
       },
-    };
-
-    return res
-      .status(200)
-      .json(new ApiResponse(200, response, "Users retrieved successfully"));
+        "Astrologers retrieved successfully")
+    );
   } catch (error) {
     return res
       .status(500)
       .json(new ApiResponse(500, null, "Internal Server Error"));
   }
 });
+
+
+
+
+// helper to parse query ints
+const toInt = v => parseInt(v, 10) || 1;
+
+export const getRecentChats = async (req, res) => {
+  try {
+    const userId = mongoose.Types.ObjectId(req.user._id);
+    const search = (req.query.search || "").trim();
+    const page = Math.max(1, toInt(req.query.page));
+    const limit = Math.min(100, toInt(req.query.limit)); // max limit safety
+    const skip = (page - 1) * limit;
+
+    const agg = [
+      // 1. only chats where user participates
+      { $match: { participants: userId } },
+
+      // 2. get most recent message per chat
+      {
+        $lookup: {
+          from: "messages",
+          let: { chatId: "$_id" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$chat", "$$chatId"] } } },
+            { $sort: { createdAt: -1 } },
+            { $limit: 1 },
+            // populate sender minimal
+            {
+              $lookup: {
+                from: "users",
+                localField: "sender",
+                foreignField: "_id",
+                as: "senderData"
+              }
+            },
+            { $unwind: { path: "$senderData", preserveNullAndEmptyArrays: true } }
+          ],
+          as: "recentMessage"
+        }
+      },
+      { $unwind: { path: "$recentMessage", preserveNullAndEmptyArrays: true } },
+
+      // 3. compute unread count (messages not sent by me and not readBy me)
+      {
+        $lookup: {
+          from: "messages",
+          let: { chatId: "$_id", userId },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ["$chat", "$$chatId"] },
+                    { $ne: ["$sender", "$$userId"] },
+                    // userId not in readBy.user
+                    {
+                      $not: {
+                        $in: [
+                          "$$userId",
+                          {
+                            $map: { input: "$readBy", as: "r", in: "$$r.user" }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            { $count: "unread" }
+          ],
+          as: "unreadAgg"
+        }
+      },
+      {
+        $addFields: {
+          unreadCount: {
+            $cond: [
+              { $gt: [{ $size: "$unreadAgg" }, 0] },
+              { $arrayElemAt: ["$unreadAgg.unread", 0] },
+              0
+            ]
+          }
+        }
+      },
+
+      // 4. populate participants (minimal fields for search and display)
+      {
+        $lookup: {
+          from: "users",
+          localField: "participants",
+          foreignField: "_id",
+          as: "participantsData"
+        }
+      },
+
+      // 5. compute isPinned for requesting user
+      {
+        $addFields: {
+          isPinned: {
+            $gt: [
+              {
+                $size: {
+                  $filter: {
+                    input: "$pinnedBy",
+                    as: "p",
+                    cond: { $eq: ["$$p.user", userId] }
+                  }
+                }
+              },
+              0
+            ]
+          },
+
+          lastActiveAt: {
+            $ifNull: ["$recentMessage.createdAt", "$updatedAt"]
+          }
+        }
+      },
+
+      // 6. optional SEARCH filter (after participants populated)
+      ...(search
+        ? [
+          {
+            $match: {
+              $expr: {
+                $or: [
+                  // group chat name match
+                  { $regexMatch: { input: { $ifNull: ["$name", ""] }, regex: search, options: "i" } },
+                  // any participant username / email matches (exclude myself)
+                  {
+                    $gt: [
+                      {
+                        $size: {
+                          $filter: {
+                            input: "$participantsData",
+                            as: "u",
+                            cond: {
+                              $and: [
+                                { $ne: ["$$u._id", userId] }, // exclude self
+                                {
+                                  $or: [
+                                    { $regexMatch: { input: "$$u.username", regex: search, options: "i" } },
+                                    { $regexMatch: { input: { $ifNull: ["$$u.email", ""] }, regex: search, options: "i" } }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      0
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        ]
+        : []),
+
+      // 7. sort: pinned first, then by lastActiveAt desc
+      { $sort: { isPinned: -1, lastActiveAt: -1 } },
+
+      // 8. pagination
+      { $skip: skip },
+      { $limit: limit },
+
+      // 9. final projection: keep only needed fields
+      {
+        $project: {
+          name: 1,
+          isGroupChat: 1,
+          avatar: 1,
+          description: 1,
+          participants: {
+            $map: {
+              input: "$participantsData",
+              as: "u",
+              in: { _id: "$$u._id", username: "$$u.username", avatar: "$$u.avatar" }
+            }
+          },
+          recentMessage: {
+            _id: "$recentMessage._id",
+            content: "$recentMessage.content",
+            type: "$recentMessage.type",
+            sender: "$recentMessage.senderData",
+            createdAt: "$recentMessage.createdAt"
+          },
+          unreadCount: 1,
+          isPinned: 1,
+          lastActiveAt: 1
+        }
+      }
+    ];
+
+    const chats = await Chat.aggregate(agg);
+
+    // total count for pagination (cheap approximate: count matches before skip/limit)
+    // optional: run a smaller pipeline to get totalCount if needed
+    return res.json({ success: true, chats, page, limit });
+
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+
+
+
+// mark all unread messages in a chat as read by current user
+export const markChatAsRead = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const chatId = req.params.id;
+
+    // add readBy entry to messages where not yet present
+    await Message.updateMany(
+      {
+        chat: chatId,
+        "readBy.user": { $ne: userId }
+      },
+      { $push: { readBy: { user: userId, readAt: new Date() } }, $set: { status: "read" } }
+    );
+
+    // optionally update Chat.lastSeen for that user
+    await Chat.findByIdAndUpdate(chatId, {
+      $pull: { lastSeen: { user: userId } }
+    });
+    await Chat.findByIdAndUpdate(chatId, {
+      $push: { lastSeen: { user: userId, seenAt: new Date() } }
+    });
+
+    return res.json({ success: true, message: "Marked as read" });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
