@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import { User } from "../models/user.js";
 import { Astrologer } from "../models/astrologer.js";
 import { uploadToCloudinary } from "../utils/uplodeimage.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
 
 /**
  * Ensure astrologer exists
