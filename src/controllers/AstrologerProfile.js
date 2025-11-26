@@ -339,7 +339,6 @@ export const getStep3Data = async (req, res) => {
   }
 };
 
-// In your backend controller
 export const getAstrologersOnlineStatus = asyncHandler(async (req, res) => {
   try {
     const astrologers = await User.find({
