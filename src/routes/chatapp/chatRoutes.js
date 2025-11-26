@@ -6,6 +6,7 @@ import {
   markMessageAsRead,
   getAllChats,
   getAllAstrologers,
+  getRecentChats,
 } from "../../controllers/chatapp/chatController.js";
 import {
   getAllMessages,
@@ -22,6 +23,7 @@ const router = express.Router();
 router.use(authMiddleware);
 
 router.get("/all-users", getAllAstrologers);
+router.get("/getRecentChats", getRecentChats);
 // Chat routes
 router.route("/one-on-one").post(createOrGetAOneOnOneChat);
 
