@@ -7,6 +7,7 @@ import { User } from "../models/user.js";
 import { ApiError } from "../utils/ApiError.js";
 import logger from "../utils/logger.js";
 import { ChatSession } from "../models/chatapp/chatSession.js";
+import { startChatSession } from "../controllers/chatapp/chatSessionController.js";
 /* -------------------------------------------------------------------------- */
 /*                          🔧  SOCKET EVENT MOUNTERS                         */
 /* -------------------------------------------------------------------------- */
@@ -69,49 +70,25 @@ const mountMessageReadEvent = (socket) => {
 
 // In your socket initialization file
 const mountChatSessionEvents = (socket) => {
-  // User joins chat room and starts session
-  socket.on(ChatEventsEnum.JOIN_CHAT_EVENT, async (data) => {
-    const { chatId, sessionId } = data;
-
+  socket.on(ChatEventsEnum.JOIN_CHAT_EVENT, async ({ chatId, sessionId }) => {
     try {
       socket.join(chatId);
 
-      // Find session and update status
-      const session = await ChatSession.findOne({ sessionId });
-      if (session && session.status === "ACCEPTED") {
-        await ChatSession(sessionId, chatId, session.ratePerMinute);
-      }
-
       console.log(`User joined chat: ${chatId}, session: ${sessionId}`);
+
+      // REST API will start session — NOT SOCKET
+      socket.to(chatId).emit(ChatEventsEnum.USER_JOINED_EVENT, {
+        chatId,
+        sessionId,
+        userId: socket.user._id
+      });
+
     } catch (error) {
       console.error("Error joining chat:", error);
     }
   });
-
-  // Astrologer leaves chat (pause session)
-  socket.on(ChatEventsEnum.LEAVE_CHAT_EVENT, async (data) => {
-    const { chatId, sessionId } = data;
-
-    try {
-      await sessionTimerService.pauseSession(sessionId, chatId);
-      console.log(`Astrologer left chat: ${chatId}, session paused: ${sessionId}`);
-    } catch (error) {
-      console.error("Error pausing session:", error);
-    }
-  });
-
-  // Astrologer returns to chat (resume session)  
-  socket.on(ChatEventsEnum.RETURN_TO_CHAT_EVENT, async (data) => {
-    const { chatId, sessionId, ratePerMinute } = data;
-
-    try {
-      await sessionTimerService.resumeSession(sessionId, chatId, ratePerMinute);
-      console.log(`Astrologer returned to chat: ${chatId}, session resumed: ${sessionId}`);
-    } catch (error) {
-      console.error("Error resuming session:", error);
-    }
-  });
 };
+
 
 // Add this to your socket connection handler
 
