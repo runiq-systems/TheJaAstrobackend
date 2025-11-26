@@ -8,6 +8,7 @@ import { emitSocketEvent } from "../../socket/index.js";
 import { ChatEventsEnum } from "../../constants.js";
 import logger from "../../utils/logger.js";
 import mongoose from "mongoose";
+import { Astrologer } from "../../models/astrologer.js";
 /**
  *
  * @desc    Create or get a one-on-one chat
@@ -437,7 +438,7 @@ export const getAllAstrologers = asyncHandler(async (req, res) => {
     // 📌 Fetch users + astrologer profile
     const users = await User.find(criteria)
       .select(
-        "fullName _id phone role"
+        "fullName _id phone role status isOnline lastSeen isverified"
       )
       .limit(perPage)
       .skip((currentPage - 1) * perPage)
