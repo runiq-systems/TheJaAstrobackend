@@ -2,6 +2,9 @@ import mongoose from "mongoose";
 import { User } from "../models/user.js";
 import { Astrologer } from "../models/astrologer.js";
 import { uploadToCloudinary } from "../utils/uplodeimage.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { ApiResponse } from "../utils/ApiResponse.js";
+import { ApiError } from "../utils/ApiError.js";
 
 /**
  * Ensure astrologer exists
@@ -335,3 +338,29 @@ export const getStep3Data = async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
+
+export const getAstrologersOnlineStatus = asyncHandler(async (req, res) => {
+  try {
+    const astrologers = await User.find({
+      role: 'astrologer',
+      userStatus: 'Active',
+      isSuspend: false
+    }).select('_id fullName isOnline lastSeen');
+
+    const onlineStatus = {};
+    astrologers.forEach(astrologer => {
+      // Check if astrologer was active in the last 5 minutes
+      const isOnline = astrologer.isOnline && 
+        astrologer.lastSeen && 
+        (Date.now() - new Date(astrologer.lastSeen).getTime()) < 5 * 60 * 1000;
+      
+      onlineStatus[astrologer._id] = isOnline;
+    });
+
+    return res.status(200).json(
+      new ApiResponse(200, onlineStatus, "Online status retrieved successfully")
+    );
+  } catch (error) {
+    throw new ApiError(500, "Failed to fetch online status");
+  }
+});
