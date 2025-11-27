@@ -691,7 +691,7 @@ export const getSessionBilling = asyncHandler(async (req, res) => {
  */
 export const getAstrologerSessions = async (req, res) => {
     try {
-        const astrologerId = req.user._id;
+        const astrologerId = req.user.id;
         const {
             page = 1,
             limit = 10,
@@ -806,7 +806,7 @@ export const getAstrologerSessions = async (req, res) => {
  */
 export const getSessionStats = async (req, res) => {
     try {
-        const astrologerId = req.user._id;
+        const astrologerId = req.user.id;
         const { period = "month" } = req.query; // day, week, month, year
 
         const dateFilter = getDateFilter(period);
