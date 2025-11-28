@@ -26,9 +26,8 @@ router.get("/session/:sessionId", authMiddleware, getSessionDetails);
 
 // Astrologer routes  
 router.post("/request/:requestId/accept", authMiddleware, acceptChatRequest);
-router.post("/request/:requestId/reject", authMiddleware, rejectChatRequest);
-router.post("/session/:sessionId/pause", authMiddleware, pauseChatSession);
 router.post("/session/:sessionId/resume", authMiddleware, resumeChatSession);
+router.post("/request/:requestId/reject", authMiddleware, rejectChatRequest);
 
 
 

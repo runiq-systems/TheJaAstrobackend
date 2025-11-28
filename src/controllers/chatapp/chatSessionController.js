@@ -106,7 +106,9 @@ export const requestChatSession = asyncHandler(async (req, res) => {
             requestedAt: new Date(),
             expiresAt: new Date(Date.now() + 5 * 60 * 1000),
             meta: {
-                requestId: request[0]._id,
+                request_Id: request[0]._id,
+                requestId: request[0].requestId,
+
                 chatId: chat._id,
                 chatType
             }
