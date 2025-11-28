@@ -34,7 +34,6 @@ router.post("/session/:sessionId/resume", authMiddleware, resumeChatSession);
 
 // Get all chat sessions for astrologer with filtering and pagination
 router.get("/sessions", authMiddleware, getAstrologerSessions);
-// router.get("/sessions/:sessionId", authMiddleware, getSessionDetails);
 router.get("/sessions/stats/overview", authMiddleware, getSessionStats);
 
 export default router;

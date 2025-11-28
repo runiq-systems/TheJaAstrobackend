@@ -740,7 +740,7 @@ export const getAstrologerSessions = async (req, res) => {
             populate: [
                 {
                     path: "userId",
-                    select: "name profileImage email phone"
+                    select: "firstname profileImage email phone"
                 }
             ]
         };
