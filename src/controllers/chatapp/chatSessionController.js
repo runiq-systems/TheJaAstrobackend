@@ -762,6 +762,7 @@ export const getAstrologerSessions = async (req, res) => {
         const formattedSessions = sessions.map(session => ({
             _id: session._id,
             sessionId: session.sessionId,
+            requestId: session.meta?.requestId,
             user: session.userId,
             status: session.status,
             ratePerMinute: session.ratePerMinute,
