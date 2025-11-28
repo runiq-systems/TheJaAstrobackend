@@ -740,14 +740,14 @@ export const getAstrologerSessions = async (req, res) => {
             populate: [
                 {
                     path: "userId",
-                    select: "firstname profileImage email phone"
+                    select: "fullName gender email phone"
                 }
             ]
         };
 
         // Execute query with pagination
         const sessions = await ChatSession.find(filter)
-            .populate("userId", "name profileImage email phone")
+            .populate("userId", "fullName gender email phone")
             .sort(options.sort)
             .limit(options.limit * 1)
             .skip((options.page - 1) * options.limit)
