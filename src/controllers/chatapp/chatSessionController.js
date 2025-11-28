@@ -502,7 +502,7 @@ export const endChatSession = asyncHandler(async (req, res) => {
         const chatSession = await ChatSession.findOne({
             sessionId,
             $or: [{ userId }, { astrologerId: userId }],
-            // status: { $in: ["ACTIVE", "PAUSED"] }
+            status: { $in: ["ACTIVE", "PAUSED"] }
         }).session(session);
 
         if (!chatSession) {
