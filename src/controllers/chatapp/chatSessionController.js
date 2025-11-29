@@ -504,7 +504,7 @@ export const endChatSession = asyncHandler(async (req, res) => {
         const chatSession = await ChatSession.findOne({
             sessionId,
             $or: [{ userId }, { astrologerId: userId }],
-            status: { $in: ["ACTIVE", "PAUSED", "REQUESTED"] }
+            status: { $in: ["ACTIVE", "PAUSED"] }
         }).session(session);
 
         if (!chatSession) {
@@ -529,9 +529,16 @@ export const endChatSession = asyncHandler(async (req, res) => {
         if (!paymentResult.success) {
             throw new ApiError(402, "Payment processing failed");
         }
+        console.log(paymentResult)
 
         // Update session payment status
         await ChatSession.findByIdAndUpdate(chatSession._id, {
+            status: "COMPLETED",
+            endedAt: endedAt,
+            totalDuration: totalDuration,
+            billedDuration: billedMinutes,
+            totalCost: totalCost,
+            astrologerEarnings: paymentResult.astrologerEarnings,
             paymentStatus: "PAID"
         }, { session });
 
@@ -544,7 +551,7 @@ export const endChatSession = asyncHandler(async (req, res) => {
             totalCost: chatSession.totalCost,
             totalDuration: chatSession.totalDuration,
             billedDuration: chatSession.billedDuration,
-            astrologerEarnings: chatSession.astrologerEarnings
+            astrologerEarnings: chatSession.astrologerEarnings,
         });
 
         return res.status(200).json(
