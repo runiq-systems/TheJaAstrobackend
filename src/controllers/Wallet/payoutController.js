@@ -211,7 +211,7 @@ export const getPayoutHistory = async (req, res) => {
         const earningsSummary = await Reservation.aggregate([
             {
                 $match: {
-                    astrologerId: mongoose.Types.ObjectId(astrologerId),
+                    astrologerId: new mongoose.Types.ObjectId(astrologerId),
                     status: 'SETTLED'
                 }
             },
