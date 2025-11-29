@@ -109,7 +109,7 @@ export const requestPayout = async (req, res) => {
         const completedSessions = await Reservation.aggregate([
             {
                 $match: {
-                    astrologerId: mongoose.Types.ObjectId(astrologerId),
+                    astrologerId:new mongoose.Types.ObjectId(astrologerId),
                     status: 'SETTLED',
                     settledAt: { $exists: true }
                 }
@@ -128,7 +128,7 @@ export const requestPayout = async (req, res) => {
         const requestedPayouts = await Payout.aggregate([
             {
                 $match: {
-                    astrologerId: mongoose.Types.ObjectId(astrologerId),
+                    astrologerId: new mongoose.Types.ObjectId(astrologerId),
                     status: { $in: ['REQUESTED', 'APPROVED', 'PROCESSING'] }
                 }
             },
@@ -226,7 +226,7 @@ export const getPayoutHistory = async (req, res) => {
 
         const payoutSummary = await Payout.aggregate([
             {
-                $match: { astrologerId: mongoose.Types.ObjectId(astrologerId) }
+                $match: { astrologerId:new mongoose.Types.ObjectId(astrologerId) }
             },
             {
                 $group: {
