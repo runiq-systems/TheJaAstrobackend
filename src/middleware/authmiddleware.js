@@ -108,7 +108,7 @@ export async function adminMiddleware(req, res, next) {
     }
 
 
-    if (user.role !== "admin") {
+    if (user.role !== "user") {
       logger.warn(
         `AdminAuth: User ${user._id} attempted admin access. Role = ${user.role}`
       );
