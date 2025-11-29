@@ -1,6 +1,6 @@
 // controllers/payoutController.js
-import { Payout, PayoutAccount, Transaction, Wallet, generateTxId } from '../../models/Wallet/AstroWallet.js';
-
+import { Payout, PayoutAccount, Transaction, Wallet, generateTxId,Reservation } from '../../models/Wallet/AstroWallet.js';
+import mongoose from 'mongoose';
 export const getPayoutAccounts = async (req, res) => {
     try {
         const astrologerId = req.user.id;
