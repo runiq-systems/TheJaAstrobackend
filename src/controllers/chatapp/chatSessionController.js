@@ -1017,13 +1017,17 @@ const startBillingTimer = async (sessionId, chatId, ratePerMinute, reservationId
             }
 
             // Notify clients about billing update
-            emitSocketEvent({ app: { get: () => global.io } }, chatId.toString(), ChatEventsEnum.BILLING_UPDATE_EVENT, {
-                sessionId,
-                billedDuration: updateResult.billedDuration,
-                currentCost,
-                ratePerMinute,
-                nextBillingIn: 60 // seconds
-            });
+            emitSocketEvent(
+                chatId.toString(),
+                ChatEventsEnum.BILLING_UPDATE_EVENT,
+                {
+                    sessionId,
+                    billedDuration: updateResult.billedDuration,
+                    currentCost,
+                    ratePerMinute,
+                    nextBillingIn: 60
+                }
+            );
 
             console.log(`Billed session ${sessionId}: ${updateResult.billedDuration}s, ₹${currentCost}`);
 
