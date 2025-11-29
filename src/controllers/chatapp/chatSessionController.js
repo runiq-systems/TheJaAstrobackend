@@ -495,17 +495,22 @@ export const rejectChatRequest = asyncHandler(async (req, res) => {
 export const endChatSession = asyncHandler(async (req, res) => {
     const { sessionId } = req.params;
     const userId = req.user.id;
+    const userRole = req.user.role;
 
     const session = await mongoose.startSession();
 
     try {
         session.startTransaction();
 
+        console.log(`🛑 Looking for session: ${sessionId} for user: ${userId}`);
+
         const chatSession = await ChatSession.findOne({
-            sessionId,
+            sessionId: sessionId, // Make sure this field name matches your schema
             $or: [{ userId }, { astrologerId: userId }],
-            status: { $in: ["ACTIVE", "PAUSED"] }
+            status: { $in: ["ACTIVE", "PAUSED", "ACCEPTED"] } // Include ACCEPTED status
         }).session(session);
+
+        console.log(`🔍 Session search result:`, chatSession ? 'Found' : 'Not found');
 
         if (!chatSession) {
             throw new ApiError(404, "Active chat session not found");
@@ -514,13 +519,19 @@ export const endChatSession = asyncHandler(async (req, res) => {
         // Stop billing timer
         stopBillingTimer(sessionId);
 
-        // Complete session (calculates final billing)
-        await chatSession.completeSession();
+        // Calculate final billing details
+        const endedAt = new Date();
+        const startedAt = chatSession.startedAt || new Date();
+        const totalDuration = Math.floor((endedAt - startedAt) / 1000); // in seconds
+        const billedMinutes = Math.ceil(totalDuration / 60);
+        const totalCost = chatSession.ratePerMinute * billedMinutes;
+
+        console.log(`💰 Billing details - Duration: ${totalDuration}s, Cost: ₹${totalCost}`);
 
         // Process final payment
         const paymentResult = await WalletService.processSessionPayment({
             sessionId: chatSession._id,
-            totalCost: chatSession.totalCost,
+            totalCost: totalCost,
             userId: chatSession.userId,
             astrologerId: chatSession.astrologerId,
             reservationId: chatSession.reservationId
@@ -529,44 +540,55 @@ export const endChatSession = asyncHandler(async (req, res) => {
         if (!paymentResult.success) {
             throw new ApiError(402, "Payment processing failed");
         }
-        console.log(paymentResult)
 
-        // Update session payment status
-        await ChatSession.findByIdAndUpdate(chatSession._id, {
-            status: "COMPLETED",
-            endedAt: endedAt,
-            totalDuration: totalDuration,
-            billedDuration: billedMinutes,
-            totalCost: totalCost,
-            astrologerEarnings: paymentResult.astrologerEarnings,
-            paymentStatus: "PAID"
-        }, { session });
+        console.log('✅ Payment processed successfully:', paymentResult);
+
+        // Update session with final details
+        await ChatSession.findByIdAndUpdate(
+            chatSession._id, 
+            {
+                status: "COMPLETED",
+                endedAt: endedAt,
+                totalDuration: totalDuration,
+                billedDuration: billedMinutes,
+                totalCost: totalCost,
+                astrologerEarnings: paymentResult.astrologerEarnings || totalCost * 0.8, // Fallback calculation
+                paymentStatus: "PAID"
+            }, 
+            { 
+                session, 
+                new: true // Return updated document
+            }
+        );
 
         await session.commitTransaction();
+
+        console.log(`✅ Session ${sessionId} ended successfully`);
 
         // Notify both parties
         emitSocketEvent(req, chatSession.chatId.toString(), ChatEventsEnum.SESSION_ENDED_EVENT, {
             sessionId: chatSession.sessionId,
-            endedAt: chatSession.endedAt,
-            totalCost: chatSession.totalCost,
-            totalDuration: chatSession.totalDuration,
-            billedDuration: chatSession.billedDuration,
-            astrologerEarnings: chatSession.astrologerEarnings,
+            endedAt: endedAt,
+            totalCost: totalCost,
+            totalDuration: totalDuration,
+            billedDuration: billedMinutes,
+            astrologerEarnings: paymentResult.astrologerEarnings || totalCost * 0.8,
         });
 
         return res.status(200).json(
             new ApiResponse(200, {
                 sessionId: chatSession.sessionId,
                 status: "COMPLETED",
-                totalCost: chatSession.totalCost,
-                totalDuration: chatSession.totalDuration,
-                billedDuration: chatSession.billedDuration,
-                astrologerEarnings: chatSession.astrologerEarnings
+                totalCost: totalCost,
+                totalDuration: totalDuration,
+                billedDuration: billedMinutes,
+                astrologerEarnings: paymentResult.astrologerEarnings || totalCost * 0.8,
             }, "Chat session ended successfully")
         );
 
     } catch (error) {
         await session.abortTransaction();
+        console.error(`❌ Error ending session ${sessionId}:`, error);
         throw error;
     } finally {
         session.endSession();
