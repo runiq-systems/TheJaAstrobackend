@@ -3,7 +3,7 @@ import { RechargeHistory, Wallet, Transaction, Coupon, CouponUsage, generateTxId
 
 export const initiateRecharge = async (req, res) => {
     try {
-        const { userId } = req.user;
+        const userId  = req.user.id;
         const { amount, currency = 'INR', paymentGateway, couponCode } = req.body;
 
         if (!amount || amount <= 0) {
