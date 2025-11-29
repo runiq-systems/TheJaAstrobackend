@@ -241,8 +241,8 @@ export const startChatSession = asyncHandler(async (req, res) => {
         // Start background billing timer (deduct per minute)
         // Make sure this function is fire-and-forget or queued properly
         try {
-            const { startBillingTimer } = await import("../../utils/billingTimer.js");
-            startBillingTimer(
+            // const { startBillingTimer } = await import("../../utils/billingTimer.js");
+            await startBillingTimer(
                 chatSession.sessionId,
                 chatSession.chatId,
                 chatSession.ratePerMinute,
