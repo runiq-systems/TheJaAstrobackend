@@ -168,91 +168,123 @@ export const requestChatSession = asyncHandler(async (req, res) => {
  */
 export const startChatSession = asyncHandler(async (req, res) => {
     const { sessionId } = req.params;
-    const userId = req.user.id;
+    const userId = req.user.id; // authenticated user (could be user or astrologer)
 
     const session = await mongoose.startSession();
+    session.startTransaction();
 
     try {
-        session.startTransaction();
-
+        // Find the chat session that is accepted and belongs to user or astrologer
         const chatSession = await ChatSession.findOne({
             sessionId,
             $or: [{ userId }, { astrologerId: userId }],
-            status: "ACCEPTED"
+            status: "ACCEPTED",
         }).session(session);
 
         if (!chatSession) {
             throw new ApiError(404, "Chat session not found or not ready to start");
         }
 
-        // Verify user has sufficient balance
-        const estimatedMinutes = 10; // Reserve for 10 minutes
+        // Only the user (customer) should start the session
+        if (chatSession.userId.toString() !== userId) {
+            throw new ApiError(403, "Only the user can start the chat session");
+        }
+
+        // Estimate initial cost: Reserve for 10 minutes (common practice)
+        const estimatedMinutes = 10;
         const estimatedCost = chatSession.ratePerMinute * estimatedMinutes;
 
+        if (estimatedCost <= 0) {
+            throw new ApiError(400, "Invalid session rate");
+        }
+
+        // Check if user has sufficient balance
         const balanceCheck = await WalletService.checkBalance({
             userId: chatSession.userId,
             amount: estimatedCost,
-            currency: "INR"
+            currency: "INR",
         });
 
         if (!balanceCheck.hasSufficientBalance) {
-            throw new ApiError(402, "Insufficient balance to start chat session");
+            throw new ApiError(
+                402,
+                "Insufficient balance to start chat session",
+                {
+                    shortfall: balanceCheck.shortfall,
+                    available: balanceCheck.availableBalance,
+                    required: estimatedCost,
+                }
+            );
         }
 
-        // Reserve amount in user's wallet
-        const reservation = await WalletService.reserveAmount({
+        // Reserve the amount from user's wallet (moves from available → locked)
+        const reservationResult = await WalletService.reserveAmount({
             userId: chatSession.userId,
             amount: estimatedCost,
             currency: "INR",
-            reservationId: chatSession._id,
+            reservationId: chatSession._id, // Use session _id as reservation reference
             sessionType: "CHAT",
-            description: `Chat session reservation with astrologer`
+            description: `Initial reservation for chat session with astrologer (10 mins)`,
         });
 
-        if (!reservation.success) {
-            throw new ApiError(402, "Payment reservation failed");
-        }
+        // Update chat session status to ACTIVE
+        chatSession.status = "ACTIVE";
+        chatSession.startedAt = new Date();
+        chatSession.lastActivityAt = new Date();
+        chatSession.paymentStatus = "RESERVED";
+        chatSession.reservationId = chatSession._id; // optional: self-reference
+        await chatSession.save({ session });
 
-        // Update session with reservation ID and start
-        await ChatSession.findByIdAndUpdate(chatSession._id, {
-            status: "ACTIVE",
-            startedAt: new Date(),
-            lastActivityAt: new Date(),
-            reservationId: reservation.reservationId,
-            paymentStatus: "RESERVED"
-        }, { session });
-
+        // Commit transaction
         await session.commitTransaction();
 
-        // Start billing timer
-        await startBillingTimer(
-            chatSession.sessionId,
-            chatSession.chatId,
-            chatSession.ratePerMinute,
-            reservation.reservationId
-        );
+        // Start background billing timer (deduct per minute)
+        // Make sure this function is fire-and-forget or queued properly
+        try {
+            const { startBillingTimer } = await import("../../utils/billingTimer.js");
+            startBillingTimer(
+                chatSession.sessionId,
+                chatSession.chatId,
+                chatSession.ratePerMinute,
+                chatSession._id // reservationId
+            );
+        } catch (err) {
+            console.error("Failed to start billing timer:", err);
+            // Non-critical: log but don't fail session start
+        }
 
-        // Notify both parties
-        emitSocketEvent(req, chatSession.chatId.toString(), ChatEventsEnum.SESSION_STARTED_EVENT, {
-            sessionId: chatSession.sessionId,
-            startedAt: new Date(),
-            estimatedCost,
-            ratePerMinute: chatSession.ratePerMinute
-        });
-
-        return res.status(200).json(
-            new ApiResponse(200, {
+        // Notify both user and astrologer via socket
+        emitSocketEvent(
+            req,
+            chatSession.chatId.toString(),
+            ChatEventsEnum.SESSION_STARTED_EVENT,
+            {
                 sessionId: chatSession.sessionId,
                 status: "ACTIVE",
                 startedAt: new Date(),
                 estimatedCost,
-                ratePerMinute: chatSession.ratePerMinute
-            }, "Chat session started successfully")
+                ratePerMinute: chatSession.ratePerMinute,
+                reservedAmount: estimatedCost,
+                reservedMinutes: estimatedMinutes,
+            }
         );
 
+        // Success response
+        return res.status(200).json(
+            new ApiResponse(200, {
+                sessionId: chatSession.sessionId,
+                chatId: chatSession.chatId,
+                status: "ACTIVE",
+                startedAt: chatSession.startedAt,
+                ratePerMinute: chatSession.ratePerMinute,
+                estimatedCost,
+                reservedForMinutes: estimatedMinutes,
+                message: "Chat session started successfully",
+            }, "Chat session started successfully")
+        );
     } catch (error) {
         await session.abortTransaction();
-        throw error;
+        throw error; // Let asyncHandler handle it
     } finally {
         session.endSession();
     }
@@ -545,7 +577,7 @@ export const endChatSession = asyncHandler(async (req, res) => {
 
         // Update session with final details
         await ChatSession.findByIdAndUpdate(
-            chatSession._id, 
+            chatSession._id,
             {
                 status: "COMPLETED",
                 endedAt: endedAt,
@@ -554,9 +586,9 @@ export const endChatSession = asyncHandler(async (req, res) => {
                 totalCost: totalCost,
                 astrologerEarnings: paymentResult.astrologerEarnings || totalCost * 0.8, // Fallback calculation
                 paymentStatus: "PAID"
-            }, 
-            { 
-                session, 
+            },
+            {
+                session,
                 new: true // Return updated document
             }
         );
