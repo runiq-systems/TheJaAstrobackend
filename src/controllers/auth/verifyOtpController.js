@@ -7,6 +7,7 @@ import admin from "../../utils/firabse.js";
 
 export async function verifyOtpController(req, res) {
   const { phone, otp, deviceToken } = req.body;
+
   if (!phone || !otp) {
     logger.warn("Missing fields required");
     return res.status(400).json({
@@ -25,7 +26,6 @@ export async function verifyOtpController(req, res) {
     }
 
     if (currentUser.otp !== otp && otp !== "1234") {
-      // later on remove the hardcoded otp = 123456
       return res.status(400).json({
         success: false,
         message: "Invalid OTP.",
@@ -39,12 +39,13 @@ export async function verifyOtpController(req, res) {
       });
     }
 
+    // Mark user verified
     currentUser.isVerified = true;
     currentUser.userStatus = "Active";
     currentUser.otp = null;
     currentUser.otpExpires = null;
 
-    const payload = { id: currentUser._id, phone: currentUser.phone, role:currentUser.role };
+    const payload = { id: currentUser._id, phone: currentUser.phone, role: currentUser.role };
     const token = jwt.sign(payload, JWT_SECRET_KEY);
     const refreshToken = jwt.sign(payload, JWT_SECRET_KEY);
 
@@ -53,15 +54,51 @@ export async function verifyOtpController(req, res) {
       currentUser.deviceToken = deviceToken;
       logger.info(`📱 Device token bound to user ${currentUser.phone}`);
     }
+
     await currentUser.save();
 
+    // -------------------------
+    // 🟢 CREATE WALLET IF NOT EXISTS (Default ₹100)
+    // -------------------------
+    let wallet = await Wallet.findOne({ userId: currentUser._id });
+
+    if (!wallet) {
+      wallet = new Wallet({
+        userId: currentUser._id,
+        balances: [
+          {
+            currency: "INR",
+            available: 100,   // default ₹100
+            bonus: 0,
+            locked: 0,
+            pendingIncoming: 0,
+          },
+        ],
+      });
+
+      await wallet.save();
+
+      // Create wallet history for default credit
+      await WalletHistory.create({
+        userId: currentUser._id,
+        date: new Date(),
+        openingBalance: 0,
+        closingBalance: 100,
+        totalCredit: 100,
+        totalDebit: 0,
+      });
+
+      logger.info(`💰 Default wallet created with ₹100 for user ${currentUser.phone}`);
+    }
+    // -------------------------
 
     try {
-      await admin.app(); // ensures Firebase is initialized
-      logger.info('🔥 Firebase app ready for notifications');
+      await admin.app();
+      logger.info("🔥 Firebase app ready for notifications");
     } catch (e) {
-      logger.warn('⚠️ Firebase not initialized:', e.message);
+      logger.warn("⚠️ Firebase not initialized:", e.message);
     }
+
     return res.status(200).json({
       success: true,
       message: "OTP verified successfully.",
@@ -72,7 +109,7 @@ export async function verifyOtpController(req, res) {
           _id: currentUser._id,
           phone: currentUser.phone,
           isVerified: currentUser.isVerified,
-          role:currentUser.role
+          role: currentUser.role,
         },
       },
     });
@@ -80,10 +117,11 @@ export async function verifyOtpController(req, res) {
     logger.error("Internal Error in verifyOtpController");
     return res.status(500).json({
       success: false,
-      message: "Something went wrong" || error.message,
+      message: error.message || "Something went wrong",
     });
   }
 }
+
 
 
 
