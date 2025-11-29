@@ -11,7 +11,7 @@ import { emitSocketEvent } from "../../socket/index.js";
 import { ChatEventsEnum } from "../../constants.js";
 import mongoose from "mongoose";
 import admin from "../../utils/firabse.js";
-
+import { Reservation,calculateCommission } from "../../models/Wallet/AstroWallet.js";
 // Global billing timers map
 const billingTimers = new Map();
 
@@ -168,7 +168,7 @@ export const requestChatSession = asyncHandler(async (req, res) => {
  */
 export const startChatSession = asyncHandler(async (req, res) => {
     const { sessionId } = req.params;
-    const userId = req.user.id; // authenticated user (could be user or astrologer)
+    const userId = req.user.id;
 
     const session = await mongoose.startSession();
     session.startTransaction();
@@ -217,36 +217,83 @@ export const startChatSession = asyncHandler(async (req, res) => {
             );
         }
 
+        // Calculate commission using your utility function
+        const commissionDetails = await calculateCommission(
+            chatSession.astrologerId,
+            "CHAT",
+            estimatedCost,
+            {
+                sessionId: chatSession.sessionId,
+                estimatedMinutes: estimatedMinutes
+            }
+        );
+
+        console.log(`💰 Creating reservation for session: ${sessionId}, Amount: ${estimatedCost}`);
+
+        // Create reservation record that matches your schema
+        const reservation = await Reservation.create([{
+            reservationId: generateTxId("RES"), // Use your utility function
+            userId: chatSession.userId,
+            astrologerId: chatSession.astrologerId,
+            sessionType: "CHAT",
+            ratePerMinute: chatSession.ratePerMinute,
+            currency: "INR",
+            commissionPercent: commissionDetails.finalCommissionPercent,
+            lockedAmount: estimatedCost,
+            totalCost: estimatedCost,
+            platformEarnings: commissionDetails.platformAmount,
+            astrologerEarnings: commissionDetails.astrologerAmount,
+            status: "RESERVED",
+            startAt: new Date(),
+            expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000), // 2 hours expiry
+            commissionDetails: {
+                baseCommissionPercent: commissionDetails.baseCommissionPercent,
+                appliedOverrideId: commissionDetails.overrideId,
+                finalCommissionPercent: commissionDetails.finalCommissionPercent,
+                commissionRuleId: commissionDetails.appliedRuleId,
+                commissionAmount: commissionDetails.commissionAmount,
+                platformAmount: commissionDetails.platformAmount,
+                astrologerAmount: commissionDetails.astrologerAmount
+            },
+            meta: {
+                sessionId: chatSession.sessionId,
+                chatId: chatSession.chatId,
+                estimatedMinutes: estimatedMinutes,
+                chatSessionId: chatSession._id
+            }
+        }], { session });
+
         // Reserve the amount from user's wallet (moves from available → locked)
+        console.log(`🔒 Reserving amount in wallet: ${estimatedCost}`);
         const reservationResult = await WalletService.reserveAmount({
             userId: chatSession.userId,
             amount: estimatedCost,
             currency: "INR",
-            reservationId: chatSession._id, // Use session _id as reservation reference
+            reservationId: reservation[0]._id, // Use the created reservation ID
             sessionType: "CHAT",
-            description: `Initial reservation for chat session with astrologer (10 mins)`,
+            description: `Initial reservation for chat session with astrologer (${estimatedMinutes} mins)`,
         });
 
-        // Update chat session status to ACTIVE
+        // Update chat session status to ACTIVE and link reservation
         chatSession.status = "ACTIVE";
         chatSession.startedAt = new Date();
         chatSession.lastActivityAt = new Date();
         chatSession.paymentStatus = "RESERVED";
-        chatSession.reservationId = chatSession._id; // optional: self-reference
+        chatSession.reservationId = reservation[0]._id; // Link the reservation
         await chatSession.save({ session });
 
         // Commit transaction
         await session.commitTransaction();
 
+        console.log(`✅ Session started successfully with reservation: ${reservation[0]._id}`);
+
         // Start background billing timer (deduct per minute)
-        // Make sure this function is fire-and-forget or queued properly
         try {
-            // const { startBillingTimer } = await import("../../utils/billingTimer.js");
             await startBillingTimer(
                 chatSession.sessionId,
                 chatSession.chatId,
                 chatSession.ratePerMinute,
-                chatSession._id // reservationId
+                reservation[0]._id // reservationId
             );
         } catch (err) {
             console.error("Failed to start billing timer:", err);
@@ -266,6 +313,7 @@ export const startChatSession = asyncHandler(async (req, res) => {
                 ratePerMinute: chatSession.ratePerMinute,
                 reservedAmount: estimatedCost,
                 reservedMinutes: estimatedMinutes,
+                reservationId: reservation[0].reservationId
             }
         );
 
@@ -279,12 +327,15 @@ export const startChatSession = asyncHandler(async (req, res) => {
                 ratePerMinute: chatSession.ratePerMinute,
                 estimatedCost,
                 reservedForMinutes: estimatedMinutes,
+                reservationId: reservation[0]._id,
+                reservationNumber: reservation[0].reservationId,
                 message: "Chat session started successfully",
             }, "Chat session started successfully")
         );
     } catch (error) {
         await session.abortTransaction();
-        throw error; // Let asyncHandler handle it
+        console.error("❌ Session start failed:", error);
+        throw error;
     } finally {
         session.endSession();
     }
@@ -1098,6 +1149,7 @@ function getDateFilter(period) {
 
 
 // Enhanced billing timer with better error handling
+// Enhanced billing timer with proper session duration calculation
 const startBillingTimer = async (sessionId, chatId, ratePerMinute, reservationId) => {
     if (billingTimers.has(sessionId)) {
         console.log(`Billing already active for session: ${sessionId}`);
@@ -1130,16 +1182,21 @@ const startBillingTimer = async (sessionId, chatId, ratePerMinute, reservationId
                 return;
             }
 
-            // Calculate current cost
-            const currentCost = updateResult.calculateCurrentCost();
+            // Calculate current cost based on actual billed duration
+            const billedMinutes = Math.ceil(updateResult.billedDuration / 60);
+            const currentCost = ratePerMinute * billedMinutes;
 
-            // Update wallet reservation if needed
-            if (currentCost > (updateResult.ratePerMinute * 10)) { // If exceeded initial reservation
-                await WalletService.adjustReservation({
-                    reservationId,
-                    additionalAmount: updateResult.ratePerMinute * 5 // Reserve additional 5 minutes
-                });
-            }
+            // Update reservation with actual cost
+            await Reservation.findByIdAndUpdate(
+                reservationId,
+                {
+                    $set: {
+                        totalCost: currentCost,
+                        billedMinutes: billedMinutes,
+                        totalDurationSec: updateResult.billedDuration
+                    }
+                }
+            );
 
             // Notify clients about billing update
             emitSocketEvent(
@@ -1148,13 +1205,14 @@ const startBillingTimer = async (sessionId, chatId, ratePerMinute, reservationId
                 {
                     sessionId,
                     billedDuration: updateResult.billedDuration,
+                    billedMinutes: billedMinutes,
                     currentCost,
                     ratePerMinute,
                     nextBillingIn: 60
                 }
             );
 
-            console.log(`Billed session ${sessionId}: ${updateResult.billedDuration}s, ₹${currentCost}`);
+            console.log(`Billed session ${sessionId}: ${updateResult.billedDuration}s, ${billedMinutes}m, ₹${currentCost}`);
 
         } catch (error) {
             console.error(`Billing error for session ${sessionId}:`, error);

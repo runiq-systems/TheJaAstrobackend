@@ -410,14 +410,13 @@ export class WalletService {
     }
 
     /**
-     * Process session payment (transfer from user to platform/astrologer)
-     */
-    // Change the method to accept only reservationId (string or ObjectId)
-    /**
   * Process session payment - Fixed version
   */
+    /**
+   * Process session payment - Fixed for your schema
+   */
     static async processSessionPayment(reservationId) {
-        if (!resrollmentId || !mongoose.Types.ObjectId.isValid(reservationId)) {
+        if (!reservationId || !mongoose.Types.ObjectId.isValid(reservationId)) {
             throw new ApiError(400, "Invalid reservation ID");
         }
 
@@ -437,18 +436,18 @@ export class WalletService {
                 throw new ApiError(404, "Reservation not found");
             }
 
-            console.log(`📋 Reservation found - Status: ${reservation.status}, Amount: ${reservation.amount}`);
+            console.log(`📋 Reservation found - Status: ${reservation.status}, Amount: ${reservation.lockedAmount}`);
 
             // Validate reservation state
             if (reservation.status !== "RESERVED") {
                 throw new ApiError(400, `Reservation is not in RESERVED state. Current: ${reservation.status}`);
             }
 
-            const totalCost = reservation.amount;
-            const platformFee = totalCost * 0.2; // 20% platform commission
-            const astrologerEarnings = totalCost - platformFee;
+            const totalCost = reservation.lockedAmount; // Use lockedAmount from your schema
+            const platformEarnings = reservation.platformEarnings || 0;
+            const astrologerEarnings = reservation.astrologerEarnings || 0;
 
-            console.log(`💰 Payment breakdown - Total: ${totalCost}, Platform: ${platformFee}, Astrologer: ${astrologerEarnings}`);
+            console.log(`💰 Payment breakdown - Total: ${totalCost}, Platform: ${platformEarnings}, Astrologer: ${astrologerEarnings}`);
 
             // Step 1: Release the locked amount back to available balance
             console.log(`🔓 Releasing locked amount: ${totalCost}`);
@@ -468,12 +467,12 @@ export class WalletService {
                 currency: "INR",
                 category: "CHAT_SESSION",
                 subcategory: "SESSION_PAYMENT",
-                description: `Chat session payment for reservation ${reservationId}`,
+                description: `Chat session payment for reservation ${reservation.reservationId}`,
                 reservationId: reservation._id,
                 meta: {
-                    sessionType: "CHAT",
+                    sessionType: reservation.sessionType,
                     astrologerId: reservation.astrologerId._id,
-                    duration: reservation.meta?.duration
+                    sessionId: reservation.meta?.sessionId
                 }
             });
 
@@ -488,19 +487,18 @@ export class WalletService {
                 description: `Chat session earnings from user`,
                 relatedTx: [reservation._id],
                 meta: {
-                    sessionType: "CHAT",
+                    sessionType: reservation.sessionType,
                     userId: reservation.userId._id,
                     reservationId: reservation._id,
-                    platformFee: platformFee
+                    platformEarnings: platformEarnings
                 }
             });
 
-            // Step 4: Update reservation status
+            // Step 4: Update reservation status to SETTLED
             reservation.status = "SETTLED";
             reservation.totalCost = totalCost;
-            reservation.platformEarnings = platformFee;
-            reservation.astrologerEarnings = astrologerEarnings;
             reservation.settledAt = new Date();
+            reservation.endAt = new Date();
             await reservation.save({ session });
 
             await session.commitTransaction();
@@ -511,7 +509,7 @@ export class WalletService {
                 success: true,
                 totalCost,
                 astrologerEarnings,
-                platformFee,
+                platformEarnings,
                 reservationId: reservation._id
             };
 
