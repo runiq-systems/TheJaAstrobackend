@@ -238,7 +238,7 @@ export const processRechargeCallback = async (req, res) => {
 
 export const getRechargeHistory = async (req, res) => {
     try {
-        const { userId } = req.user;
+        const userId = req.user.id;
         const { page = 1, limit = 20, status } = req.query;
 
         const filter = { userId };

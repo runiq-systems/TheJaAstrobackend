@@ -10,7 +10,7 @@ export const createCoupon = async (req, res) => {
             startAt, endAt, combinable, autoApply, priority
         } = req.body;
 
-        const createdBy = req.user.userId;
+        const createdBy = req.user.id;
 
         // Check if coupon code already exists
         const existingCoupon = await Coupon.findOne({ code: code.toUpperCase() });
@@ -65,7 +65,7 @@ export const createCoupon = async (req, res) => {
 
 export const validateCoupon = async (req, res) => {
     try {
-        const { userId } = req.user;
+        const userId = req.user.id;
         const { couponCode, cartValue, sessionType, astrologerTier } = req.body;
 
         const coupon = await Coupon.findOne({

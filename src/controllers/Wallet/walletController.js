@@ -3,7 +3,7 @@ import { Wallet, Transaction, WalletAudit, generateTxId, toBaseUnits, fromBaseUn
 
 export const getWalletBalance = async (req, res) => {
     try {
-        const { userId } = req.user;
+        const userId = req.user.id;
 
         const wallet = await Wallet.findOne({ userId })
             .populate('userId', 'name email phone');
@@ -36,7 +36,7 @@ export const getWalletBalance = async (req, res) => {
 
 export const getTransactionHistory = async (req, res) => {
     try {
-        const { userId } = req.user;
+        const userId = req.user.id;
         const { page = 1, limit = 20, type, category, startDate, endDate } = req.query;
 
         const filter = { userId };
@@ -81,7 +81,7 @@ export const getTransactionHistory = async (req, res) => {
 export const adminAdjustBalance = async (req, res) => {
     try {
         const { userId, amount, type, currency = 'INR', reason } = req.body;
-        const adminId = req.user.userId;
+        const adminId = req.user.id;
 
         if (!userId || !amount || !type || !reason) {
             return res.status(400).json({

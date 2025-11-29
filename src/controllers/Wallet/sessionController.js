@@ -3,7 +3,7 @@ import { Reservation, SessionRateConfig, Wallet, Transaction, BillingTick, gener
 
 export const initiateSession = async (req, res) => {
     try {
-        const { userId } = req.user;
+        const userId = req.user.id;
         const { astrologerId, sessionType, estimatedMinutes = 10, couponCode } = req.body;
 
         // Get astrologer's rate config

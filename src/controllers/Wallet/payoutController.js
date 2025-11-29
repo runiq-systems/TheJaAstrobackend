@@ -3,7 +3,7 @@ import { Payout, PayoutAccount, Transaction, Wallet, generateTxId } from '../../
 
 export const getPayoutAccounts = async (req, res) => {
     try {
-        const { astrologerId } = req.user;
+        const astrologerId = req.user.id;
 
         const accounts = await PayoutAccount.find({ astrologerId })
             .sort({ isPrimary: -1, createdAt: -1 });
@@ -23,7 +23,7 @@ export const getPayoutAccounts = async (req, res) => {
 
 export const addPayoutAccount = async (req, res) => {
     try {
-        const { astrologerId } = req.user;
+        const astrologerId = req.user.id;
         const {
             accountType, bankName, accountNumber, ifscCode,
             accountHolder, upiId, isPrimary = false
@@ -82,7 +82,7 @@ export const addPayoutAccount = async (req, res) => {
 
 export const requestPayout = async (req, res) => {
     try {
-        const { astrologerId } = req.user;
+        const astrologerId = req.user.id;
         const { amount, payoutAccountId } = req.body;
 
         // Get payout account
@@ -192,7 +192,7 @@ export const requestPayout = async (req, res) => {
 
 export const getPayoutHistory = async (req, res) => {
     try {
-        const { astrologerId } = req.user;
+        const astrologerId  = req.user.id;
         const { page = 1, limit = 20, status } = req.query;
 
         const filter = { astrologerId };
@@ -267,7 +267,7 @@ export const getPayoutHistory = async (req, res) => {
 export const processPayout = async (req, res) => {
     try {
         const { payoutId } = req.params;
-        const adminId = req.user.userId;
+        const adminId = req.user.id;
 
         const payout = await Payout.findById(payoutId)
             .populate('payoutAccount')
