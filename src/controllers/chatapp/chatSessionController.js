@@ -11,7 +11,7 @@ import { emitSocketEvent } from "../../socket/index.js";
 import { ChatEventsEnum } from "../../constants.js";
 import mongoose from "mongoose";
 import admin from "../../utils/firabse.js";
-import { Reservation,calculateCommission } from "../../models/Wallet/AstroWallet.js";
+import { Reservation,calculateCommission,generateTxId } from "../../models/Wallet/AstroWallet.js";
 // Global billing timers map
 const billingTimers = new Map();
 
