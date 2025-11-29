@@ -532,6 +532,8 @@ export const endChatSession = asyncHandler(async (req, res) => {
     try {
         session.startTransaction();
 
+        console.log(`🔄 Ending chat session: ${sessionId} for user: ${userId}`);
+
         const chatSession = await ChatSession.findOne({
             sessionId,
             $or: [{ userId }, { astrologerId: userId }],
@@ -542,56 +544,100 @@ export const endChatSession = asyncHandler(async (req, res) => {
             throw new ApiError(404, "Active chat session not found");
         }
 
+        // Stop billing timer
         stopBillingTimer(sessionId);
 
         const endedAt = new Date();
-        const totalDurationSec = Math.floor((endedAt - (chatSession.startedAt || endedAt)) / 1000);
+        const startedAt = chatSession.startedAt || chatSession.acceptedAt || endedAt;
+        const totalDurationSec = Math.floor((endedAt - startedAt) / 1000);
         const billedMinutes = Math.max(1, Math.ceil(totalDurationSec / 60));
         const totalCost = chatSession.ratePerMinute * billedMinutes;
 
-        // Update ChatSession first
+        console.log(`📊 Session metrics - Duration: ${totalDurationSec}s, Cost: ${totalCost}, Billed Minutes: ${billedMinutes}`);
+
+        // Update ChatSession with calculated values
         chatSession.status = "COMPLETED";
         chatSession.endedAt = endedAt;
         chatSession.totalDuration = totalDurationSec;
         chatSession.billedDuration = billedMinutes * 60;
         chatSession.totalCost = totalCost;
-        chatSession.paymentStatus = "PENDING"; // will be SETTLED after payment
-        await chatSession.save({ session });
 
-        // Now trigger settlement via Reservation-based payment
-        let paymentResult = { success: false };
+        let paymentResult = null;
+        let paymentStatus = "PENDING";
+        let astrologerEarnings = 0;
 
-        try {
-            const reservationId = chatSession.reservationId || chatSession._id;
+        // Process payment if reservation exists
+        if (chatSession.reservationId && mongoose.Types.ObjectId.isValid(chatSession.reservationId)) {
+            try {
+                console.log(`💳 Processing payment with reservation: ${chatSession.reservationId}`);
 
-            // This should now work correctly
-            paymentResult = await WalletService.processSessionPayment(reservationId);
-        } catch (paymentError) {
-            console.error("Payment settlement failed:", paymentError);
-            // Optional: mark session as disputed or retry later
-            chatSession.paymentStatus = "FAILED";
-            await chatSession.save({ session });
-            throw new ApiError(500, "Payment settlement failed");
+                paymentResult = await WalletService.processSessionPayment(chatSession.reservationId);
+                paymentStatus = "PAID";
+                astrologerEarnings = paymentResult.astrologerEarnings;
+
+                console.log(`✅ Payment successful - Earnings: ${astrologerEarnings}`);
+
+            } catch (paymentError) {
+                console.error("❌ Payment processing failed:", paymentError);
+
+                // Check if it's a balance issue or reservation issue
+                if (paymentError.message.includes("Insufficient balance") ||
+                    paymentError.message.includes("Reservation not found")) {
+                    paymentStatus = "FAILED_INSUFFICIENT_BALANCE";
+                } else if (paymentError.message.includes("Reservation is not in RESERVED state")) {
+                    paymentStatus = "FAILED_INVALID_RESERVATION";
+                } else {
+                    paymentStatus = "FAILED";
+                }
+
+                // Store error details for debugging
+                chatSession.paymentError = {
+                    message: paymentError.message,
+                    code: paymentError.statusCode || 500,
+                    timestamp: new Date()
+                };
+
+                // Don't throw error - allow session to end but mark payment as failed
+                console.warn(`⚠️ Payment failed but session will be ended. Status: ${paymentStatus}`);
+            }
+        } else {
+            paymentStatus = "NO_RESERVATION";
+            console.warn(`⚠️ No reservation ID found for session: ${sessionId}`);
         }
 
-        // Final update on success
-        chatSession.paymentStatus = "PAID";
-        chatSession.astrologerEarnings = paymentResult.astrologerEarnings || totalCost * 0.8;
-        await chatSession.save({ session });
+        // Update session with payment status
+        chatSession.paymentStatus = paymentStatus;
+        chatSession.astrologerEarnings = astrologerEarnings;
 
+        await chatSession.save({ session });
         await session.commitTransaction();
 
-        // Emit event
+        console.log(`✅ Session ended successfully - Payment Status: ${paymentStatus}`);
+
+        // Notify both parties via socket
         try {
             emitSocketEvent(req, chatSession.chatId.toString(), ChatEventsEnum.SESSION_ENDED_EVENT, {
                 sessionId: chatSession.sessionId,
+                status: "COMPLETED",
                 totalCost,
                 totalDuration: totalDurationSec,
                 billedMinutes,
-                astrologerEarnings: chatSession.astrologerEarnings,
+                paymentStatus,
+                astrologerEarnings,
+                endedAt: chatSession.endedAt
             });
         } catch (socketErr) {
-            console.warn("Socket emit failed (non-critical):", socketErr.message);
+            console.warn("📢 Socket notification failed (non-critical):", socketErr.message);
+        }
+
+        // Prepare response message based on payment status
+        let message = "Session ended successfully";
+        if (paymentStatus === "PAID") {
+            message = "Session ended and payment settled successfully";
+        } else if (paymentStatus.startsWith("FAILED")) {
+            message = "Session ended but payment failed - please contact support";
+        } else if (paymentStatus === "NO_RESERVATION") {
+            message = "Session ended - payment requires manual processing";
         }
 
         return res.status(200).json(new ApiResponse(200, {
@@ -600,11 +646,90 @@ export const endChatSession = asyncHandler(async (req, res) => {
             totalCost,
             totalDuration: totalDurationSec,
             billedMinutes,
-            astrologerEarnings: chatSession.astrologerEarnings,
-        }, "Session ended and settled successfully"));
+            paymentStatus,
+            astrologerEarnings,
+            endedAt: chatSession.endedAt,
+            message
+        }, message));
 
     } catch (error) {
         await session.abortTransaction();
+        console.error("❌ Session end error:", {
+            sessionId,
+            userId,
+            error: error.message,
+            stack: error.stack
+        });
+        throw error;
+    } finally {
+        session.endSession();
+    }
+});
+
+
+
+/**
+ * Manual payment retry for failed sessions
+ */
+export const retrySessionPayment = asyncHandler(async (req, res) => {
+    const { sessionId } = req.params;
+
+    console.log(`🔄 Manual payment retry for session: ${sessionId}`);
+
+    const chatSession = await ChatSession.findOne({ sessionId });
+    if (!chatSession) {
+        throw new ApiError(404, "Chat session not found");
+    }
+
+    if (chatSession.paymentStatus === "PAID") {
+        throw new ApiError(400, "Payment already processed for this session");
+    }
+
+    if (!chatSession.reservationId) {
+        throw new ApiError(400, "No reservation found for this session");
+    }
+
+    const session = await mongoose.startSession();
+    try {
+        session.startTransaction();
+
+        let paymentResult;
+        try {
+            paymentResult = await WalletService.processSessionPayment(chatSession.reservationId);
+        } catch (paymentError) {
+            // Update session with failure details
+            chatSession.paymentError = {
+                message: paymentError.message,
+                code: paymentError.statusCode || 500,
+                timestamp: new Date(),
+                retryAttempt: (chatSession.paymentError?.retryAttempt || 0) + 1
+            };
+            await chatSession.save({ session });
+            await session.commitTransaction();
+
+            throw new ApiError(500, `Payment retry failed: ${paymentError.message}`);
+        }
+
+        // Update session with successful payment
+        chatSession.paymentStatus = "PAID";
+        chatSession.astrologerEarnings = paymentResult.astrologerEarnings;
+        chatSession.paymentError = undefined; // Clear any previous errors
+        await chatSession.save({ session });
+
+        await session.commitTransaction();
+
+        console.log(`✅ Manual payment retry successful for session: ${sessionId}`);
+
+        return res.status(200).json(new ApiResponse(200, {
+            sessionId: chatSession.sessionId,
+            paymentStatus: "PAID",
+            astrologerEarnings: chatSession.astrologerEarnings,
+            totalCost: paymentResult.totalCost
+        }, "Payment processed successfully"));
+
+    } catch (error) {
+        await session.abortTransaction();
+        console.error("❌ Manual payment retry failed:", error);
         throw error;
     } finally {
         session.endSession();
