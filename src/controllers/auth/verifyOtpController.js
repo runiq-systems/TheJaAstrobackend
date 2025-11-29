@@ -2,7 +2,7 @@ import { JWT_SECRET_KEY } from "../../config/constants.js";
 import { User } from "../../models/user.js";
 import logger from "../../utils/logger.js";
 import jwt from "jsonwebtoken";
-import { Wallet } from "../../models/Wallet/AstroWallet.js";
+import { Wallet ,WalletHistory,WalletAudit} from "../../models/Wallet/AstroWallet.js";
 import admin from "../../utils/firabse.js";
 
 export async function verifyOtpController(req, res) {
