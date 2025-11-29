@@ -86,12 +86,12 @@ app.use("/api/v1", chatSession)
 
 
 
-app.use('/wallet', walletRoutes);
-app.use('/recharge', rechargeRoutes);
-app.use('/coupon', couponRoutes);
-app.use('/session', sessionRoutes);
-app.use('/payout', payoutRoutes);
-app.use('/commission', commissionRoutes);
+app.use('/api/v1/wallet', walletRoutes);
+app.use('/api/v1/recharge', rechargeRoutes);
+app.use('/api/v1/coupon', couponRoutes);
+app.use('/api/v1/session', sessionRoutes);
+app.use('/api/v1/payout', payoutRoutes);
+app.use('/api/v1/commission', commissionRoutes);
 
 app.use(errorHandler)
 export default httpserver;
