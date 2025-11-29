@@ -301,21 +301,21 @@ export class WalletService {
 
             await session.commitTransaction();
 
-            return {
-                transaction: transaction[0],
-                wallet,
-                availableBefore,
-                availableAfter: currencyBalance.available,
-                lockedBefore,
-                lockedAfter: currencyBalance.locked,
-            };
-        } catch (error) {
-            await session.abortTransaction();
-            throw error;
-        } finally {
-            session.endSession();
-        }
+      return {
+        transaction: transaction[0],
+        wallet,
+        availableBefore,
+        availableAfter: currencyBalance.available,
+        lockedBefore,
+        lockedAfter: currencyBalance.locked,
+      };
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
     }
+  }
 
     /**
      * Release reserved amount (move from locked to available)
