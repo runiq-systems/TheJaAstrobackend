@@ -302,6 +302,7 @@ export class WalletService {
       await session.commitTransaction();
 
       return {
+        success: true,
         transaction: transaction[0],
         wallet,
         availableBefore,
