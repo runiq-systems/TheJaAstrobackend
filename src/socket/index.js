@@ -161,35 +161,6 @@ const mountGroupChatEvents = (socket) => {
 /* -------------------------------------------------------------------------- */
 
 /**
- * @description Handle real-time message events
- * @param {Socket} socket
- */
-const mountMessageEvents = (socket) => {
-  // Handle new message event
-  socket.on(ChatEventsEnum.NEW_MESSAGE_EVENT, (messageData) => {
-    const { chatId, message, sender } = messageData;
-    
-    // Emit to all users in the chat room except sender
-    socket.to(chatId).emit(ChatEventsEnum.NEW_MESSAGE_EVENT, {
-      ...messageData,
-      timestamp: new Date(),
-    });
-    
-    console.log(`📨 New message in chat ${chatId} from ${sender.username}`);
-  });
-
-  // Handle message delivery status
-  socket.on(ChatEventsEnum.MESSAGE_DELIVERED_EVENT, ({ messageId, chatId }) => {
-    socket.to(chatId).emit(ChatEventsEnum.MESSAGE_DELIVERED_EVENT, {
-      messageId,
-      chatId,
-      deliveredTo: socket.user._id,
-      deliveredAt: new Date(),
-    });
-  });
-};
-
-/**
  * @description Initialize Socket.IO server and handle connections
  * @param {Server} io
  */
@@ -223,7 +194,6 @@ export const initializeSocketIO = (io) => {
       mountJoinChatEvent(socket);
       mountTypingEvents(socket);
       mountMessageReadEvent(socket);
-      mountMessageEvents(socket); // ← Add this line
       mountGroupChatEvents(socket);
       mountChatSessionEvents(socket);
       // logger.info(`Socket connected: (${socket.user})`);
@@ -254,14 +224,8 @@ export const initializeSocketIO = (io) => {
 export const emitSocketEvent = (req, roomId, event, payload) => {
   try {
     const io = req.app.get("io");
-    
-    if (!io) {
-      console.error("❌ Socket.IO not found in app");
-      return;
-    }
-    
     io.in(roomId).emit(event, payload);
-    console.log(`📤 Event emitted: ${event} -> Room: ${roomId}`, payload);
+    console.log(`📤 Event emitted: ${payload} -> Room: ${event}`);
   } catch (error) {
     console.error("❌ Failed to emit socket event:", error);
   }
