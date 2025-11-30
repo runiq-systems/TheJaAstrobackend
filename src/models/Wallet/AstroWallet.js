@@ -197,7 +197,7 @@ const CommissionBatchUpdateSchema = new Schema(
         { type: String, enum: ["BASIC", "SILVER", "GOLD", "PLATINUM"] },
       ],
       sessionTypes: [{ type: String, enum: ["CALL", "CHAT", "LIVE"] }],
-      specificAstrologers: [{ type: Schema.Types.ObjectId, ref: "Astrologer" }],
+      specificAstrologers: [{ type: Schema.Types.ObjectId, ref:'User' }],
       minRating: { type: Number, default: 0 },
       minSessions: { type: Number, default: 0 },
     },
@@ -225,7 +225,7 @@ const CommissionBatchUpdateSchema = new Schema(
     failedCount: { type: Number, default: 0 },
     errors: [
       {
-        astrologerId: { type: Schema.Types.ObjectId, ref: "Astrologer" },
+        astrologerId: { type: Schema.Types.ObjectId, ref:'User' },
         error: { type: String, required: true },
       },
     ],
@@ -367,7 +367,7 @@ const SessionRateConfigSchema = new Schema(
   {
     astrologerId: {
       type: Schema.Types.ObjectId,
-      ref: "Astrologer",
+      ref:'User',
       required: true,
     },
     sessionType: {
@@ -396,7 +396,7 @@ const ReservationSchema = new Schema(
     },
     astrologerId: {
       type: Schema.Types.ObjectId,
-      ref: "User",
+      ref:'User',
       required: true,
       index: true,
     },
@@ -629,7 +629,7 @@ const PayoutSchema = new Schema(
   {
     astrologerId: {
       type: Schema.Types.ObjectId,
-      ref: "Astrologer",
+      ref:'User',
       required: true,
       index: true,
     },
@@ -676,7 +676,7 @@ const PayoutAccountSchema = new Schema(
   {
     astrologerId: {
       type: Schema.Types.ObjectId,
-      ref: "Astrologer",
+      ref:'User',
       required: true,
       index: true,
     },
