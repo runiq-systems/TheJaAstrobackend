@@ -615,6 +615,9 @@ export const endChatSession = asyncHandler(async (req, res) => {
             try {
                 console.log(`💳 Processing payment with reservation: ${chatSession.reservationId}`);
 
+                // Debug the reservation first
+                await WalletService.debugReservation(chatSession.reservationId);
+
                 paymentResult = await WalletService.processSessionPayment(chatSession.reservationId);
                 paymentStatus = "PAID";
                 astrologerEarnings = paymentResult.astrologerEarnings;
@@ -624,12 +627,15 @@ export const endChatSession = asyncHandler(async (req, res) => {
             } catch (paymentError) {
                 console.error("❌ Payment processing failed:", paymentError);
 
-                // Check if it's a balance issue or reservation issue
-                if (paymentError.message.includes("Insufficient balance") ||
-                    paymentError.message.includes("Reservation not found")) {
+                // More specific error handling
+                if (paymentError.message.includes("Cannot read properties of null")) {
+                    paymentStatus = "FAILED_INVALID_REFERENCES";
+                } else if (paymentError.message.includes("Insufficient balance")) {
                     paymentStatus = "FAILED_INSUFFICIENT_BALANCE";
-                } else if (paymentError.message.includes("Reservation is not in RESERVED state")) {
-                    paymentStatus = "FAILED_INVALID_RESERVATION";
+                } else if (paymentError.message.includes("Reservation not found")) {
+                    paymentStatus = "FAILED_RESERVATION_NOT_FOUND";
+                } else if (paymentError.message.includes("not in RESERVED state")) {
+                    paymentStatus = "FAILED_INVALID_RESERVATION_STATE";
                 } else {
                     paymentStatus = "FAILED";
                 }
@@ -638,10 +644,10 @@ export const endChatSession = asyncHandler(async (req, res) => {
                 chatSession.paymentError = {
                     message: paymentError.message,
                     code: paymentError.statusCode || 500,
-                    timestamp: new Date()
+                    timestamp: new Date(),
+                    reservationId: chatSession.reservationId
                 };
 
-                // Don't throw error - allow session to end but mark payment as failed
                 console.warn(`⚠️ Payment failed but session will be ended. Status: ${paymentStatus}`);
             }
         } else {

@@ -426,10 +426,10 @@ export class WalletService {
 
             console.log(`🔄 Processing payment for reservation: ${reservationId}`);
 
-            // Find the reservation with proper population
+            // Find the reservation with proper population and validation
             const reservation = await Reservation.findById(reservationId)
-                .populate("userId")
-                .populate("astrologerId")
+                .populate("userId", "_id") // Only populate necessary fields
+                .populate("astrologerId", "_id")
                 .session(session);
 
             if (!reservation) {
@@ -443,11 +443,17 @@ export class WalletService {
                 throw new ApiError(400, `Reservation is not in RESERVED state. Current: ${reservation.status}`);
             }
 
-            const totalCost = reservation.lockedAmount; // Use lockedAmount from your schema
+            // Validate populated fields
+            if (!reservation.userId || !reservation.astrologerId) {
+                throw new ApiError(400, "Reservation has invalid user or astrologer reference");
+            }
+
+            const totalCost = reservation.lockedAmount;
             const platformEarnings = reservation.platformEarnings || 0;
             const astrologerEarnings = reservation.astrologerEarnings || 0;
 
             console.log(`💰 Payment breakdown - Total: ${totalCost}, Platform: ${platformEarnings}, Astrologer: ${astrologerEarnings}`);
+            console.log(`👤 User ID: ${reservation.userId._id}, Astrologer ID: ${reservation.astrologerId._id}`);
 
             // Step 1: Release the locked amount back to available balance
             console.log(`🔓 Releasing locked amount: ${totalCost}`);
@@ -521,7 +527,6 @@ export class WalletService {
                 stack: error.stack
             });
 
-            // Re-throw with proper context
             if (error instanceof ApiError) {
                 throw error;
             }
