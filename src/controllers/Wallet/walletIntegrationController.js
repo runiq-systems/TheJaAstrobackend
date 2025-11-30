@@ -409,6 +409,35 @@ export class WalletService {
         }
     }
 
+
+    static async debugReservation(reservationId) {
+    console.log(`🔍 Debugging reservation: ${reservationId}`);
+    
+    const reservation = await Reservation.findById(reservationId)
+        .populate("userId", "_id fullName phone")
+        .populate("astrologerId", "_id fullName phone");
+    
+    if (!reservation) {
+        console.log("❌ Reservation not found");
+        return null;
+    }
+
+    console.log("📊 Reservation details:", {
+        id: reservation._id,
+        reservationId: reservation.reservationId,
+        status: reservation.status,
+        userId: reservation.userId,
+        astrologerId: reservation.astrologerId,
+        lockedAmount: reservation.lockedAmount,
+        platformEarnings: reservation.platformEarnings,
+        astrologerEarnings: reservation.astrologerEarnings
+    });
+
+    return reservation;
+}
+
+// Call this before processSessionPayment to debug
+// await WalletService.debugReservation(reservationId);
     /**
   * Process session payment - Fixed version
   */
