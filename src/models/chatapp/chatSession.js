@@ -117,7 +117,20 @@ const chatSessionSchema = new mongoose.Schema(
         },
         paymentStatus: {
             type: String,
-            enum: ["PENDING", "RESERVED", "PAID", "FAILED", "REFUNDED"],
+            enum: [
+                "PENDING",
+                "RESERVED",
+                "PAID",
+                "FAILED",
+                "FAILED_INSUFFICIENT_BALANCE",
+                "FAILED_INVALID_RESERVATION",
+                "FAILED_INVALID_REFERENCES",
+                "FAILED_RESERVATION_NOT_FOUND",
+                "FAILED_INVALID_RESERVATION_STATE",
+                "NO_RESERVATION", // Add this
+                "CANCELLED",
+                "REFUNDED"
+            ],
             default: "PENDING"
         },
 

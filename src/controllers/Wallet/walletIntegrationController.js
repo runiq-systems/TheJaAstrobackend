@@ -301,21 +301,21 @@ export class WalletService {
 
             await session.commitTransaction();
 
-      return {
-        transaction: transaction[0],
-        wallet,
-        availableBefore,
-        availableAfter: currencyBalance.available,
-        lockedBefore,
-        lockedAfter: currencyBalance.locked,
-      };
-    } catch (error) {
-      await session.abortTransaction();
-      throw error;
-    } finally {
-      session.endSession();
+            return {
+                transaction: transaction[0],
+                wallet,
+                availableBefore,
+                availableAfter: currencyBalance.available,
+                lockedBefore,
+                lockedAfter: currencyBalance.locked,
+            };
+        } catch (error) {
+            await session.abortTransaction();
+            throw error;
+        } finally {
+            session.endSession();
+        }
     }
-  }
 
     /**
      * Release reserved amount (move from locked to available)
@@ -410,10 +410,41 @@ export class WalletService {
         }
     }
 
+
+    static async debugReservation(reservationId) {
+    console.log(`🔍 Debugging reservation: ${reservationId}`);
+    
+    const reservation = await Reservation.findById(reservationId)
+        .populate("userId", "_id fullName phone")
+        .populate("astrologerId", "_id fullName phone");
+    
+    if (!reservation) {
+        console.log("❌ Reservation not found");
+        return null;
+    }
+
+    console.log("📊 Reservation details:", {
+        id: reservation._id,
+        reservationId: reservation.reservationId,
+        status: reservation.status,
+        userId: reservation.userId,
+        astrologerId: reservation.astrologerId,
+        lockedAmount: reservation.lockedAmount,
+        platformEarnings: reservation.platformEarnings,
+        astrologerEarnings: reservation.astrologerEarnings
+    });
+
+    return reservation;
+}
+
+// Call this before processSessionPayment to debug
+// await WalletService.debugReservation(reservationId);
     /**
-     * Process session payment (transfer from user to platform/astrologer)
-     */
-    // Change the method to accept only reservationId (string or ObjectId)
+  * Process session payment - Fixed version
+  */
+    /**
+   * Process session payment - Fixed for your schema
+   */
     static async processSessionPayment(reservationId) {
         if (!reservationId || !mongoose.Types.ObjectId.isValid(reservationId)) {
             throw new ApiError(400, "Invalid reservation ID");
@@ -423,72 +454,113 @@ export class WalletService {
         try {
             session.startTransaction();
 
+            console.log(`🔄 Processing payment for reservation: ${reservationId}`);
+
+            // Find the reservation with proper population and validation
             const reservation = await Reservation.findById(reservationId)
-                .populate("userId")
-                .populate("astrologerId")
+                .populate("userId", "_id") // Only populate necessary fields
+                .populate("astrologerId", "_id")
                 .session(session);
 
             if (!reservation) {
                 throw new ApiError(404, "Reservation not found");
             }
 
-            if (reservation.status !== "SETTLING") {
-                throw new ApiError(400, "Reservation is not in SETTLING state");
+            console.log(`📋 Reservation found - Status: ${reservation.status}, Amount: ${reservation.lockedAmount}`);
+
+            // Validate reservation state
+            if (reservation.status !== "RESERVED") {
+                throw new ApiError(400, `Reservation is not in RESERVED state. Current: ${reservation.status}`);
             }
 
-            const totalCost = reservation.totalCost; // already calculated
-            const platformEarnings = reservation.platformEarnings || 0;
-            const astrologerEarnings = reservation.astrologerEarnings || totalCost * 0.8;
+            // Validate populated fields
+            if (!reservation.userId || !reservation.astrologerId) {
+                throw new ApiError(400, "Reservation has invalid user or astrologer reference");
+            }
 
-            // Debit user (from locked → deducted)
+            const totalCost = reservation.lockedAmount;
+            const platformEarnings = reservation.platformEarnings || 0;
+            const astrologerEarnings = reservation.astrologerEarnings || 0;
+
+            console.log(`💰 Payment breakdown - Total: ${totalCost}, Platform: ${platformEarnings}, Astrologer: ${astrologerEarnings}`);
+            console.log(`👤 User ID: ${reservation.userId._id}, Astrologer ID: ${reservation.astrologerId._id}`);
+
+            // Step 1: Release the locked amount back to available balance
+            console.log(`🔓 Releasing locked amount: ${totalCost}`);
+            await this.releaseAmount({
+                userId: reservation.userId._id,
+                amount: totalCost,
+                currency: "INR",
+                reservationId: reservation._id,
+                description: "Release reservation for final settlement"
+            });
+
+            // Step 2: Deduct the actual amount from user's available balance
+            console.log(`💸 Debiting user: ${totalCost}`);
             await this.debit({
                 userId: reservation.userId._id,
                 amount: totalCost,
                 currency: "INR",
-                category: "SESSION_DEDUCTION",
-                description: "Chat session payment",
+                category: "CHAT_SESSION",
+                subcategory: "SESSION_PAYMENT",
+                description: `Chat session payment for reservation ${reservation.reservationId}`,
                 reservationId: reservation._id,
+                meta: {
+                    sessionType: reservation.sessionType,
+                    astrologerId: reservation.astrologerId._id,
+                    sessionId: reservation.meta?.sessionId
+                }
             });
 
-            // Credit astrologer
+            // Step 3: Credit astrologer with their earnings
+            console.log(`🏦 Crediting astrologer: ${astrologerEarnings}`);
             await this.credit({
                 userId: reservation.astrologerId._id,
                 amount: astrologerEarnings,
                 currency: "INR",
                 category: "EARNINGS",
                 subcategory: "CHAT_SESSION",
-                description: "Chat session earnings",
+                description: `Chat session earnings from user`,
+                relatedTx: [reservation._id],
+                meta: {
+                    sessionType: reservation.sessionType,
+                    userId: reservation.userId._id,
+                    reservationId: reservation._id,
+                    platformEarnings: platformEarnings
+                }
             });
 
-            // Credit platform (optional)
-            if (platformEarnings > 0) {
-                // assuming you have a platform wallet user
-                await this.credit({
-                    userId: "PLATFORM_USER_ID", // or dynamic
-                    amount: platformEarnings,
-                    currency: "INR",
-                    category: "COMMISSION",
-                    description: "Platform commission",
-                });
-            }
-
-            // Mark as settled
+            // Step 4: Update reservation status to SETTLED
             reservation.status = "SETTLED";
+            reservation.totalCost = totalCost;
             reservation.settledAt = new Date();
+            reservation.endAt = new Date();
             await reservation.save({ session });
 
             await session.commitTransaction();
+
+            console.log(`✅ Payment settled successfully for reservation: ${reservationId}`);
 
             return {
                 success: true,
                 totalCost,
                 astrologerEarnings,
                 platformEarnings,
+                reservationId: reservation._id
             };
 
         } catch (error) {
             await session.abortTransaction();
-            throw error;
+            console.error("❌ Payment settlement failed:", {
+                reservationId,
+                error: error.message,
+                stack: error.stack
+            });
+
+            if (error instanceof ApiError) {
+                throw error;
+            }
+            throw new ApiError(500, `Payment settlement failed: ${error.message}`);
         } finally {
             session.endSession();
         }

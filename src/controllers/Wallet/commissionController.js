@@ -9,7 +9,7 @@ export const createCommissionRule = async (req, res) => {
             effectiveFrom, effectiveTo, allowAdminOverride, maxOverrideLimit
         } = req.body;
 
-        const createdBy = req.user.userId;
+        const createdBy = req.user.id;
 
         const commissionRule = new CommissionRule({
             name,
