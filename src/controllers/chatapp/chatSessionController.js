@@ -276,7 +276,7 @@ export const startChatSession = asyncHandler(async (req, res) => {
         chatSession.startedAt = new Date();
         chatSession.lastActivityAt = new Date();
         chatSession.paymentStatus = "RESERVED";
-        chatSession.reservationId = reservation._id;
+        chatSession.reservationId = reservation[0]._id;
         await chatSession.save({ session });
 
         await session.commitTransaction();
