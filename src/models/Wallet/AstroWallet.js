@@ -396,7 +396,7 @@ const ReservationSchema = new Schema(
     },
     astrologerId: {
       type: Schema.Types.ObjectId,
-      ref: "Astrologer",
+      ref: "User",
       required: true,
       index: true,
     },
