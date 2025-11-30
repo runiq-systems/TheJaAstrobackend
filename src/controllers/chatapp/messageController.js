@@ -225,15 +225,65 @@ export const sendMessage = asyncHandler(async (req, res) => {
       throw new ApiError(400, "Message content or media is required");
     }
 
-    // ✅ Check chat exists
+    console.log(`📨 Send message request:`, {
+      chatId,
+      userId,
+      type,
+      hasContent: !!content,
+      hasFiles: !!(req.files && req.files.length > 0)
+    });
+
+    // ✅ Check chat exists and user is participant
     const chat = await Chat.findOne({
       _id: chatId,
       participants: userId,
-    }).populate("participants", "_id fullName deviceToken");
+    }).populate("participants", "_id fullName deviceToken role");
 
     if (!chat) {
       throw new ApiError(404, "Chat not found or access denied");
     }
+
+    // ✅ CRITICAL FIX: Validate session status before allowing message
+    const activeSession = await ChatSession.findOne({
+      chatId,
+      $or: [
+        { status: 'ACTIVE' },
+        { status: 'ACCEPTED', astrologerId: userId } // Astrologers can send in ACCEPTED sessions
+      ]
+    });
+
+    if (!activeSession) {
+      throw new ApiError(400, "No active session found for this chat");
+    }
+
+    // Role-specific session validation
+    if (req.user.role === 'user') {
+      // Users can only send when session is ACTIVE
+      if (activeSession.status !== 'ACTIVE') {
+        throw new ApiError(400, "Session is not active. Please start the session to send messages.");
+      }
+
+      // Verify user is the session user
+      if (activeSession.userId.toString() !== userId.toString()) {
+        throw new ApiError(403, "Not authorized to send messages in this session");
+      }
+    } else if (req.user.role === 'astrologer') {
+      // Astrologers can send when session is ACCEPTED or ACTIVE
+      if (!['ACCEPTED', 'ACTIVE'].includes(activeSession.status)) {
+        throw new ApiError(400, "Session is not active or accepted");
+      }
+
+      // Verify astrologer is the session astrologer
+      if (activeSession.astrologerId.toString() !== userId.toString()) {
+        throw new ApiError(403, "Not authorized to send messages in this session");
+      }
+    }
+
+    console.log(`✅ Session validation passed:`, {
+      sessionId: activeSession.sessionId,
+      status: activeSession.status,
+      userRole: req.user.role
+    });
 
     // ✅ If reply message exists
     if (replyTo) {
@@ -287,7 +337,7 @@ export const sendMessage = asyncHandler(async (req, res) => {
 
     // ✅ Populate sender details
     await message.populate([
-      { path: "sender", select: "fullName username avatar" },
+      { path: "sender", select: "fullName username avatar role" },
       {
         path: "replyTo",
         populate: { path: "sender", select: "fullName username avatar" },
@@ -298,43 +348,94 @@ export const sendMessage = asyncHandler(async (req, res) => {
     chat.lastMessage = message._id;
     await chat.save();
 
-    // ✅ Emit real-time socket event
-    emitSocketEvent(req, chatId, ChatEventsEnum.NEW_MESSAGE_EVENT, message);
+    // ✅ Update session last activity
+    activeSession.lastActivityAt = new Date();
+    await activeSession.save();
 
-    // ✅ Send notifications to all other participants
+    // ✅ Prepare message data for socket emission
+    const messageForSocket = {
+      _id: message._id,
+      content: message.content,
+      type: message.type,
+      sender: {
+        _id: message.sender._id,
+        username: message.sender.username,
+        fullName: message.sender.fullName,
+        avatar: message.sender.avatar,
+        role: message.sender.role
+      },
+      chatId: chatId,
+      replyTo: message.replyTo,
+      isForwarded: message.isForwarded,
+      createdAt: message.createdAt,
+      updatedAt: message.updatedAt,
+      readBy: [userId]
+    };
+
+    console.log(`📤 Emitting socket event for message:`, {
+      messageId: message._id,
+      chatId,
+      sender: message.sender._id,
+      content: content ? `${content.substring(0, 30)}...` : 'media'
+    });
+
+    // ✅ Emit real-time socket event to ALL chat participants
+    emitSocketEvent(req, chatId, ChatEventsEnum.NEW_MESSAGE_EVENT, messageForSocket);
+
+    console.log(`✅ Message sent and broadcasted successfully`);
+
+    // ✅ Send push notifications to other participants
     const sender = message.sender;
     const receiverList = chat.participants.filter(
       (u) => u._id.toString() !== userId.toString()
     );
 
-    for (const receiver of receiverList) {
-      await sendNotification({
-        userId: receiver._id,
-        title: sender.fullName || "New Message",
-        message:
-          type === "text"
-            ? content
-            : type === "image"
-              ? "📸 Sent an image"
-              : "📎 Sent a file",
-        chatId,
-        messageId: message._id,
-        senderId: sender._id,
-        senderName: sender.fullName,
-        senderAvatar: sender.avatar,
-        type: "chat_message",
-        channelId: "chat_messages", // 👈 make sure this matches the channel you’ve created in Notifee
+    // Send notifications asynchronously (don't wait for them)
+    if (receiverList.length > 0) {
+      receiverList.forEach(async (receiver) => {
+        try {
+          await sendNotification({
+            userId: receiver._id,
+            title: sender.fullName || "New Message",
+            message:
+              type === "text"
+                ? content.length > 50 ? content.substring(0, 50) + '...' : content
+                : type === "image"
+                  ? "📸 Sent an image"
+                  : type === "video"
+                    ? "🎥 Sent a video"
+                    : "📎 Sent a file",
+            chatId,
+            messageId: message._id,
+            senderId: sender._id,
+            senderName: sender.fullName,
+            senderAvatar: sender.avatar,
+            type: "chat_message",
+          });
+        } catch (notifError) {
+          console.error("Notification error:", notifError);
+          // Don't throw error, just log it
+        }
       });
     }
 
     return res
       .status(201)
-      .json(new ApiResponse(201, message, "Message sent successfully"));
+      .json(new ApiResponse(201, messageForSocket, "Message sent successfully"));
+
   } catch (error) {
-    console.error("❌ Error in sendMessage:", error);
-    return res
-      .status(500)
-      .json(new ApiResponse(500, null, "Internal Server Error"));
+    console.error("❌ Error in sendMessage:", {
+      error: error.message,
+      chatId: req.params.chatId,
+      userId: req.user.id
+    });
+
+    // Re-throw ApiError instances, create new ones for other errors
+    if (error instanceof ApiError) {
+      throw error;
+    }
+
+    throw new ApiError(500, "Failed to send message");
   }
 });
 /**

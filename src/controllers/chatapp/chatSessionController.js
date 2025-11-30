@@ -162,9 +162,10 @@ export const requestChatSession = asyncHandler(async (req, res) => {
         session.endSession();
     }
 });
+// controllers/chatapp/chatController.js - Key Updates
 
 /**
- * @desc    Enhanced session start with wallet integration
+ * @desc    Enhanced session start with better validation
  */
 export const startChatSession = asyncHandler(async (req, res) => {
     const { sessionId } = req.params;
@@ -174,6 +175,8 @@ export const startChatSession = asyncHandler(async (req, res) => {
     session.startTransaction();
 
     try {
+        console.log(`🚀 Starting session: ${sessionId} for user: ${userId}`);
+
         // Find the chat session
         const chatSession = await ChatSession.findOne({
             sessionId,
@@ -185,7 +188,8 @@ export const startChatSession = asyncHandler(async (req, res) => {
             throw new ApiError(404, "Chat session not found or not ready to start");
         }
 
-        if (chatSession.userId.toString() !== userId) {
+        // Verify user is the one who can start the session
+        if (chatSession.userId.toString() !== userId.toString()) {
             throw new ApiError(403, "Only the user can start the chat session");
         }
 
@@ -212,7 +216,7 @@ export const startChatSession = asyncHandler(async (req, res) => {
             });
         }
 
-        // Calculate commission
+        // Calculate commission and create reservation (your existing code)
         const commissionDetails = await calculateCommission(
             chatSession.astrologerId,
             "CHAT",
@@ -225,13 +229,11 @@ export const startChatSession = asyncHandler(async (req, res) => {
 
         console.log(`💰 Creating reservation for session: ${sessionId}, Amount: ${estimatedCost}`);
 
-        // Create reservation - rateConfigId is now optional
         const reservation = await Reservation.create([{
             reservationId: generateTxId("RES"),
             userId: chatSession.userId,
             astrologerId: chatSession.astrologerId,
             sessionType: "CHAT",
-            // rateConfigId is optional now - can be omitted or set to null
             ratePerMinute: chatSession.ratePerMinute,
             currency: "INR",
             commissionPercent: commissionDetails.finalCommissionPercent,
@@ -246,7 +248,7 @@ export const startChatSession = asyncHandler(async (req, res) => {
                 baseCommissionPercent: commissionDetails.baseCommissionPercent,
                 appliedOverrideId: commissionDetails.overrideId,
                 finalCommissionPercent: commissionDetails.finalCommissionPercent,
-                commissionRuleId: commissionDetails.appliedRuleId, // Can be null now
+                commissionRuleId: commissionDetails.appliedRuleId,
                 commissionAmount: commissionDetails.commissionAmount,
                 platformAmount: commissionDetails.platformAmount,
                 astrologerAmount: commissionDetails.astrologerAmount
@@ -259,9 +261,9 @@ export const startChatSession = asyncHandler(async (req, res) => {
             }
         }], { session });
 
-        console.log(`📝 Reservation created: ${reservation[0]._id} for session: ${sessionId}`);
+        console.log(`📝 Reservation created: ${reservation[0]._id}`);
+
         // Reserve the amount from user's wallet
-        console.log(`🔒 Reserving amount in wallet: ${estimatedCost}`);
         const reservationResult = await WalletService.reserveAmount({
             userId: chatSession.userId,
             amount: estimatedCost,
@@ -271,7 +273,7 @@ export const startChatSession = asyncHandler(async (req, res) => {
             description: `Initial reservation for chat session with astrologer (${estimatedMinutes} mins)`,
         });
 
-        // Update chat session
+        // Update chat session status to ACTIVE
         chatSession.status = "ACTIVE";
         chatSession.startedAt = new Date();
         chatSession.lastActivityAt = new Date();
@@ -281,7 +283,7 @@ export const startChatSession = asyncHandler(async (req, res) => {
 
         await session.commitTransaction();
 
-        console.log(`✅ Session started successfully with reservation: ${reservation[0]._id}`);
+        console.log(`✅ Session started successfully: ${sessionId}`);
 
         // Start billing timer
         try {
@@ -295,7 +297,7 @@ export const startChatSession = asyncHandler(async (req, res) => {
             console.error("Failed to start billing timer:", err);
         }
 
-        // Notify both user and astrologer
+        // ✅ CRITICAL: Notify both user and astrologer via socket
         emitSocketEvent(
             req,
             chatSession.chatId.toString(),
@@ -309,6 +311,18 @@ export const startChatSession = asyncHandler(async (req, res) => {
                 reservedAmount: estimatedCost,
                 reservedMinutes: estimatedMinutes,
                 reservationId: reservation[0].reservationId
+            }
+        );
+
+        // Also notify via user's personal room for reliability
+        emitSocketEvent(
+            req,
+            chatSession.userId.toString(),
+            ChatEventsEnum.SESSION_STARTED_EVENT,
+            {
+                sessionId: chatSession.sessionId,
+                status: "ACTIVE",
+                startedAt: new Date()
             }
         );
 
@@ -329,6 +343,131 @@ export const startChatSession = asyncHandler(async (req, res) => {
     } catch (error) {
         await session.abortTransaction();
         console.error("❌ Session start failed:", error);
+        throw error;
+    } finally {
+        session.endSession();
+    }
+});
+
+/**
+ * @desc    Enhanced accept request with socket notifications
+ */
+export const acceptChatRequest = asyncHandler(async (req, res) => {
+    const session = await mongoose.startSession();
+
+    try {
+        session.startTransaction();
+
+        const { requestId } = req.params;
+        const astrologerId = req.user.id;
+
+        // Verify user is an astrologer
+        if (req.user.role !== "astrologer") {
+            throw new ApiError(403, "Only astrologers can accept chat requests");
+        }
+
+        // Find and validate request
+        const chatRequest = await ChatRequest.findOne({
+            requestId,
+            astrologerId,
+            status: "PENDING"
+        }).session(session);
+
+        if (!chatRequest) {
+            throw new ApiError(404, "Chat request not found or already processed");
+        }
+
+        if (chatRequest.isExpired()) {
+            await ChatRequest.findByIdAndUpdate(
+                chatRequest._id,
+                { status: "EXPIRED" },
+                { session }
+            );
+            throw new ApiError(400, "Chat request has expired");
+        }
+
+        // Find associated session
+        const chatSession = await ChatSession.findById(chatRequest.sessionId).session(session);
+        if (!chatSession) {
+            throw new ApiError(404, "Chat session not found");
+        }
+
+        // Update request and session
+        const now = new Date();
+
+        await ChatRequest.findByIdAndUpdate(
+            chatRequest._id,
+            {
+                status: "ACCEPTED",
+                respondedAt: now
+            },
+            { session }
+        );
+
+        await ChatSession.findByIdAndUpdate(
+            chatSession._id,
+            {
+                status: "ACCEPTED",
+                acceptedAt: now
+            },
+            { session }
+        );
+
+        await session.commitTransaction();
+
+        console.log(`✅ Chat request accepted: ${requestId} -> session: ${chatSession.sessionId}`);
+
+        // ✅ CRITICAL: Notify user via socket in chat room AND personal room
+        emitSocketEvent(req, chatSession.chatId.toString(), ChatEventsEnum.CHAT_ACCEPTED_EVENT, {
+            requestId: chatRequest.requestId,
+            sessionId: chatSession.sessionId,
+            astrologerId: astrologerId,
+            astrologerInfo: {
+                fullName: req.user.fullName,
+                phone: req.user.phone,
+                avatar: req.user.avatar
+            },
+            acceptedAt: now
+        });
+
+        // Also send to user's personal room for reliability
+        emitSocketEvent(req, chatRequest.userId.toString(), ChatEventsEnum.CHAT_ACCEPTED_EVENT, {
+            requestId: chatRequest.requestId,
+            sessionId: chatSession.sessionId,
+            astrologerId: astrologerId,
+            astrologerInfo: {
+                fullName: req.user.fullName,
+                phone: req.user.phone,
+                avatar: req.user.avatar
+            },
+            acceptedAt: now
+        });
+
+        // Send push notification to user
+        await sendNotification({
+            userId: chatRequest.userId,
+            title: "Chat Request Accepted",
+            message: `${req.user.fullName} has accepted your chat request`,
+            type: "chat_accepted",
+            data: {
+                requestId: chatRequest.requestId,
+                sessionId: chatSession.sessionId,
+                astrologerId: astrologerId,
+                chatId: chatSession.chatId
+            }
+        });
+
+        return res.status(200).json(
+            new ApiResponse(200, {
+                requestId: chatRequest.requestId,
+                sessionId: chatSession.sessionId,
+                status: "ACCEPTED",
+                chatId: chatSession.chatId
+            }, "Chat request accepted successfully")
+        );
+
+    } catch (error) {
+        await session.abortTransaction();
         throw error;
     } finally {
         session.endSession();
@@ -410,108 +549,108 @@ export const cancelChatRequest = asyncHandler(async (req, res) => {
  * @route   POST /api/v1/chat/request/:requestId/accept
  * @access  Private (Astrologer)
  */
-export const acceptChatRequest = asyncHandler(async (req, res) => {
-    const session = await mongoose.startSession();
+// export const acceptChatRequest = asyncHandler(async (req, res) => {
+//     const session = await mongoose.startSession();
 
-    try {
-        session.startTransaction();
+//     try {
+//         session.startTransaction();
 
-        const { requestId } = req.params;
-        const astrologerId = req.user.id; // Changed from req.astrologer._id to req.user.id
+//         const { requestId } = req.params;
+//         const astrologerId = req.user.id; // Changed from req.astrologer._id to req.user.id
 
-        // Verify user is an astrologer
-        if (req.user.role !== "astrologer") {
-            throw new ApiError(403, "Only astrologers can accept chat requests");
-        }
+//         // Verify user is an astrologer
+//         if (req.user.role !== "astrologer") {
+//             throw new ApiError(403, "Only astrologers can accept chat requests");
+//         }
 
-        // Find and validate request
-        const chatRequest = await ChatRequest.findOne({
-            requestId,
-            astrologerId,
-            status: "PENDING"
-        }).session(session);
+//         // Find and validate request
+//         const chatRequest = await ChatRequest.findOne({
+//             requestId,
+//             astrologerId,
+//             status: "PENDING"
+//         }).session(session);
 
-        if (!chatRequest) {
-            throw new ApiError(404, "Chat request not found or already processed");
-        }
+//         if (!chatRequest) {
+//             throw new ApiError(404, "Chat request not found or already processed");
+//         }
 
-        if (chatRequest.isExpired()) {
-            await ChatRequest.findByIdAndUpdate(
-                chatRequest._id,
-                { status: "EXPIRED" },
-                { session }
-            );
-            throw new ApiError(400, "Chat request has expired");
-        }
+//         if (chatRequest.isExpired()) {
+//             await ChatRequest.findByIdAndUpdate(
+//                 chatRequest._id,
+//                 { status: "EXPIRED" },
+//                 { session }
+//             );
+//             throw new ApiError(400, "Chat request has expired");
+//         }
 
-        // Find associated session
-        const chatSession = await ChatSession.findById(chatRequest.sessionId).session(session);
-        if (!chatSession) {
-            throw new ApiError(404, "Chat session not found");
-        }
+//         // Find associated session
+//         const chatSession = await ChatSession.findById(chatRequest.sessionId).session(session);
+//         if (!chatSession) {
+//             throw new ApiError(404, "Chat session not found");
+//         }
 
-        // Update request and session
-        const now = new Date();
+//         // Update request and session
+//         const now = new Date();
 
-        await ChatRequest.findByIdAndUpdate(
-            chatRequest._id,
-            {
-                status: "ACCEPTED",
-                respondedAt: now
-            },
-            { session }
-        );
+//         await ChatRequest.findByIdAndUpdate(
+//             chatRequest._id,
+//             {
+//                 status: "ACCEPTED",
+//                 respondedAt: now
+//             },
+//             { session }
+//         );
 
-        await ChatSession.findByIdAndUpdate(
-            chatSession._id,
-            {
-                status: "ACCEPTED",
-                acceptedAt: now
-            },
-            { session }
-        );
+//         await ChatSession.findByIdAndUpdate(
+//             chatSession._id,
+//             {
+//                 status: "ACCEPTED",
+//                 acceptedAt: now
+//             },
+//             { session }
+//         );
 
-        await session.commitTransaction();
+//         await session.commitTransaction();
 
-        // Notify user via socket
-        emitSocketEvent(req, chatRequest.userId.toString(), ChatEventsEnum.CHAT_ACCEPTED_EVENT, {
-            requestId: chatRequest.requestId,
-            sessionId: chatSession.sessionId,
-            astrologerId: astrologerId,
-            astrologerInfo: {
-                fullName: req.user.fullName,
-                phone: req.user.phone
-            }
-        });
+//         // Notify user via socket
+//         emitSocketEvent(req, chatRequest.userId.toString(), ChatEventsEnum.CHAT_ACCEPTED_EVENT, {
+//             requestId: chatRequest.requestId,
+//             sessionId: chatSession.sessionId,
+//             astrologerId: astrologerId,
+//             astrologerInfo: {
+//                 fullName: req.user.fullName,
+//                 phone: req.user.phone
+//             }
+//         });
 
-        // Send push notification to user
-        await sendNotification({
-            userId: chatRequest.userId,
-            title: "Chat Request Accepted",
-            message: `${req.user.fullName} has accepted your chat request`,
-            type: "chat_accepted",
-            data: {
-                requestId: chatRequest.requestId,
-                sessionId: chatSession.sessionId,
-                astrologerId: astrologerId
-            }
-        });
+//         // Send push notification to user
+//         await sendNotification({
+//             userId: chatRequest.userId,
+//             title: "Chat Request Accepted",
+//             message: `${req.user.fullName} has accepted your chat request`,
+//             type: "chat_accepted",
+//             data: {
+//                 requestId: chatRequest.requestId,
+//                 sessionId: chatSession.sessionId,
+//                 astrologerId: astrologerId
+//             }
+//         });
 
-        return res.status(200).json(
-            new ApiResponse(200, {
-                requestId: chatRequest.requestId,
-                sessionId: chatSession.sessionId,
-                status: "ACCEPTED"
-            }, "Chat request accepted successfully")
-        );
+//         return res.status(200).json(
+//             new ApiResponse(200, {
+//                 requestId: chatRequest.requestId,
+//                 sessionId: chatSession.sessionId,
+//                 status: "ACCEPTED"
+//             }, "Chat request accepted successfully")
+//         );
 
-    } catch (error) {
-        await session.abortTransaction();
-        throw error;
-    } finally {
-        session.endSession();
-    }
-});
+//     } catch (error) {
+//         await session.abortTransaction();
+//         throw error;
+//     } finally {
+//         session.endSession();
+//     }
+// });
 
 /**
  * @desc    Astrologer rejects chat request
