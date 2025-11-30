@@ -305,6 +305,7 @@ const TransactionSchema = new Schema(
         "CHAT_SESSION",
         "RESERVE",
         "UNRESERVE",
+        "EARNINGS",
         "REFUND",
         "BONUS",
         "ADMIN_ADJUSTMENT",
