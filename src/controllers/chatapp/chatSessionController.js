@@ -11,7 +11,7 @@ import { emitSocketEvent } from "../../socket/index.js";
 import { ChatEventsEnum } from "../../constants.js";
 import mongoose from "mongoose";
 import admin from "../../utils/firabse.js";
-import { Reservation,calculateCommission,generateTxId } from "../../models/Wallet/AstroWallet.js";
+import { Reservation, calculateCommission, generateTxId } from "../../models/Wallet/AstroWallet.js";
 // Global billing timers map
 const billingTimers = new Map();
 
@@ -174,7 +174,7 @@ export const startChatSession = asyncHandler(async (req, res) => {
     session.startTransaction();
 
     try {
-        // Find the chat session that is accepted and belongs to user or astrologer
+        // Find the chat session
         const chatSession = await ChatSession.findOne({
             sessionId,
             $or: [{ userId }, { astrologerId: userId }],
@@ -185,12 +185,11 @@ export const startChatSession = asyncHandler(async (req, res) => {
             throw new ApiError(404, "Chat session not found or not ready to start");
         }
 
-        // Only the user (customer) should start the session
         if (chatSession.userId.toString() !== userId) {
             throw new ApiError(403, "Only the user can start the chat session");
         }
 
-        // Estimate initial cost: Reserve for 10 minutes (common practice)
+        // Estimate initial cost
         const estimatedMinutes = 10;
         const estimatedCost = chatSession.ratePerMinute * estimatedMinutes;
 
@@ -198,7 +197,7 @@ export const startChatSession = asyncHandler(async (req, res) => {
             throw new ApiError(400, "Invalid session rate");
         }
 
-        // Check if user has sufficient balance
+        // Check balance
         const balanceCheck = await WalletService.checkBalance({
             userId: chatSession.userId,
             amount: estimatedCost,
@@ -206,18 +205,14 @@ export const startChatSession = asyncHandler(async (req, res) => {
         });
 
         if (!balanceCheck.hasSufficientBalance) {
-            throw new ApiError(
-                402,
-                "Insufficient balance to start chat session",
-                {
-                    shortfall: balanceCheck.shortfall,
-                    available: balanceCheck.availableBalance,
-                    required: estimatedCost,
-                }
-            );
+            throw new ApiError(402, "Insufficient balance to start chat session", {
+                shortfall: balanceCheck.shortfall,
+                available: balanceCheck.availableBalance,
+                required: estimatedCost,
+            });
         }
 
-        // Calculate commission using your utility function
+        // Calculate commission
         const commissionDetails = await calculateCommission(
             chatSession.astrologerId,
             "CHAT",
@@ -230,12 +225,13 @@ export const startChatSession = asyncHandler(async (req, res) => {
 
         console.log(`💰 Creating reservation for session: ${sessionId}, Amount: ${estimatedCost}`);
 
-        // Create reservation record that matches your schema
+        // Create reservation - rateConfigId is now optional
         const reservation = await Reservation.create([{
-            reservationId: generateTxId("RES"), // Use your utility function
+            reservationId: generateTxId("RES"),
             userId: chatSession.userId,
             astrologerId: chatSession.astrologerId,
             sessionType: "CHAT",
+            // rateConfigId is optional now - can be omitted or set to null
             ratePerMinute: chatSession.ratePerMinute,
             currency: "INR",
             commissionPercent: commissionDetails.finalCommissionPercent,
@@ -245,12 +241,12 @@ export const startChatSession = asyncHandler(async (req, res) => {
             astrologerEarnings: commissionDetails.astrologerAmount,
             status: "RESERVED",
             startAt: new Date(),
-            expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000), // 2 hours expiry
+            expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
             commissionDetails: {
                 baseCommissionPercent: commissionDetails.baseCommissionPercent,
                 appliedOverrideId: commissionDetails.overrideId,
                 finalCommissionPercent: commissionDetails.finalCommissionPercent,
-                commissionRuleId: commissionDetails.appliedRuleId,
+                commissionRuleId: commissionDetails.appliedRuleId, // Can be null now
                 commissionAmount: commissionDetails.commissionAmount,
                 platformAmount: commissionDetails.platformAmount,
                 astrologerAmount: commissionDetails.astrologerAmount
@@ -263,44 +259,42 @@ export const startChatSession = asyncHandler(async (req, res) => {
             }
         }], { session });
 
-        // Reserve the amount from user's wallet (moves from available → locked)
+        // Reserve the amount from user's wallet
         console.log(`🔒 Reserving amount in wallet: ${estimatedCost}`);
         const reservationResult = await WalletService.reserveAmount({
             userId: chatSession.userId,
             amount: estimatedCost,
             currency: "INR",
-            reservationId: reservation[0]._id, // Use the created reservation ID
+            reservationId: reservation[0]._id,
             sessionType: "CHAT",
             description: `Initial reservation for chat session with astrologer (${estimatedMinutes} mins)`,
         });
 
-        // Update chat session status to ACTIVE and link reservation
+        // Update chat session
         chatSession.status = "ACTIVE";
         chatSession.startedAt = new Date();
         chatSession.lastActivityAt = new Date();
         chatSession.paymentStatus = "RESERVED";
-        chatSession.reservationId = reservation[0]._id; // Link the reservation
+        chatSession.reservationId = reservation[0]._id;
         await chatSession.save({ session });
 
-        // Commit transaction
         await session.commitTransaction();
 
         console.log(`✅ Session started successfully with reservation: ${reservation[0]._id}`);
 
-        // Start background billing timer (deduct per minute)
+        // Start billing timer
         try {
             await startBillingTimer(
                 chatSession.sessionId,
                 chatSession.chatId,
                 chatSession.ratePerMinute,
-                reservation[0]._id // reservationId
+                reservation[0]._id
             );
         } catch (err) {
             console.error("Failed to start billing timer:", err);
-            // Non-critical: log but don't fail session start
         }
 
-        // Notify both user and astrologer via socket
+        // Notify both user and astrologer
         emitSocketEvent(
             req,
             chatSession.chatId.toString(),
@@ -317,7 +311,6 @@ export const startChatSession = asyncHandler(async (req, res) => {
             }
         );
 
-        // Success response
         return res.status(200).json(
             new ApiResponse(200, {
                 sessionId: chatSession.sessionId,

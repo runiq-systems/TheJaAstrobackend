@@ -408,7 +408,7 @@ const ReservationSchema = new Schema(
     rateConfigId: {
       type: Schema.Types.ObjectId,
       ref: "SessionRateConfig",
-      required: true,
+      default: null, // Changed from required: true to default: null
     },
     ratePerMinute: { type: Number, required: true },
     currency: { type: String, default: "INR" },
@@ -425,7 +425,7 @@ const ReservationSchema = new Schema(
       commissionRuleId: {
         type: Schema.Types.ObjectId,
         ref: "CommissionRule",
-        required: true,
+        default: null, // Changed from required: true to default: null
       },
       adminAdjustedCommission: { type: Number, default: null },
       adjustmentReason: { type: String, default: null },
@@ -941,37 +941,61 @@ export const calculateCommission = async (
   sessionAmount,
   sessionDetails = {}
 ) => {
-  // Default commission calculation
-  const baseCommission = 20; // 20% default
+  try {
+    // First, try to find an applicable commission rule
+    const commissionRule = await CommissionRule.findOne({
+      isActive: true,
+      effectiveFrom: { $lte: new Date() },
+      $or: [{ effectiveTo: null }, { effectiveTo: { $gte: new Date() } }],
+    }).sort({ priority: 1 });
 
-  // Check for overrides
-  const override = await CommissionOverride.findOne({
-    $or: [
-      { targetType: "ASTROLOGER", targetId: astrologerId },
-      { targetType: "SESSION_TYPE", targetSessionType: sessionType },
-      { targetType: "GLOBAL" },
-    ],
-    isActive: true,
-    effectiveFrom: { $lte: new Date() },
-    $or: [{ effectiveTo: null }, { effectiveTo: { $gte: new Date() } }],
-  }).sort({ targetType: 1 });
+    // Use rule commission or default to 20%
+    const baseCommission = commissionRule ? commissionRule.commissionValue : 20;
 
-  const finalCommission = override
-    ? override.finalCommissionPercent
-    : baseCommission;
-  const commissionAmount = Math.round((sessionAmount * finalCommission) / 100);
+    // Check for overrides
+    const override = await CommissionOverride.findOne({
+      $or: [
+        { targetType: "ASTROLOGER", targetId: astrologerId },
+        { targetType: "SESSION_TYPE", targetSessionType: sessionType },
+        { targetType: "GLOBAL" },
+      ],
+      isActive: true,
+      effectiveFrom: { $lte: new Date() },
+      $or: [{ effectiveTo: null }, { effectiveTo: { $gte: new Date() } }],
+    }).sort({ targetType: 1 });
 
-  return {
-    baseCommissionPercent: baseCommission,
-    finalCommissionPercent: finalCommission,
-    commissionAmount,
-    astrologerAmount: sessionAmount - commissionAmount,
-    platformAmount: commissionAmount,
-    appliedRuleId: null,
-    overrideId: override?._id || null,
-  };
+    const finalCommission = override
+      ? override.finalCommissionPercent
+      : baseCommission;
+
+    const commissionAmount = Math.round((sessionAmount * finalCommission) / 100);
+
+    return {
+      baseCommissionPercent: baseCommission,
+      finalCommissionPercent: finalCommission,
+      commissionAmount,
+      astrologerAmount: sessionAmount - commissionAmount,
+      platformAmount: commissionAmount,
+      appliedRuleId: commissionRule?._id || null, // This can be null now
+      overrideId: override?._id || null,
+    };
+  } catch (error) {
+    console.error("Error calculating commission:", error);
+    // Fallback to default commission calculation
+    const fallbackCommission = 20;
+    const commissionAmount = Math.round((sessionAmount * fallbackCommission) / 100);
+
+    return {
+      baseCommissionPercent: fallbackCommission,
+      finalCommissionPercent: fallbackCommission,
+      commissionAmount,
+      astrologerAmount: sessionAmount - commissionAmount,
+      platformAmount: commissionAmount,
+      appliedRuleId: null,
+      overrideId: null,
+    };
+  }
 };
-
 // ==================== DEFAULT EXPORT ====================
 
 export default {
