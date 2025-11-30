@@ -259,6 +259,7 @@ export const startChatSession = asyncHandler(async (req, res) => {
             }
         }], { session });
 
+        console.log(`📝 Reservation created: ${reservation[0]._id} for session: ${sessionId}`);
         // Reserve the amount from user's wallet
         console.log(`🔒 Reserving amount in wallet: ${estimatedCost}`);
         const reservationResult = await WalletService.reserveAmount({
@@ -275,7 +276,7 @@ export const startChatSession = asyncHandler(async (req, res) => {
         chatSession.startedAt = new Date();
         chatSession.lastActivityAt = new Date();
         chatSession.paymentStatus = "RESERVED";
-        chatSession.reservationId = reservation[0]._id;
+        chatSession.reservationId = reservation._id;
         await chatSession.save({ session });
 
         await session.commitTransaction();
