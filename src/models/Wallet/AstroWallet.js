@@ -302,6 +302,7 @@ const TransactionSchema = new Schema(
       enum: [
         "RECHARGE",
         "SESSION_DEDUCTION",
+        "CHAT_SESSION",
         "RESERVE",
         "UNRESERVE",
         "REFUND",
