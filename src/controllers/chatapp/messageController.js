@@ -374,7 +374,7 @@ export const sendMessage = asyncHandler(async (req, res) => {
       }
     });
 
-    console.log(`Message ${_id} delivered via room + personal rooms`);
+    console.log(`Message delivered via room + personal rooms`);
 
     // Send push notifications to receivers
     const receivers = chat.participants.filter(
