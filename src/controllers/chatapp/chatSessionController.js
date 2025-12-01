@@ -831,8 +831,19 @@ export const endChatSession = asyncHandler(async (req, res) => {
             );
 
             // Final settlement: deduct actual cost, refund unused
-            settlementResult = await WalletService.processSessionPayment(chatSession.reservationId);
-
+            // In endChatSession, wrap settlement in retry if needed
+            let settlementResult;
+            try {
+                settlementResult = await WalletService.processSessionPayment(chatSession.reservationId);
+            } catch (err) {
+                if (err.message.includes("Write conflict")) {
+                    // Final retry from controller
+                    await new Promise(r => setTimeout(r, 500));
+                    settlementResult = await WalletService.processSessionPayment(chatSession.reservationId);
+                } else {
+                    throw err;
+                }
+            }
             chatSession.paymentStatus = "PAID";
             chatSession.astrologerEarnings = astrologerEarnings;
         } else {
