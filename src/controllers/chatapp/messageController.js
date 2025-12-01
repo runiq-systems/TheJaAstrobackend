@@ -8,6 +8,7 @@ import { emitSocketEvent } from "../../socket/index.js";
 import { ChatEventsEnum } from "../../constants.js";
 import { uploadOnCloudinary, deleteFromCloudinary } from "../../utils/cloudinary.js";
 import admin from "../../utils/firabse.js";
+import { ChatSession } from "../../models/chatapp/chatSession.js";
 /**
  * @desc    Get all messages in a chat
  * @route   GET /api/v1/messages/:chatId
