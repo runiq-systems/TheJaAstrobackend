@@ -766,148 +766,89 @@ export const rejectChatRequest = asyncHandler(async (req, res) => {
 /**
  * @desc    Enhanced session end with proper settlement
  */
+// In controllers/chatapp/chatController.js → Replace endChatSession
+
+
+
+
 export const endChatSession = asyncHandler(async (req, res) => {
     const { sessionId } = req.params;
-    const userId = req.user.id;
+    const userId = req.user._id;
 
     const session = await mongoose.startSession();
     try {
         session.startTransaction();
 
-        console.log(`🔄 Ending chat session: ${sessionId} for user: ${userId}`);
-
         const chatSession = await ChatSession.findOne({
             sessionId,
             $or: [{ userId }, { astrologerId: userId }],
-            status: { $in: ["ACTIVE", "PAUSED", "ACCEPTED"] }
+            status: { $in: ["ACTIVE", "PAUSED"] }
         }).session(session);
 
-        if (!chatSession) {
-            throw new ApiError(404, "Active chat session not found");
-        }
+        if (!chatSession) throw new ApiError(404, "Session not found or already ended");
 
-        // Stop billing timer
         stopBillingTimer(sessionId);
 
         const endedAt = new Date();
-        const startedAt = chatSession.startedAt || chatSession.acceptedAt || endedAt;
-        const totalDurationSec = Math.floor((endedAt - startedAt) / 1000);
-        const billedMinutes = Math.max(1, Math.ceil(totalDurationSec / 60));
-        const totalCost = chatSession.ratePerMinute * billedMinutes;
+        const startedAt = chatSession.startedAt || endedAt;
+        const totalSeconds = Math.floor((endedAt - startedAt) / 1000);
+        const billedMinutes = Math.max(1, Math.ceil(totalSeconds / 60));
+        const actualCost = billedMinutes * chatSession.ratePerMinute;
+        const platformEarn = Math.round(actualCost * 0.20);
+        const astrologerEarn = actualCost - platformEarn;
 
-        console.log(`📊 Session metrics - Duration: ${totalDurationSec}s, Cost: ${totalCost}, Billed Minutes: ${billedMinutes}`);
-
-        // Update ChatSession with calculated values
+        // Update session
         chatSession.status = "COMPLETED";
         chatSession.endedAt = endedAt;
-        chatSession.totalDuration = totalDurationSec;
+        chatSession.totalDuration = totalSeconds;
         chatSession.billedDuration = billedMinutes * 60;
-        chatSession.totalCost = totalCost;
+        chatSession.totalCost = actualCost;
 
-        let paymentResult = null;
-        let paymentStatus = "PENDING";
-        let astrologerEarnings = 0;
+        let settlement = { refundedAmount: 0, message: "" };
 
-        // Process payment if reservation exists
-        if (chatSession.reservationId && mongoose.Types.ObjectId.isValid(chatSession.reservationId)) {
-            try {
-                console.log(`💳 Processing payment with reservation: ${chatSession.reservationId}`);
+        if (chatSession.reservationId) {
+            // Update reservation with real duration
+            await Reservation.findByIdAndUpdate(chatSession.reservationId, {
+                totalDurationSec: totalSeconds,
+                billedMinutes,
+                totalCost: actualCost,
+                platformEarnings: platformEarn,
+                astrologerEarnings: astrologerEarn
+            }, { session });
 
-                // Debug the reservation first
-                await WalletService.debugReservation(chatSession.reservationId);
-
-                paymentResult = await WalletService.processSessionPayment(chatSession.reservationId);
-                paymentStatus = "PAID";
-                astrologerEarnings = paymentResult.astrologerEarnings;
-
-                console.log(`✅ Payment successful - Earnings: ${astrologerEarnings}`);
-
-            } catch (paymentError) {
-                console.error("❌ Payment processing failed:", paymentError);
-
-                // More specific error handling
-                if (paymentError.message.includes("Cannot read properties of null")) {
-                    paymentStatus = "FAILED_INVALID_REFERENCES";
-                } else if (paymentError.message.includes("Insufficient balance")) {
-                    paymentStatus = "FAILED_INSUFFICIENT_BALANCE";
-                } else if (paymentError.message.includes("Reservation not found")) {
-                    paymentStatus = "FAILED_RESERVATION_NOT_FOUND";
-                } else if (paymentError.message.includes("not in RESERVED state")) {
-                    paymentStatus = "FAILED_INVALID_RESERVATION_STATE";
-                } else {
-                    paymentStatus = "FAILED";
-                }
-
-                // Store error details for debugging
-                chatSession.paymentError = {
-                    message: paymentError.message,
-                    code: paymentError.statusCode || 500,
-                    timestamp: new Date(),
-                    reservationId: chatSession.reservationId
-                };
-
-                console.warn(`⚠️ Payment failed but session will be ended. Status: ${paymentStatus}`);
-            }
+            settlement = await WalletService.processSessionPayment(chatSession.reservationId);
+            chatSession.paymentStatus = "PAID";
+            chatSession.astrologerEarnings = astrologerEarn;
         } else {
-            paymentStatus = "NO_RESERVATION";
-            console.warn(`⚠️ No reservation ID found for session: ${sessionId}`);
+            chatSession.paymentStatus = "NO_RESERVATION";
         }
-
-        // Update session with payment status
-        chatSession.paymentStatus = paymentStatus;
-        chatSession.astrologerEarnings = astrologerEarnings;
 
         await chatSession.save({ session });
         await session.commitTransaction();
 
-        console.log(`✅ Session ended successfully - Payment Status: ${paymentStatus}`);
-
-        // Notify both parties via socket
-        try {
-            emitSocketEvent(req, chatSession.chatId.toString(), ChatEventsEnum.SESSION_ENDED_EVENT, {
-                sessionId: chatSession.sessionId,
-                status: "COMPLETED",
-                totalCost,
-                totalDuration: totalDurationSec,
-                billedMinutes,
-                paymentStatus,
-                astrologerEarnings,
-                endedAt: chatSession.endedAt
-            });
-        } catch (socketErr) {
-            console.warn("📢 Socket notification failed (non-critical):", socketErr.message);
-        }
-
-        // Prepare response message based on payment status
-        let message = "Session ended successfully";
-        if (paymentStatus === "PAID") {
-            message = "Session ended and payment settled successfully";
-        } else if (paymentStatus.startsWith("FAILED")) {
-            message = "Session ended but payment failed - please contact support";
-        } else if (paymentStatus === "NO_RESERVATION") {
-            message = "Session ended - payment requires manual processing";
-        }
-
-        return res.status(200).json(new ApiResponse(200, {
-            sessionId: chatSession.sessionId,
+        // Notify safely
+        emitSocketEvent(req, chatSession.chatId.toString(), ChatEventsEnum.SESSION_ENDED_EVENT, {
+            sessionId,
             status: "COMPLETED",
-            totalCost,
-            totalDuration: totalDurationSec,
+            totalCost: actualCost,
             billedMinutes,
-            paymentStatus,
-            astrologerEarnings,
-            endedAt: chatSession.endedAt,
-            message
-        }, message));
+            durationSeconds: totalDurationSec,
+            paymentStatus: chatSession.paymentStatus,
+            refundedAmount: result.refundedAmount || 0,
+            message: result.message || "Session ended"
+        });
+
+        return res.json(new ApiResponse(200, {
+            sessionId,
+            totalCost: actualCost,
+            billedMinutes,
+            durationSeconds: totalSeconds,
+            refundedAmount: settlement.refundedAmount || 0,
+            message: settlement.message || "Session ended successfully"
+        }));
 
     } catch (error) {
         await session.abortTransaction();
-        console.error("❌ Session end error:", {
-            sessionId,
-            userId,
-            error: error.message,
-            stack: error.stack
-        });
         throw error;
     } finally {
         session.endSession();
