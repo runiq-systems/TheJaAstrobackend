@@ -446,46 +446,44 @@ export class WalletService {
    * Process session payment - Fixed for your schema
    */
     // WalletService.js → Replace the entire processSessionPayment function
+    // WalletService.js → Replace ONLY this function
+
     static async processSessionPayment(reservationId) {
         if (!reservationId || !mongoose.Types.ObjectId.isValid(reservationId)) {
             throw new ApiError(400, "Invalid reservation ID");
         }
 
         const session = await mongoose.startSession();
+        let refundedAmount = 0; // ← DECLARED HERE SO IT'S ALWAYS DEFINED
+
         try {
             session.startTransaction();
-
-            console.log(`Processing payment for reservation: ${reservationId}`);
 
             const reservation = await Reservation.findById(reservationId)
                 .populate("userId", "_id fullName")
                 .populate("astrologerId", "_id fullName")
                 .session(session);
 
-            if (!reservation) {
-                throw new ApiError(404, "Reservation not found");
-            }
-
+            if (!reservation) throw new ApiError(404, "Reservation not found");
             if (!reservation.userId || !reservation.astrologerId) {
-                throw new ApiError(400, "Invalid user or astrologer in reservation");
+                throw new ApiError(400, "Invalid user/astrologer in reservation");
             }
 
-            // === Calculate ACTUAL cost based on real duration ===
+            // === Calculate ACTUAL cost from real duration ===
             const durationSeconds = reservation.totalDurationSec || 0;
-            const billedMinutes = Math.max(1, Math.ceil(durationSeconds / 60)); // Minimum 1 min
+            const billedMinutes = Math.max(1, Math.ceil(durationSeconds / 60));
             const ratePerMinute = reservation.ratePerMinute;
             const actualCost = billedMinutes * ratePerMinute;
 
-            // Commission breakdown (20% platform + GST logic can be added later)
-            const platformEarnings = Math.round(actualCost * 0.20); // 20% platform
+            const platformEarnings = Math.round(actualCost * 0.20);
             const astrologerEarnings = actualCost - platformEarnings;
 
-            console.log(`Billing: ${billedMinutes} min × ₹${ratePerMinute} = ₹${actualCost} | Platform: ₹${platformEarnings} | Astrologer: ₹${astrologerEarnings}`);
+            const reservedAmount = reservation.lockedAmount || actualCost;
+            refundedAmount = reservedAmount - actualCost; // ← NOW IT'S SAFE
 
-            const reservedAmount = reservation.lockedAmount;
-            const refundAmount = reservedAmount - actualCost;
+            console.log(`SETTLEMENT: Reserved ₹${reservedAmount} | Used ₹${actualCost} | Refund ₹${refundedAmount}`);
 
-            // Step 1: Release FULL reserved amount back to available
+            // 1. Release FULL reserved amount
             await this.releaseAmount({
                 userId: reservation.userId._id,
                 amount: reservedAmount,
@@ -494,7 +492,7 @@ export class WalletService {
                 description: `Release reserved ₹${reservedAmount} for final settlement`,
             });
 
-            // Step 2: Deduct ONLY the actual cost
+            // 2. Debit ONLY actual cost
             if (actualCost > 0) {
                 await this.debit({
                     userId: reservation.userId._id,
@@ -502,20 +500,19 @@ export class WalletService {
                     currency: "INR",
                     category: "CHAT_SESSION",
                     subcategory: "SESSION_PAYMENT",
-                    description: `Chat session: ${billedMinutes} min @ ₹${ratePerMinute}/min`,
+                    description: `Chat: ${billedMinutes} min × ₹${ratePerMinute}/min = ₹${actualCost}`,
                     reservationId: reservation._id,
                     meta: {
                         billedMinutes,
                         actualCost,
                         reservedAmount,
                         refundedAmount,
-                        ratePerMinute,
                         durationSeconds,
                     },
                 });
             }
 
-            // Step 3: Credit astrologer
+            // 3. Credit astrologer
             if (astrologerEarnings > 0) {
                 await this.credit({
                     userId: reservation.astrologerId._id,
@@ -523,19 +520,17 @@ export class WalletService {
                     currency: "INR",
                     category: "EARNINGS",
                     subcategory: "CHAT_SESSION",
-                    description: `Earnings: ${billedMinutes} min chat @ ₹${ratePerMinute}/min`,
-                    relatedTx: [],
+                    description: `Earnings: ${billedMinutes} min chat`,
                     meta: {
                         reservationId: reservation._id,
                         billedMinutes,
                         actualCost,
                         platformEarnings,
-                        userId: reservation.userId._id,
                     },
                 });
             }
 
-            // Step 4: Update reservation as SETTLED
+            // 4. Mark reservation as settled
             reservation.status = "SETTLED";
             reservation.totalCost = actualCost;
             reservation.billedMinutes = billedMinutes;
@@ -547,7 +542,9 @@ export class WalletService {
 
             await session.commitTransaction();
 
-            console.log(`Payment settled: ₹${actualCost} deducted, ₹${refundAmount} refunded to wallet`);
+            const message = refundedAmount > 0
+                ? `₹${actualCost} deducted. ₹${refundedAmount} refunded to your wallet.`
+                : "Full amount used as per session duration.";
 
             return {
                 success: true,
@@ -555,17 +552,15 @@ export class WalletService {
                 billedMinutes,
                 platformEarnings,
                 astrologerEarnings,
-                refundedAmount,
                 reservedAmount,
-                message: refundAmount > 0
-                    ? `₹${actualCost} deducted. ₹${refundAmount} returned to your wallet.`
-                    : "Full amount deducted as per usage.",
+                refundedAmount,    // ← NOW ALWAYS DEFINED
+                message,
             };
 
         } catch (error) {
             await session.abortTransaction();
-            console.error("Payment settlement failed:", error);
-            throw error instanceof ApiError ? error : new ApiError(500, `Settlement failed: ${error.message}`);
+            console.error("Settlement failed:", error.message);
+            throw error instanceof ApiError ? error : new ApiError(500, "Payment settlement failed");
         } finally {
             session.endSession();
         }
