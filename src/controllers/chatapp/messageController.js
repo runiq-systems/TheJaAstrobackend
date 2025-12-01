@@ -307,8 +307,20 @@ export const sendMessage = asyncHandler(async (req, res) => {
       isForwarded,
     };
 
-    if (content && type === "text") {
-      messageData.content = { text: content.trim() };
+let textContent = "";
+
+    if (content) {
+      if (typeof content && typeof content === "object" && content.text !== undefined) {
+        // New format: { content: { text: "..." } }
+        textContent = typeof content.text === "string" ? content.text.trim() : "";
+      } else if (typeof content === "string") {
+        // Old format: { content: "..." }
+        textContent = content.trim();
+      }
+    }
+
+    if (textContent) {
+      messageData.content = { text: textContent };
     }
 
     // ✅ Handle media files
