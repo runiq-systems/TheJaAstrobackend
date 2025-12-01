@@ -410,14 +410,7 @@ let textContent = "";
           await sendNotification({
             userId: receiver._id,
             title: sender.fullName || "New Message",
-            message:
-              type === "text"
-                ? content.length > 50 ? content.substring(0, 50) + '...' : content
-                : type === "image"
-                  ? "📸 Sent an image"
-                  : type === "video"
-                    ? "🎥 Sent a video"
-                    : "📎 Sent a file",
+            message: getNotificationText(),
             chatId,
             messageId: message._id,
             senderId: sender._id,
@@ -451,6 +444,26 @@ let textContent = "";
     throw new ApiError(500, "Failed to send message");
   }
 });
+
+// SAFELY extract text for notification
+const getNotificationText = () => {
+  if (type !== "text") {
+    if (type === "image") return "Sent an image";
+    if (type === "video") return "Sent a video";
+    if (type === "audio") return "Sent a voice message";
+    return "Sent a file";
+  }
+
+  // Extract text safely from both formats
+  let rawText = "";
+  if (typeof content === "string") {
+    rawText = content;
+  } else if (content && typeof content === "object" && content.text) {
+    rawText = content.text || "";
+  }
+
+  return rawText.length > 50 ? rawText.substring(0, 50) + "..." : rawText;
+};
 /**
  * @desc    Delete a message
  * @route   DELETE /api/v1/messages/:messageId
