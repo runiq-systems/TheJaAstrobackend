@@ -6,8 +6,12 @@ import { ApiResponse } from "../../utils/ApiResponse.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { emitSocketEvent } from "../../socket/index.js";
 import { ChatEventsEnum } from "../../constants.js";
-import { uploadOnCloudinary, deleteFromCloudinary } from "../../utils/cloudinary.js";
+import {
+  uploadOnCloudinary,
+  deleteFromCloudinary,
+} from "../../utils/cloudinary.js";
 import admin from "../../utils/firabse.js";
+import { ChatSession } from "../../models/chatapp/chatSession.js";
 /**
  * @desc    Get all messages in a chat
  * @route   GET /api/v1/messages/:chatId
@@ -15,8 +19,6 @@ import admin from "../../utils/firabse.js";
  */
 export const getAllMessages = asyncHandler(async (req, res) => {
   try {
-
-
     const { chatId } = req.params;
     const userId = req.user.id;
     const { page = 1, limit = 50, before } = req.query;
@@ -24,7 +26,7 @@ export const getAllMessages = asyncHandler(async (req, res) => {
     // Verify chat exists and user is participant
     const chat = await Chat.findOne({
       _id: chatId,
-      participants: userId
+      participants: userId,
     });
 
     if (!chat) {
@@ -34,7 +36,7 @@ export const getAllMessages = asyncHandler(async (req, res) => {
     // Build query for messages
     let messageQuery = {
       chat: chatId,
-      "deleted.isDeleted": false
+      "deleted.isDeleted": false,
     };
 
     // For pagination - get messages before a certain date
@@ -48,8 +50,8 @@ export const getAllMessages = asyncHandler(async (req, res) => {
         path: "replyTo",
         populate: {
           path: "sender",
-          select: "fullName username avatar "
-        }
+          select: "fullName username avatar ",
+        },
       })
       .sort({ createdAt: -1 })
       .limit(limit * 1)
@@ -59,21 +61,28 @@ export const getAllMessages = asyncHandler(async (req, res) => {
 
     // Mark messages as delivered
     const undeliveredMessages = messages.filter(
-      message =>
+      (message) =>
         message.sender._id.toString() !== userId.toString() &&
-        !message.deliveredTo.some(delivery => delivery.user.toString() === userId.toString())
+        !message.deliveredTo.some(
+          (delivery) => delivery.user.toString() === userId.toString()
+        )
     );
 
     for (const message of undeliveredMessages) {
       await message.markAsDelivered(userId);
 
       // Notify sender about delivery
-      emitSocketEvent(req, message.sender._id.toString(), ChatEventsEnum.MESSAGE_DELIVERED_EVENT, {
-        messageId: message._id,
-        chatId,
-        deliveredTo: userId,
-        deliveredAt: new Date()
-      });
+      emitSocketEvent(
+        req,
+        message.sender._id.toString(),
+        ChatEventsEnum.MESSAGE_DELIVERED_EVENT,
+        {
+          messageId: message._id,
+          chatId,
+          deliveredTo: userId,
+          deliveredAt: new Date(),
+        }
+      );
     }
 
     const response = {
@@ -83,18 +92,17 @@ export const getAllMessages = asyncHandler(async (req, res) => {
         totalPages: Math.ceil(total / limit),
         totalMessages: total,
         hasNext: page * limit < total,
-        hasPrev: page > 1
-      }
+        hasPrev: page > 1,
+      },
     };
 
-    return res.status(200).json(
-      new ApiResponse(200, response, "Messages retrieved successfully")
-    );
+    return res
+      .status(200)
+      .json(new ApiResponse(200, response, "Messages retrieved successfully"));
   } catch (error) {
     return res
       .status(500)
       .json(new ApiResponse(500, null, "Internal Server Error"));
-
   }
 });
 
@@ -105,7 +113,6 @@ export const getAllMessages = asyncHandler(async (req, res) => {
  */
 // export const sendMessage = asyncHandler(async (req, res) => {
 //   try {
-
 
 //     const { chatId } = req.params;
 //     const userId = req.user.id;
@@ -214,91 +221,68 @@ export const getAllMessages = asyncHandler(async (req, res) => {
 //   }
 // });
 
-
 export const sendMessage = asyncHandler(async (req, res) => {
   try {
     const { chatId } = req.params;
     const userId = req.user.id;
     const { content, type = "text", replyTo, isForwarded = false } = req.body;
 
+    // Validate input
     if (!content && (!req.files || req.files.length === 0)) {
       throw new ApiError(400, "Message content or media is required");
     }
 
-    console.log(`📨 Send message request:`, {
-      chatId,
-      userId,
-      type,
-      hasContent: !!content,
-      hasFiles: !!(req.files && req.files.length > 0)
-    });
-
-    // ✅ Check chat exists and user is participant
+    // Find chat and populate participants
     const chat = await Chat.findOne({
       _id: chatId,
       participants: userId,
-    }).populate("participants", "_id fullName deviceToken role");
+    }).populate("participants", "_id fullName avatar deviceToken role");
 
     if (!chat) {
       throw new ApiError(404, "Chat not found or access denied");
     }
 
-    // ✅ CRITICAL FIX: Validate session status before allowing message
+    // Validate active session
     const activeSession = await ChatSession.findOne({
       chatId,
       $or: [
-        { status: 'ACTIVE' },
-        { status: 'ACCEPTED', astrologerId: userId } // Astrologers can send in ACCEPTED sessions
-      ]
+        { status: "ACTIVE" },
+        { status: "ACCEPTED", astrologerId: userId },
+      ],
     });
 
     if (!activeSession) {
       throw new ApiError(400, "No active session found for this chat");
     }
 
-    // Role-specific session validation
-    if (req.user.role === 'user') {
-      // Users can only send when session is ACTIVE
-      if (activeSession.status !== 'ACTIVE') {
-        throw new ApiError(400, "Session is not active. Please start the session to send messages.");
+    // Role-based permission check
+    if (req.user.role === "user") {
+      if (activeSession.status !== "ACTIVE") {
+        throw new ApiError(400, "Session is not active. Please wait for astrologer to start.");
       }
-
-      // Verify user is the session user
       if (activeSession.userId.toString() !== userId.toString()) {
-        throw new ApiError(403, "Not authorized to send messages in this session");
+        throw new ApiError(403, "You are not authorized to send messages in this session");
       }
-    } else if (req.user.role === 'astrologer') {
-      // Astrologers can send when session is ACCEPTED or ACTIVE
-      if (!['ACCEPTED', 'ACTIVE'].includes(activeSession.status)) {
+    } else if (req.user.role === "astrologer") {
+      if (!["ACCEPTED", "ACTIVE"].includes(activeSession.status)) {
         throw new ApiError(400, "Session is not active or accepted");
       }
-
-      // Verify astrologer is the session astrologer
       if (activeSession.astrologerId.toString() !== userId.toString()) {
-        throw new ApiError(403, "Not authorized to send messages in this session");
+        throw new ApiError(403, "You are not the astrologer for this session");
       }
     }
 
-    console.log(`✅ Session validation passed:`, {
-      sessionId: activeSession.sessionId,
-      status: activeSession.status,
-      userRole: req.user.role
-    });
-
-    // ✅ If reply message exists
+    // Validate reply message
     if (replyTo) {
-      const repliedMessage = await Message.findOne({
+      const repliedMsg = await Message.findOne({
         _id: replyTo,
         chat: chatId,
         "deleted.isDeleted": false,
       });
-
-      if (!repliedMessage) {
-        throw new ApiError(404, "Replied message not found");
-      }
+      if (!repliedMsg) throw new ApiError(404, "Message you're replying to not found");
     }
 
-    // ✅ Prepare message data
+    // Prepare message content
     let messageData = {
       chat: chatId,
       sender: userId,
@@ -306,17 +290,25 @@ export const sendMessage = asyncHandler(async (req, res) => {
       isForwarded,
     };
 
-    if (content && type === "text") {
-      messageData.content = { text: content.trim() };
+    let textContent = "";
+
+    if (content) {
+      if (typeof content === "object" && content.text) {
+        textContent = content.text.trim();
+      } else if (typeof content === "string") {
+        textContent = content.trim();
+      }
     }
 
-    // ✅ Handle media files
+    if (textContent) {
+      messageData.content = { text: textContent };
+    }
+
+    // Handle media upload
     if (req.files && req.files.length > 0) {
       const mediaFiles = [];
-
       for (const file of req.files) {
         const uploadResult = await uploadOnCloudinary(file.path, "chat_media");
-
         mediaFiles.push({
           type: getMediaType(file.mimetype),
           url: uploadResult.url,
@@ -325,17 +317,16 @@ export const sendMessage = asyncHandler(async (req, res) => {
           size: file.size,
         });
       }
-
       messageData.content = { media: mediaFiles };
       messageData.type = mediaFiles[0].type;
     }
 
     if (replyTo) messageData.replyTo = replyTo;
 
-    // ✅ Create message
+    // Create the message
     const message = await Message.create(messageData);
 
-    // ✅ Populate sender details
+    // Populate sender and replyTo
     await message.populate([
       { path: "sender", select: "fullName username avatar role" },
       {
@@ -344,100 +335,91 @@ export const sendMessage = asyncHandler(async (req, res) => {
       },
     ]);
 
-    // ✅ Update chat last message
+    // Update chat & session
     chat.lastMessage = message._id;
-    await chat.save();
-
-    // ✅ Update session last activity
     activeSession.lastActivityAt = new Date();
-    await activeSession.save();
+    await Promise.all([chat.save(), activeSession.save()]);
 
-    // ✅ Prepare message data for socket emission
-    const messageForSocket = {
+    // Final message object for client & socket
+    const messageForClient = {
       _id: message._id,
       content: message.content,
       type: message.type,
       sender: {
         _id: message.sender._id,
-        username: message.sender.username,
         fullName: message.sender.fullName,
+        username: message.sender.username,
         avatar: message.sender.avatar,
-        role: message.sender.role
+        role: message.sender.role,
       },
       chatId: chatId,
       replyTo: message.replyTo,
       isForwarded: message.isForwarded,
       createdAt: message.createdAt,
       updatedAt: message.updatedAt,
-      readBy: [userId]
+      readBy: [userId],
     };
 
-    console.log(`📤 Emitting socket event for message:`, {
-      messageId: message._id,
-      chatId,
-      sender: message.sender._id,
-      content: content ? `${content.substring(0, 30)}...` : 'media'
+    // BULLETPROOF REAL-TIME DELIVERY
+    const io = req.app.get("io");
+
+    // 1. Emit to chat room (normal case)
+    io.to(chatId).emit(ChatEventsEnum.NEW_MESSAGE_EVENT, messageForClient);
+
+    // 2. CRITICAL FALLBACK: Emit directly to each participant's personal room
+    chat.participants.forEach((participant) => {
+      const pid = participant._id.toString();
+      if (pid !== userId.toString()) {
+        io.to(pid).emit(ChatEventsEnum.NEW_MESSAGE_EVENT, messageForClient);
+      }
     });
 
-    // ✅ Emit real-time socket event to ALL chat participants
-    emitSocketEvent(req, chatId, ChatEventsEnum.NEW_MESSAGE_EVENT, messageForSocket);
+    console.log(`Message ${_id} delivered via room + personal rooms`);
 
-    console.log(`✅ Message sent and broadcasted successfully`);
-
-    // ✅ Send push notifications to other participants
-    const sender = message.sender;
-    const receiverList = chat.participants.filter(
-      (u) => u._id.toString() !== userId.toString()
+    // Send push notifications to receivers
+    const receivers = chat.participants.filter(
+      (p) => p._id.toString() !== userId.toString()
     );
 
-    // Send notifications asynchronously (don't wait for them)
-    if (receiverList.length > 0) {
-      receiverList.forEach(async (receiver) => {
-        try {
-          await sendNotification({
-            userId: receiver._id,
-            title: sender.fullName || "New Message",
-            message:
-              type === "text"
-                ? content.length > 50 ? content.substring(0, 50) + '...' : content
-                : type === "image"
-                  ? "📸 Sent an image"
-                  : type === "video"
-                    ? "🎥 Sent a video"
-                    : "📎 Sent a file",
-            chatId,
-            messageId: message._id,
-            senderId: sender._id,
-            senderName: sender.fullName,
-            senderAvatar: sender.avatar,
-            type: "chat_message",
-          });
-        } catch (notifError) {
-          console.error("Notification error:", notifError);
-          // Don't throw error, just log it
-        }
-      });
-    }
-
-    return res
-      .status(201)
-      .json(new ApiResponse(201, messageForSocket, "Message sent successfully"));
-
-  } catch (error) {
-    console.error("❌ Error in sendMessage:", {
-      error: error.message,
-      chatId: req.params.chatId,
-      userId: req.user.id
+    receivers.forEach(async (receiver) => {
+      try {
+        await sendNotification({
+          userId: receiver._id,
+          title: message.sender.fullName || "New Message",
+          message:
+            type === "text"
+              ? (textContent || "New message")
+              : type === "image"
+                ? "Sent a photo"
+                : type === "video"
+                  ? "Sent a video"
+                  : type === "audio"
+                    ? "Sent a voice message"
+                    : "Sent a file",
+          chatId,
+          messageId: message._id,
+          senderId: userId,
+          senderName: message.sender.fullName,
+          senderAvatar: message.sender.avatar,
+          type: "chat_message",
+        });
+      } catch (err) {
+        console.error("Push notification failed:", err.message);
+      }
     });
 
-    // Re-throw ApiError instances, create new ones for other errors
-    if (error instanceof ApiError) {
-      throw error;
-    }
+    // Success response
+    return res
+      .status(201)
+      .json(new ApiResponse(201, messageForClient, "Message sent successfully"));
 
+  } catch (error) {
+    console.error("sendMessage error:", error);
+    if (error instanceof ApiError) throw error;
     throw new ApiError(500, "Failed to send message");
   }
 });
+
 /**
  * @desc    Delete a message
  * @route   DELETE /api/v1/messages/:messageId
@@ -445,8 +427,6 @@ export const sendMessage = asyncHandler(async (req, res) => {
  */
 export const deleteMessage = asyncHandler(async (req, res) => {
   try {
-
-
     const { messageId } = req.params;
     const userId = req.user.id;
     const { deleteType = "forMe" } = req.body; // "forMe" or "forEveryone"
@@ -484,7 +464,7 @@ export const deleteMessage = asyncHandler(async (req, res) => {
       isDeleted: true,
       deletedAt: new Date(),
       deletedBy: userId,
-      deleteType
+      deleteType,
     };
 
     // For "forEveryone", replace content with deletion notice
@@ -497,16 +477,21 @@ export const deleteMessage = asyncHandler(async (req, res) => {
     await message.save();
 
     // Emit socket event
-    emitSocketEvent(req, message.chat._id.toString(), ChatEventsEnum.MESSAGE_DELETED_EVENT, {
-      messageId: message._id,
-      chatId: message.chat._id,
-      deletedBy: userId,
-      deleteType
-    });
-
-    return res.status(200).json(
-      new ApiResponse(200, null, "Message deleted successfully")
+    emitSocketEvent(
+      req,
+      message.chat._id.toString(),
+      ChatEventsEnum.MESSAGE_DELETED_EVENT,
+      {
+        messageId: message._id,
+        chatId: message.chat._id,
+        deletedBy: userId,
+        deleteType,
+      }
     );
+
+    return res
+      .status(200)
+      .json(new ApiResponse(200, null, "Message deleted successfully"));
   } catch (error) {
     return res
       .status(500)
@@ -521,7 +506,6 @@ export const deleteMessage = asyncHandler(async (req, res) => {
  */
 export const reactToMessage = asyncHandler(async (req, res) => {
   try {
-
     const { messageId } = req.params;
     const userId = req.user.id;
     const { emoji } = req.body;
@@ -543,14 +527,14 @@ export const reactToMessage = asyncHandler(async (req, res) => {
 
     // Remove existing reaction from same user
     message.reactions = message.reactions.filter(
-      reaction => reaction.user.toString() !== userId.toString()
+      (reaction) => reaction.user.toString() !== userId.toString()
     );
 
     // Add new reaction
     message.reactions.push({
       user: userId,
       emoji,
-      reactedAt: new Date()
+      reactedAt: new Date(),
     });
 
     await message.save();
@@ -559,15 +543,24 @@ export const reactToMessage = asyncHandler(async (req, res) => {
     await message.populate("reactions.user", "fullName username avatar");
 
     // Emit socket event
-    emitSocketEvent(req, message.chat._id.toString(), ChatEventsEnum.MESSAGE_REACTION_EVENT, {
-      messageId: message._id,
-      reaction: message.reactions.find(r => r.user._id.toString() === userId.toString()),
-      chatId: message.chat._id
-    });
-
-    return res.status(200).json(
-      new ApiResponse(200, message.reactions, "Reaction added successfully")
+    emitSocketEvent(
+      req,
+      message.chat._id.toString(),
+      ChatEventsEnum.MESSAGE_REACTION_EVENT,
+      {
+        messageId: message._id,
+        reaction: message.reactions.find(
+          (r) => r.user._id.toString() === userId.toString()
+        ),
+        chatId: message.chat._id,
+      }
     );
+
+    return res
+      .status(200)
+      .json(
+        new ApiResponse(200, message.reactions, "Reaction added successfully")
+      );
   } catch (error) {
     return res
       .status(500)
@@ -582,8 +575,6 @@ const getMediaType = (mimetype) => {
   if (mimetype.startsWith("audio/")) return "audio";
   return "file";
 };
-
-
 
 export async function sendNotification({
   userId,

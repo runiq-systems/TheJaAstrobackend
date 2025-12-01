@@ -17,9 +17,16 @@ import { startChatSession } from "../controllers/chatapp/chatSessionController.j
  * @param {Socket} socket
  */
 const mountJoinChatEvent = (socket) => {
-  socket.on(ChatEventsEnum.JOIN_CHAT_EVENT, (chatId) => {
-    console.log(`✅ User joined chat: ${chatId}`);
-    socket.join(chatId);
+  socket.on(ChatEventsEnum.JOIN_CHAT_EVENT, (data) => {
+    let chatId = typeof data === "string" ? data : data?.chatId;
+
+    if (!chatId) {
+      console.warn("Invalid JOIN_CHAT_EVENT payload:", data);
+      return;
+    }
+
+    console.log(`User ${socket.user._id} joined chat: ${chatId}`);
+    socket.join(String(chatId));
   });
 };
 
@@ -155,6 +162,9 @@ const mountGroupChatEvents = (socket) => {
     socket.to(data.chatId).emit(ChatEventsEnum.GROUP_MESSAGE_RECEIVED_EVENT, data);
   });
 };
+
+
+
 
 /* -------------------------------------------------------------------------- */
 /*                          🚀  SOCKET SERVER CORE                            */
