@@ -154,7 +154,7 @@ const stopBillingTimer = (sessionId) => {
 // ──────────────────────────────────────────────────────────────
 // EXPORT TIMER FUNCTIONS
 // ──────────────────────────────────────────────────────────────
-export { startBillingTimer, stopBillingTimer, billingTimers };
+export { startBillingTimer, stopBillingTimer };
 
 // ──────────────────────────────────────────────────────────────
 // REST OF YOUR CONTROLLERS (unchanged logic, just safer emits)
