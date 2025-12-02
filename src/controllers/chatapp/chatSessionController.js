@@ -772,7 +772,6 @@ export const rejectChatRequest = asyncHandler(async (req, res) => {
 
 
 
-
 export const endChatSession = asyncHandler(async (req, res) => {
     const { sessionId } = req.params;
     const userId = req.user._id;
@@ -781,101 +780,103 @@ export const endChatSession = asyncHandler(async (req, res) => {
     session.startTransaction();
 
     try {
+        // Find active chat session (either user or astrologer)
         const chatSession = await ChatSession.findOne({
             sessionId,
             $or: [{ userId }, { astrologerId: userId }],
-            status: { $in: ["ACTIVE", "PAUSED"] }
+            status: { $in: ["ACTIVE", "PAUSED"] },
         }).session(session);
 
         if (!chatSession) {
             throw new ApiError(404, "Active chat session not found or already ended");
         }
 
-        // Stop per-minute billing timer
-        stopBillingTimer(sessionId);
+        // Stop billing timer (external, doesn't need the mongoose session)
+        try {
+            stopBillingTimer(sessionId);
+        } catch (err) {
+            // Log and continue — timer failure shouldn't break settlement
+            console.warn("Failed to stop billing timer:", err);
+        }
 
-        // Calculate real duration
+        // Calculate durations & costs
         const endedAt = new Date();
         const startedAt = chatSession.startedAt || endedAt;
         const totalSeconds = Math.max(1, Math.floor((endedAt - startedAt) / 1000));
         const billedMinutes = Math.max(1, Math.ceil(totalSeconds / 60));
-        const actualCost = billedMinutes * chatSession.ratePerMinute;
+        const actualCost = billedMinutes * (chatSession.ratePerMinute || 0);
 
         const platformEarnings = Math.round(actualCost * 0.20);
         const astrologerEarnings = actualCost - platformEarnings;
 
-        // Update ChatSession
+        // Update ChatSession fields (this doc is independent of Reservation)
         chatSession.status = "COMPLETED";
         chatSession.endedAt = endedAt;
         chatSession.totalDuration = totalSeconds;
         chatSession.billedDuration = billedMinutes * 60;
         chatSession.totalCost = actualCost;
 
+        // We'll set paymentStatus and earnings based on settlement result
         let settlementResult = {
             refundedAmount: 0,
-            message: "Session ended. Full amount used."
+            message: "No reservation associated",
         };
 
+        // If there's a reservation, let WalletService handle the settlement atomically.
         if (chatSession.reservationId) {
-            // Update reservation with actual usage
-            await Reservation.findByIdAndUpdate(
-                chatSession.reservationId,
-                {
-                    totalDurationSec: totalSeconds,
-                    billedMinutes,
-                    totalCost: actualCost,
-                    platformEarnings,
-                    astrologerEarnings
-                },
-                { session }
-            );
-
-            // Final settlement: deduct actual cost, refund unused
-            // In endChatSession, wrap settlement in retry if needed
-            let settlementResult;
             try {
+                // WalletService handles its own transactions and retries internally,
+                // and updates the Reservation doc itself.
                 settlementResult = await WalletService.processSessionPayment(chatSession.reservationId);
+                chatSession.paymentStatus = "PAID";
+                chatSession.astrologerEarnings = astrologerEarnings;
             } catch (err) {
-                if (err.message.includes("Write conflict")) {
-                    // Final retry from controller
-                    await new Promise(r => setTimeout(r, 500));
-                    settlementResult = await WalletService.processSessionPayment(chatSession.reservationId);
-                } else {
-                    throw err;
-                }
+                // If settlement fails, bubble up as API error to rollback chatSession change
+                // Log full error for debugging
+                console.error("Settlement failed in endChatSession:", err);
+                // Convert to ApiError if needed
+                if (err instanceof ApiError) throw err;
+                throw new ApiError(500, "Payment settlement failed: " + (err.message || err));
             }
-            chatSession.paymentStatus = "PAID";
-            chatSession.astrologerEarnings = astrologerEarnings;
         } else {
             chatSession.paymentStatus = "NO_RESERVATION";
         }
 
+        // Save chatSession within this transaction
         await chatSession.save({ session });
+
         await session.commitTransaction();
 
-        // Safe socket notification (no req needed)
-        emitSocketEvent(chatSession.chatId.toString(), ChatEventsEnum.SESSION_ENDED_EVENT, {
-            sessionId: chatSession.sessionId,
-            status: "COMPLETED",
-            totalCost: actualCost,
-            billedMinutes,
-            durationSeconds: totalSeconds,
-            refundedAmount: settlementResult.refundedAmount || 0,
-            message: settlementResult.message || "Session completed successfully"
-        });
-
-        // Final API response
-        return res.status(200).json(
-            new ApiResponse(200, {
+        // Notify via socket (outside transaction)
+        try {
+            emitSocketEvent(chatSession.chatId.toString(), ChatEventsEnum.SESSION_ENDED_EVENT, {
                 sessionId: chatSession.sessionId,
+                status: "COMPLETED",
                 totalCost: actualCost,
                 billedMinutes,
                 durationSeconds: totalSeconds,
                 refundedAmount: settlementResult.refundedAmount || 0,
-                message: settlementResult.message || "Session ended successfully"
-            }, settlementResult.message || "Chat session completed")
-        );
+                message: settlementResult.message || "Session completed successfully",
+            });
+        } catch (socketErr) {
+            console.warn("Socket emit failed:", socketErr);
+        }
 
+        // API response
+        return res.status(200).json(
+            new ApiResponse(
+                200,
+                {
+                    sessionId: chatSession.sessionId,
+                    totalCost: actualCost,
+                    billedMinutes,
+                    durationSeconds: totalSeconds,
+                    refundedAmount: settlementResult.refundedAmount || 0,
+                    message: settlementResult.message || "Session ended successfully",
+                },
+                settlementResult.message || "Chat session completed"
+            )
+        );
     } catch (error) {
         await session.abortTransaction();
         throw error;
@@ -883,7 +884,6 @@ export const endChatSession = asyncHandler(async (req, res) => {
         session.endSession();
     }
 });
-
 
 
 /**

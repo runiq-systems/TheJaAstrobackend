@@ -10,8 +10,8 @@ import {
 import { ApiError } from "../../utils/ApiError.js";
 export class WalletService {
     /**
-     * Credit amount to user's wallet
-     */
+    * CREDIT - accepts optional mongoose session
+    */
     static async credit({
         userId,
         amount,
@@ -22,21 +22,20 @@ export class WalletService {
         gatewayRef = null,
         relatedTx = [],
         meta = {},
+        session: externalSession = null,
     }) {
-        const session = await mongoose.startSession();
+        const ownSession = !externalSession;
+        const session = externalSession || (await mongoose.startSession());
 
         try {
-            session.startTransaction();
+            if (ownSession) session.startTransaction();
 
-            // Validate amount
-            if (amount <= 0) {
-                throw new ApiError(400, "Credit amount must be positive");
-            }
+            if (amount <= 0) throw new ApiError(400, "Credit amount must be positive");
 
-            // Get or create wallet
+            // Get or create wallet (using session)
             let wallet = await Wallet.findOne({ userId }).session(session);
             if (!wallet) {
-                wallet = await Wallet.create(
+                const created = await Wallet.create(
                     [
                         {
                             userId,
@@ -53,13 +52,11 @@ export class WalletService {
                     ],
                     { session }
                 );
-                wallet = wallet[0];
+                wallet = created[0];
             }
 
-            // Find currency balance
-            let currencyBalance = wallet.balances.find(
-                (b) => b.currency === currency
-            );
+            // Find or create currency balance
+            let currencyBalance = wallet.balances.find((b) => b.currency === currency);
             if (!currencyBalance) {
                 currencyBalance = {
                     currency,
@@ -74,7 +71,6 @@ export class WalletService {
             const balanceBefore = currencyBalance.available;
             const balanceAfter = balanceBefore + amount;
 
-            // Create transaction record
             const transaction = await Transaction.create(
                 [
                     {
@@ -101,12 +97,12 @@ export class WalletService {
                 { session }
             );
 
-            // Update wallet balance
+            // Update wallet balances and save WITH session
             currencyBalance.available = balanceAfter;
             wallet.lastBalanceUpdate = new Date();
             await wallet.save({ session });
 
-            await session.commitTransaction();
+            if (ownSession) await session.commitTransaction();
 
             return {
                 transaction: transaction[0],
@@ -115,15 +111,15 @@ export class WalletService {
                 balanceAfter,
             };
         } catch (error) {
-            await session.abortTransaction();
+            if (ownSession) await session.abortTransaction();
             throw error;
         } finally {
-            session.endSession();
+            if (ownSession) session.endSession();
         }
     }
 
     /**
-     * Debit amount from user's wallet
+     * DEBIT - accepts optional mongoose session
      */
     static async debit({
         userId,
@@ -135,40 +131,27 @@ export class WalletService {
         reservationId = null,
         relatedTx = [],
         meta = {},
+        session: externalSession = null,
     }) {
-        const session = await mongoose.startSession();
+        const ownSession = !externalSession;
+        const session = externalSession || (await mongoose.startSession());
 
         try {
-            session.startTransaction();
+            if (ownSession) session.startTransaction();
 
-            // Validate amount
-            if (amount <= 0) {
-                throw new ApiError(400, "Debit amount must be positive");
-            }
+            if (amount <= 0) throw new ApiError(400, "Debit amount must be positive");
 
-            // Get wallet
             const wallet = await Wallet.findOne({ userId }).session(session);
-            if (!wallet) {
-                throw new ApiError(404, "Wallet not found");
-            }
+            if (!wallet) throw new ApiError(404, "Wallet not found");
 
-            // Find currency balance
-            const currencyBalance = wallet.balances.find(
-                (b) => b.currency === currency
-            );
-            if (!currencyBalance) {
-                throw new ApiError(400, `No balance found for currency: ${currency}`);
-            }
+            const currencyBalance = wallet.balances.find((b) => b.currency === currency);
+            if (!currencyBalance) throw new ApiError(400, `No balance found for currency: ${currency}`);
 
-            // Check sufficient balance
-            if (currencyBalance.available < amount) {
-                throw new ApiError(400, "Insufficient balance");
-            }
+            if (currencyBalance.available < amount) throw new ApiError(400, "Insufficient balance");
 
             const balanceBefore = currencyBalance.available;
             const balanceAfter = balanceBefore - amount;
 
-            // Create transaction record
             const transaction = await Transaction.create(
                 [
                     {
@@ -195,12 +178,11 @@ export class WalletService {
                 { session }
             );
 
-            // Update wallet balance
             currencyBalance.available = balanceAfter;
             wallet.lastBalanceUpdate = new Date();
             await wallet.save({ session });
 
-            await session.commitTransaction();
+            if (ownSession) await session.commitTransaction();
 
             return {
                 transaction: transaction[0],
@@ -209,15 +191,15 @@ export class WalletService {
                 balanceAfter,
             };
         } catch (error) {
-            await session.abortTransaction();
+            if (ownSession) await session.abortTransaction();
             throw error;
         } finally {
-            session.endSession();
+            if (ownSession) session.endSession();
         }
     }
 
     /**
-     * Reserve amount for a session (move from available to locked)
+     * RESERVE AMOUNT - move available -> locked. Accepts optional session
      */
     static async reserveAmount({
         userId,
@@ -226,47 +208,32 @@ export class WalletService {
         reservationId,
         sessionType,
         description = "Session reservation",
+        session: externalSession = null,
     }) {
-        const session = await mongoose.startSession();
+        const ownSession = !externalSession;
+        const session = externalSession || (await mongoose.startSession());
 
         try {
-            session.startTransaction();
+            if (ownSession) session.startTransaction();
 
-            // Validate amount
-            if (amount <= 0) {
-                throw new ApiError(400, "Reservation amount must be positive");
-            }
+            if (amount <= 0) throw new ApiError(400, "Reservation amount must be positive");
 
-            // Get wallet
             const wallet = await Wallet.findOne({ userId }).session(session);
-            if (!wallet) {
-                throw new ApiError(404, "Wallet not found");
-            }
+            if (!wallet) throw new ApiError(404, "Wallet not found");
 
-            // Find currency balance
-            const currencyBalance = wallet.balances.find(
-                (b) => b.currency === currency
-            );
-            if (!currencyBalance) {
-                throw new ApiError(400, `No balance found for currency: ${currency}`);
-            }
+            const currencyBalance = wallet.balances.find((b) => b.currency === currency);
+            if (!currencyBalance) throw new ApiError(400, `No balance found for currency: ${currency}`);
 
-            // Check sufficient available balance
             if (currencyBalance.available < amount) {
-                throw new ApiError(
-                    400,
-                    "Insufficient available balance for reservation"
-                );
+                throw new ApiError(400, "Insufficient available balance for reservation");
             }
 
             const availableBefore = currencyBalance.available;
             const lockedBefore = currencyBalance.locked;
 
-            // Move amount from available to locked
             currencyBalance.available = availableBefore - amount;
             currencyBalance.locked = lockedBefore + amount;
 
-            // Create reservation transaction
             const transaction = await Transaction.create(
                 [
                     {
@@ -295,11 +262,10 @@ export class WalletService {
                 { session }
             );
 
-            // Update wallet
             wallet.lastBalanceUpdate = new Date();
             await wallet.save({ session });
 
-            await session.commitTransaction();
+            if (ownSession) await session.commitTransaction();
 
             return {
                 transaction: transaction[0],
@@ -310,15 +276,15 @@ export class WalletService {
                 lockedAfter: currencyBalance.locked,
             };
         } catch (error) {
-            await session.abortTransaction();
+            if (ownSession) await session.abortTransaction();
             throw error;
         } finally {
-            session.endSession();
+            if (ownSession) session.endSession();
         }
     }
 
     /**
-     * Release reserved amount (move from locked to available)
+     * RELEASE AMOUNT - move locked -> available. Accepts optional session
      */
     static async releaseAmount({
         userId,
@@ -326,39 +292,28 @@ export class WalletService {
         currency = "INR",
         reservationId,
         description = "Session reservation release",
+        session: externalSession = null,
     }) {
-        const session = await mongoose.startSession();
+        const ownSession = !externalSession;
+        const session = externalSession || (await mongoose.startSession());
 
         try {
-            session.startTransaction();
+            if (ownSession) session.startTransaction();
 
-            // Get wallet
             const wallet = await Wallet.findOne({ userId }).session(session);
-            if (!wallet) {
-                throw new ApiError(404, "Wallet not found");
-            }
+            if (!wallet) throw new ApiError(404, "Wallet not found");
 
-            // Find currency balance
-            const currencyBalance = wallet.balances.find(
-                (b) => b.currency === currency
-            );
-            if (!currencyBalance) {
-                throw new ApiError(400, `No balance found for currency: ${currency}`);
-            }
+            const currencyBalance = wallet.balances.find((b) => b.currency === currency);
+            if (!currencyBalance) throw new ApiError(400, `No balance found for currency: ${currency}`);
 
-            // Check sufficient locked balance
-            if (currencyBalance.locked < amount) {
-                throw new ApiError(400, "Insufficient locked balance for release");
-            }
+            if (currencyBalance.locked < amount) throw new ApiError(400, "Insufficient locked balance for release");
 
             const availableBefore = currencyBalance.available;
             const lockedBefore = currencyBalance.locked;
 
-            // Move amount from locked to available
             currencyBalance.locked = lockedBefore - amount;
             currencyBalance.available = availableBefore + amount;
 
-            // Create release transaction
             const transaction = await Transaction.create(
                 [
                     {
@@ -387,11 +342,10 @@ export class WalletService {
                 { session }
             );
 
-            // Update wallet
             wallet.lastBalanceUpdate = new Date();
             await wallet.save({ session });
 
-            await session.commitTransaction();
+            if (ownSession) await session.commitTransaction();
 
             return {
                 success: true,
@@ -403,53 +357,16 @@ export class WalletService {
                 lockedAfter: currencyBalance.locked,
             };
         } catch (error) {
-            await session.abortTransaction();
+            if (ownSession) await session.abortTransaction();
             throw error;
         } finally {
-            session.endSession();
+            if (ownSession) session.endSession();
         }
     }
 
-
-    static async debugReservation(reservationId) {
-        console.log(`🔍 Debugging reservation: ${reservationId}`);
-
-        const reservation = await Reservation.findById(reservationId)
-            .populate("userId", "_id fullName phone")
-            .populate("astrologerId", "_id fullName phone");
-
-        if (!reservation) {
-            console.log("❌ Reservation not found");
-            return null;
-        }
-
-        console.log("📊 Reservation details:", {
-            id: reservation._id,
-            reservationId: reservation.reservationId,
-            status: reservation.status,
-            userId: reservation.userId,
-            astrologerId: reservation.astrologerId,
-            lockedAmount: reservation.lockedAmount,
-            platformEarnings: reservation.platformEarnings,
-            astrologerEarnings: reservation.astrologerEarnings
-        });
-
-        return reservation;
-    }
-
-    // Call this before processSessionPayment to debug
-    // await WalletService.debugReservation(reservationId);
     /**
-  * Process session payment - Fixed version
-  */
-    /**
-   * Process session payment - Fixed for your schema
-   */
-    // WalletService.js → Replace the entire processSessionPayment function
-    // WalletService.js → Replace ONLY this function
-
-    // WalletService.js → REPLACE ENTIRE processSessionPayment
-
+     * Process session payment (settlement) - uses a single session for whole settlement
+     */
     static async processSessionPayment(reservationId) {
         if (!reservationId || !mongoose.Types.ObjectId.isValid(reservationId)) {
             throw new ApiError(400, "Invalid reservation ID");
@@ -460,11 +377,10 @@ export class WalletService {
 
         while (attempts < maxRetries) {
             const session = await mongoose.startSession();
-            let refundedAmount = 0;
-
             try {
                 session.startTransaction();
 
+                // Get reservation with session so we can update it atomically
                 const reservation = await Reservation.findById(reservationId)
                     .populate("userId", "_id fullName")
                     .populate("astrologerId", "_id fullName")
@@ -474,26 +390,28 @@ export class WalletService {
 
                 const durationSeconds = reservation.totalDurationSec || 0;
                 const billedMinutes = Math.max(1, Math.ceil(durationSeconds / 60));
-                const ratePerMinute = reservation.ratePerMinute;
+                const ratePerMinute = reservation.ratePerMinute || 0;
                 const actualCost = billedMinutes * ratePerMinute;
                 const platformEarnings = Math.round(actualCost * 0.20);
                 const astrologerEarnings = actualCost - platformEarnings;
                 const reservedAmount = reservation.lockedAmount || actualCost;
+                const refundedAmount = Math.max(0, reservedAmount - actualCost);
 
-                refundedAmount = Math.max(0, reservedAmount - actualCost);
+                console.log(
+                    `SETTLEMENT ATTEMPT ${attempts + 1}: Reserved ₹${reservedAmount} | Used ₹${actualCost} | Refund ₹${refundedAmount}`
+                );
 
-                console.log(`SETTLEMENT ATTEMPT ${attempts + 1}: Reserved ₹${reservedAmount} | Used ₹${actualCost} | Refund ₹${refundedAmount}`);
-
-                // 1. Release full reserved amount
+                // 1) Release the reserved amount back to user's available (locked -> available)
                 await this.releaseAmount({
                     userId: reservation.userId._id,
                     amount: reservedAmount,
                     currency: "INR",
                     reservationId: reservation._id,
                     description: `Release reserved amount for settlement`,
+                    session,
                 });
 
-                // 2. Debit actual cost
+                // 2) Debit the actual cost
                 if (actualCost > 0) {
                     await this.debit({
                         userId: reservation.userId._id,
@@ -504,11 +422,12 @@ export class WalletService {
                         description: `Chat session: ${billedMinutes} min × ₹${ratePerMinute}/min`,
                         reservationId: reservation._id,
                         meta: { billedMinutes, actualCost, reservedAmount, refundedAmount },
+                        session,
                     });
                 }
 
-                // 3. Credit astrologer
-                if (astrologerEarnings > 0) {
+                // 3) Credit astrologer earnings
+                if (astrologerEarnings > 0 && reservation.astrologerId && reservation.astrologerId._id) {
                     await this.credit({
                         userId: reservation.astrologerId._id,
                         amount: astrologerEarnings,
@@ -517,23 +436,26 @@ export class WalletService {
                         subcategory: "CHAT_SESSION",
                         description: `Earnings from ${billedMinutes} min chat`,
                         meta: { reservationId: reservation._id, billedMinutes, actualCost },
+                        session,
                     });
                 }
 
-                // 4. Finalize reservation
+                // 4) Update reservation status & settlement meta
                 reservation.status = "SETTLED";
                 reservation.totalCost = actualCost;
                 reservation.billedMinutes = billedMinutes;
                 reservation.platformEarnings = platformEarnings;
                 reservation.astrologerEarnings = astrologerEarnings;
                 reservation.settledAt = new Date();
+                reservation.refundedAmount = refundedAmount;
                 await reservation.save({ session });
 
                 await session.commitTransaction();
 
-                const message = refundedAmount > 0
-                    ? `₹${actualCost} deducted. ₹${refundedAmount} refunded to your wallet.`
-                    : "Full amount used.";
+                const message =
+                    refundedAmount > 0
+                        ? `₹${actualCost} deducted. ₹${refundedAmount} refunded to your wallet.`
+                        : "Full amount used.";
 
                 return {
                     success: true,
@@ -543,20 +465,28 @@ export class WalletService {
                     reservedAmount,
                     message,
                 };
-
             } catch (error) {
                 await session.abortTransaction();
 
-                // THIS IS THE KEY: RETRY ON WRITE CONFLICT
-                if (error.message.includes("Write conflict") && attempts < maxRetries - 1) {
+                // Heuristic for write conflicts (message or mongo code)
+                const isWriteConflict =
+                    error &&
+                    (typeof error.message === "string" &&
+                        (error.message.includes("Write conflict") ||
+                            error.message.includes("WriteConflict") ||
+                            error.message.includes("WriteConflictException"))) ||
+                    (error && error.code && (error.code === 112 || error.code === 11000)); // optional
+
+                if (isWriteConflict && attempts < maxRetries - 1) {
                     attempts++;
                     console.log(`Write conflict detected. Retrying... (${attempts}/${maxRetries})`);
-                    await new Promise(resolve => setTimeout(resolve, 200 * attempts)); // exponential backoff
+                    await new Promise((r) => setTimeout(r, 200 * attempts)); // backoff
                     continue;
                 }
 
-                console.error("Settlement failed after retries:", error.message);
-                throw error instanceof ApiError ? error : new ApiError(500, "Payment settlement failed");
+                console.error("Settlement failed after retries:", error && (error.message || error));
+                if (error instanceof ApiError) throw error;
+                throw new ApiError(500, "Payment settlement failed: " + (error && error.message ? error.message : error));
             } finally {
                 session.endSession();
             }
