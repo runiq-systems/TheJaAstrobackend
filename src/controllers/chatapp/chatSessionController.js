@@ -849,15 +849,21 @@ export const endChatSession = asyncHandler(async (req, res) => {
 
         // Notify via socket (outside transaction)
         try {
-            emitSocketEvent(chatSession.chatId.toString(), ChatEventsEnum.SESSION_ENDED_EVENT, {
-                sessionId: chatSession.sessionId,
-                status: "COMPLETED",
-                totalCost: actualCost,
-                billedMinutes,
-                durationSeconds: totalSeconds,
-                refundedAmount: settlementResult.refundedAmount || 0,
-                message: settlementResult.message || "Session completed successfully",
-            });
+            emitSocketEvent(
+                req,
+                chatSession.chatId.toString(),
+                ChatEventsEnum.SESSION_ENDED_EVENT,
+                {
+                    sessionId: chatSession.sessionId,
+                    status: "COMPLETED",
+                    totalCost: actualCost,
+                    billedMinutes,
+                    durationSeconds: totalSeconds,
+                    refundedAmount: settlementResult.refundedAmount || 0,
+                    message: settlementResult.message || "Session completed successfully",
+                }
+            );
+
         } catch (socketErr) {
             console.warn("Socket emit failed:", socketErr);
         }
