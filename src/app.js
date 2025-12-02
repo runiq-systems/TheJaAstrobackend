@@ -44,6 +44,9 @@ const io = new Server(httpserver, {
         credentials: true
     },
 });
+
+global.io = io;
+
 app.set("io", io);
 
 
