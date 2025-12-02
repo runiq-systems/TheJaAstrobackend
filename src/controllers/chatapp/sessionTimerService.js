@@ -1,6 +1,6 @@
 import { ChatEventsEnum } from "../../constants.js";
 import { ChatSession } from "../../models/chatapp/chatSession.js";
-import { emitSocketEvent } from "../../socket/index.js";
+import { emitSocketEvent, emitSocketEventGlobal } from "../../socket/index.js";
 class SessionTimerService {
     constructor() {
         this.activeTimers = new Map();
@@ -36,7 +36,15 @@ class SessionTimerService {
                 const currentCost = session.calculateCurrentCost();
 
                 // Notify clients about billing update
-                emitSocketEvent({ app: { get: () => global.io } }, chatId, ChatEventsEnum.BILLING_UPDATE_EVENT, {
+                // emitSocketEvent({ app: { get: () => global.io } }, chatId, ChatEventsEnum.BILLING_UPDATE_EVENT, {
+                //     sessionId,
+                //     billedDuration: session.billedDuration + 60,
+                //     currentCost,
+                //     ratePerMinute
+                // });
+
+
+                emitSocketEventGlobal(chatId, ChatEventsEnum.BILLING_UPDATE_EVENT, {
                     sessionId,
                     billedDuration: session.billedDuration + 60,
                     currentCost,

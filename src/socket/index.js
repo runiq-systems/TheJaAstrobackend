@@ -240,3 +240,21 @@ export const emitSocketEvent = (req, roomId, event, payload) => {
     console.error("❌ Failed to emit socket event:", error);
   }
 };
+
+
+
+export const emitSocketEventGlobal = (roomId, event, payload) => {
+  try {
+    const io = global.io;
+
+    if (!io) {
+      console.error("❌ global.io not initialized");
+      return;
+    }
+
+    io.in(roomId).emit(event, payload);
+    console.log(`📤 [GLOBAL EMIT] ${event} -> Room: ${roomId}`);
+  } catch (error) {
+    console.error("❌ Global emit error:", error);
+  }
+};
