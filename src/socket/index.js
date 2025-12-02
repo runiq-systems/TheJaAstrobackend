@@ -1,3 +1,19 @@
+
+
+
+// Add this to your socket connection handler
+
+
+
+
+
+
+/* -------------------------------------------------------------------------- */
+/*                          🚀  SOCKET SERVER CORE                            */
+/* -------------------------------------------------------------------------- */
+
+
+
 // socketServer.js
 import cookie from "cookie";
 import jwt from "jsonwebtoken";
@@ -25,6 +41,27 @@ const mountJoinChatEvent = (socket) => {
 
     socket.join(String(chatId));
     console.log(`User ${socket.user._id} joined chat room: ${chatId}`);
+  });
+};
+
+// In your socket initialization file
+const mountChatSessionEvents = (socket) => {
+  socket.on(ChatEventsEnum.JOIN_CHAT_EVENT, async ({ chatId, sessionId }) => {
+    try {
+      socket.join(chatId);
+
+      console.log(`User joined chat: ${chatId}, session: ${sessionId}`);
+
+      // REST API will start session — NOT SOCKET
+      socket.to(chatId).emit(ChatEventsEnum.USER_JOINED_EVENT, {
+        chatId,
+        sessionId,
+        userId: socket.user._id
+      });
+
+    } catch (error) {
+      console.error("Error joining chat:", error);
+    }
   });
 };
 
@@ -59,9 +96,68 @@ const mountMessageReadEvent = (socket) => {
   });
 };
 
+/**
+ * @description Handle all group-related chat events (create, update, delete, etc.)
+ * @param {Socket} socket
+ */
 const mountGroupChatEvents = (socket) => {
-  // Keep all your existing group events here (unchanged)
-  // ... your code
+  // Join Request
+  socket.on(ChatEventsEnum.JOIN_REQUEST_EVENT, (data) => {
+    data.chat.admins.forEach((adminId) => {
+      socket.to(adminId.toString()).emit(ChatEventsEnum.JOIN_REQUEST_EVENT, data);
+    });
+  });
+
+  // Join Request Approved
+  socket.on(ChatEventsEnum.JOIN_REQUEST_APPROVED_EVENT, (data) => {
+    socket.to(data.userId.toString()).emit(ChatEventsEnum.JOIN_REQUEST_APPROVED_EVENT, data);
+    data.chat.admins.forEach((adminId) => {
+      socket.to(adminId.toString()).emit(ChatEventsEnum.JOIN_REQUEST_APPROVED_EVENT, data);
+    });
+  });
+
+  // Join Request Rejected
+  socket.on(ChatEventsEnum.JOIN_REQUEST_REJECTED_EVENT, (data) => {
+    socket.to(data.userId.toString()).emit(ChatEventsEnum.JOIN_REQUEST_REJECTED_EVENT, data);
+  });
+
+  // New Group Chat Created
+  socket.on(ChatEventsEnum.NEW_GROUP_CHAT_EVENT, (groupChat) => {
+    groupChat.participants.forEach((participantId) => {
+      if (participantId.toString() !== socket.user._id.toString()) {
+        socket.to(participantId.toString()).emit(ChatEventsEnum.NEW_GROUP_CHAT_EVENT, groupChat);
+      }
+    });
+  });
+
+  // Group Chat Updated
+  socket.on(ChatEventsEnum.UPDATE_GROUP_EVENT, (groupChat) => {
+    groupChat.participants.forEach((participantId) => {
+      socket.to(participantId.toString()).emit(ChatEventsEnum.UPDATE_GROUP_EVENT, groupChat);
+    });
+  });
+
+  // User Removed
+  socket.on(ChatEventsEnum.REMOVED_FROM_GROUP_EVENT, (data) => {
+    socket.to(data.userId.toString()).emit(ChatEventsEnum.REMOVED_FROM_GROUP_EVENT, data);
+  });
+
+  // User Left Group
+  socket.on(ChatEventsEnum.LEFT_GROUP_EVENT, (data) => {
+    socket.to(data.userId.toString()).emit(ChatEventsEnum.LEFT_GROUP_EVENT, data);
+  });
+
+  // Group Deleted
+  socket.on(ChatEventsEnum.GROUP_DELETED_EVENT, (data) => {
+    data.participants.forEach((participantId) => {
+      socket.to(participantId.toString()).emit(ChatEventsEnum.GROUP_DELETED_EVENT, data);
+    });
+  });
+
+  // Group Message Received
+  socket.on(ChatEventsEnum.GROUP_MESSAGE_RECEIVED_EVENT, (data) => {
+    socket.to(data.chatId).emit(ChatEventsEnum.GROUP_MESSAGE_RECEIVED_EVENT, data);
+  });
 };
 
 /* -------------------------------------------------------------------------- */
@@ -122,6 +218,7 @@ export const initializeSocketIO = (server) => {
       mountTypingEvents(socket);
       mountMessageReadEvent(socket);
       mountGroupChatEvents(socket);
+      mountChatSessionEvents(socket);
 
       // Disconnect handler
       socket.on("disconnect", (reason) => {
