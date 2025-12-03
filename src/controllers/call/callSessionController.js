@@ -517,6 +517,39 @@ export const getAstrologerCallSessions = async (req, res) => {
 };
 
 
+export const getCallSessionDetails = asyncHandler(async (req, res) => {
+    const { sessionId } = req.params;           // Mongo _id (or you can change to custom callId if you add one)
+    const userId = req.user.id;
+
+    const call = await Call.findOne({
+        _id: sessionId,
+        $or: [
+            { userId },
+            { astrologerId: userId }
+        ]
+    })
+    .populate([
+        { path: "userId",      select: "fullName phone avatar gender" },
+        { path: "astrologerId", select: "fullName phone avatar callRate" }
+    ])
+    .lean(); // optional: faster + cleaner
+
+    if (!call) {
+        throw new ApiError(404, "Call session not found or access denied");
+    }
+
+    // Optional: hide sensitive fields from the other party if needed
+    // e.g. hide recordingUrl from user if policy says only astrologer can access
+    // if (req.user.role === "user" && call.recordingUrl) {
+    //     delete call.recordingUrl;
+    // }
+
+    return res.status(200).json(
+        new ApiResponse(200, call, "Call session details retrieved successfully")
+    );
+});
+
+
 const startBillingTimer = async (
   sessionId,
   chatId,
