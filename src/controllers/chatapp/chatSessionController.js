@@ -7,7 +7,7 @@ import { ApiError } from "../../utils/ApiError.js";
 import { ApiResponse } from "../../utils/ApiResponse.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { WalletService } from "../Wallet/walletIntegrationController.js";
-import { emitSocketEvent } from "../../socket/index.js";
+import { emitSocketEvent,emitSocketEventGlobal } from "../../socket/index.js";
 import { ChatEventsEnum } from "../../constants.js";
 import mongoose from "mongoose";
 import admin from "../../utils/firabse.js";
@@ -1525,8 +1525,7 @@ const sendSessionReminder = async (sessionId, chatId, minutesRemaining) => {
 
         if (!session) return;
 
-        emitSocketEvent(
-            req,
+        emitSocketEventGlobal(
             chatId,
             ChatEventsEnum.RESERVATION_ENDING_SOON,
             {
