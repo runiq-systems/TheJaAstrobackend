@@ -30,7 +30,8 @@ const chatRequestSchema = new mongoose.Schema(
                 "REJECTED",     // Astrologer rejected
                 "EXPIRED",      // Request timed out
                 "CANCELLED",    // User cancelled
-                "MISSED"        // Astrologer didn't respond in time
+                "MISSED",        // Astrologer didn't respond in time
+                "AUTO_ENDED"
             ],
             default: "PENDING",
             index: true

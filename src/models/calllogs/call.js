@@ -152,4 +152,4 @@ callSchema.statics = {
   },
 };
 
-export default mongoose.model("Call", callSchema);
+export const Call = mongoose.model("Call", callSchema);

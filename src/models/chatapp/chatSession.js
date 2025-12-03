@@ -54,7 +54,9 @@ const chatSessionSchema = new mongoose.Schema(
                 "REJECTED",       // Astrologer rejected
                 "EXPIRED",        // Request expired
                 "CANCELLED",      // User cancelled
-                "FAILED"          // Payment failed
+                "FAILED",          // Payment failed
+                "AUTO_ENDED"
+                
             ],
             default: "REQUESTED",
             index: true
