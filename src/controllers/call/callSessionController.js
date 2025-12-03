@@ -8,7 +8,13 @@ import { Call } from "../../models/calllogs/call.js";
 import { WalletService } from "../Wallet/walletIntegrationController.js";
 import { calculateCommission, Reservation } from "../../models/Wallet/AstroWallet.js";
 import { emitSocketEvent,emitSocketEventGlobal } from "../../socket/index.js";
+import { sendNotification } from "../chatapp/messageController.js";
+import { ChatSession } from "../../models/chatapp/chatSession.js";
 
+const billingTimers = new Map();
+const autoEndTimers = new Map();
+const reminderTimers = new Map();
+const reminderSent = new Map();
 
 const notifyAstrologerAboutRequest = async (req, astrologerId, requestData) => {
   // Socket notification
@@ -562,5 +568,107 @@ const stopBillingTimer = (sessionId) => {
         clearInterval(timer.interval);
         billingTimers.delete(sessionId);
         console.log(`Stopped billing for session: ${sessionId}`);
+    }
+};
+
+const setupSessionReminders = (sessionId, chatId, estimatedMinutes) => {
+    // Clear any existing reminders
+    clearReminders(sessionId);
+
+    // Set reminders at 5, 2, and 1 minute marks
+    const reminderTimes = [5, 2, 1];
+
+    reminderTimes.forEach(minutes => {
+        if (estimatedMinutes > minutes) {
+            const reminderTimeMs = (estimatedMinutes - minutes) * 60 * 1000;
+            const timer = setTimeout(() => {
+                sendSessionReminder(sessionId, chatId, minutes);
+            }, reminderTimeMs);
+
+            reminderTimers.set(`${sessionId}_${minutes}min`, timer);
+        }
+    });
+};
+
+const clearReminders = (sessionId) => {
+    reminderTimers.forEach((timer, key) => {
+        if (key.startsWith(sessionId)) {
+            clearTimeout(timer);
+            reminderTimers.delete(key);
+        }
+    });
+
+    // Clear reminder sent flags
+    ['5min', '2min', '1min'].forEach(min => {
+        reminderSent.delete(`${sessionId}_${min}`);
+    });
+};
+
+const handleSessionAutoEnd = async (sessionId, chatId, reservationId) => {
+    try {
+        const session = await ChatSession.findOne({ sessionId });
+        if (!session || session.status !== "ACTIVE") return;
+
+        // Stop billing timer
+        stopBillingTimer(sessionId);
+
+        // Update session status
+        session.status = "AUTO_ENDED";
+        session.endedAt = new Date();
+        await session.save();
+
+        // Process settlement if reservation exists
+        if (reservationId) {
+            try {
+                await WalletService.processSessionPayment(reservationId);
+                session.paymentStatus = "PAID";
+                await session.save();
+            } catch (paymentError) {
+                console.error(`Payment settlement failed: ${paymentError.message}`);
+                session.paymentStatus = "SETTLEMENT_FAILED";
+                await session.save();
+            }
+        }
+        // Notify both parties
+        emitSocketEventGlobal(
+            chatId,
+            ChatEventsEnum.INSUFFICIENT_BALANCE_WARNING,
+            {
+                sessionId,
+                status: "AUTO_ENDED",
+                message: "Session auto-ended due to time limit"
+            }
+        );
+
+        console.log(`Auto-ended session: ${sessionId}`);
+
+    } catch (error) {
+        console.error(`Failed to auto-end session ${sessionId}:`, error);
+    }
+};
+
+// Send session reminder
+const sendSessionReminder = async (sessionId, chatId, minutesRemaining) => {
+    try {
+        const session = await ChatSession.findOne({ sessionId })
+            .populate("userId", "fullName")
+            .populate("astrologerId", "fullName");
+
+        if (!session) return;
+
+        emitSocketEventGlobal(
+            chatId,
+            ChatEventsEnum.RESERVATION_ENDING_SOON,
+            {
+                sessionId,
+                minutesRemaining,
+                message: `Your chat session will end in ${minutesRemaining} minute${minutesRemaining > 1 ? 's' : ''}.`
+            }
+        );
+
+        console.log(`Sent ${minutesRemaining} min reminder for session: ${sessionId}`);
+
+    } catch (error) {
+        console.error(`Failed to send reminder:`, error);
     }
 };
