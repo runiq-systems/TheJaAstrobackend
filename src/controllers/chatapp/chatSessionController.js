@@ -356,21 +356,21 @@ export const startChatSession = asyncHandler(async (req, res) => {
         }
 
         // ✅ CRITICAL: Notify both user and astrologer via socket
-        emitSocketEvent(
-            req,
-            chatSession.chatId.toString(),
-            ChatEventsEnum.SESSION_STARTED_EVENT,
-            {
-                sessionId: chatSession.sessionId,
-                status: "ACTIVE",
-                startedAt: new Date(),
-                estimatedCost,
-                ratePerMinute: chatSession.ratePerMinute,
-                reservedAmount: estimatedCost,
-                reservedMinutes: estimatedMinutes,
-                reservationId: reservation[0].reservationId
-            }
-        );
+        // emitSocketEvent(
+        //     req,
+        //     chatSession.chatId.toString(),
+        //     ChatEventsEnum.SESSION_STARTED_EVENT,
+        //     {
+        //         sessionId: chatSession.sessionId,
+        //         status: "ACTIVE",
+        //         startedAt: new Date(),
+        //         estimatedCost,
+        //         ratePerMinute: chatSession.ratePerMinute,
+        //         reservedAmount: estimatedCost,
+        //         reservedMinutes: estimatedMinutes,
+        //         reservationId: reservation[0].reservationId
+        //     }
+        // );
 
         // Also notify via user's personal room for reliability
         emitSocketEvent(
@@ -382,7 +382,7 @@ export const startChatSession = asyncHandler(async (req, res) => {
                 status: "ACTIVE",
                 startedAt: new Date()
             }
-        );
+        );  
 
         return res.status(200).json(
             new ApiResponse(200, {
