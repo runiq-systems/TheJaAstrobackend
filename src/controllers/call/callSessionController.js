@@ -413,6 +413,110 @@ export const startCallSession = asyncHandler(async (req, res) => {
   }
 });
 
+export const getAstrologerCallSessions = async (req, res) => {
+    try {
+        const astrologerId = req.user.id;
+
+        const {
+            page = 1,
+            limit = 10,
+            status,           // e.g., CONNECTED, COMPLETED, MISSED, etc.
+            dateFrom,
+            dateTo,
+            sortBy = "startTime",
+            sortOrder = "desc",
+            search            // search by callId, user name, phone
+        } = req.query;
+
+        // Build filter
+        const filter = { astrologerId };
+
+        // Status filter
+        if (status && status !== "ALL") {
+            if (status === "ACTIVE_CALLS") {
+                filter.status = { $in: ["INITIATED", "RINGING", "CONNECTED"] };
+            } else if (status === "COMPLETED_CALLS") {
+                filter.status = "COMPLETED";
+            } else {
+                filter.status = status;
+            }
+        }
+
+        // Date range (based on call start time)
+        if (dateFrom || dateTo) {
+            filter.startTime = {};
+            if (dateFrom) filter.startTime.$gte = new Date(dateFrom);
+            if (dateTo)   filter.startTime.$lte = new Date(dateTo);
+        }
+
+        // Search: call _id, user fullName, phone
+        if (search?.trim()) {
+            filter.$or = [
+                { _id: { $regex: search.trim(), $options: "i" } },
+                { "user.fullName": { $regex: search.trim(), $options: "i" } },
+                { "user.phone": { $regex: search.trim(), $options: "i" } }
+            ];
+        }
+
+        const skip = (parseInt(page) - 1) * parseInt(limit);
+        const sortOptions = { [sortBy]: sortOrder === "desc" ? -1 : 1 };
+
+        // Main query with population
+        const calls = await Call.find(filter)
+            .populate("userId", "fullName avatar phone gender email")
+            .sort(sortOptions)
+            .skip(skip)
+            .limit(parseInt(limit))
+            .lean(); // faster + easier to manipulate
+
+        const total = await Call.countDocuments(filter);
+
+        // Format response exactly like chat sessions
+        const formattedCalls = calls.map(call => ({
+            _id: call._id,
+            callId: call._id,
+            callType: call.callType, // AUDIO or VIDEO
+            direction: call.direction,
+            status: call.status,
+            user: call.userId,
+            ratePerMinute: call.chargesPerMinute,
+            totalAmount: call.totalAmount || 0,
+            duration: call.duration || 0, // seconds
+            connectTime: call.connectTime,
+            startTime: call.startTime,
+            endTime: call.endTime,
+            userRating: call.rating,
+            userFeedback: call.feedback,
+            recordingUrl: call.recordingUrl,
+            paymentStatus: call.paymentStatus || "PENDING",
+            createdAt: call.createdAt,
+            updatedAt: call.updatedAt
+        }));
+
+        return res.status(200).json({
+            success: true,
+            data: formattedCalls,
+            pagination: {
+                currentPage: parseInt(page),
+                totalPages: Math.ceil(total / limit),
+                totalCalls: total,
+                hasNext: page < Math.ceil(total / limit),
+                hasPrev: page > 1,
+                limit: parseInt(limit)
+            }
+        });
+
+    } catch (error) {
+        console.error("Get astrologer call sessions error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Failed to fetch call sessions",
+            error: error.message
+        });
+    }
+};
+
+
 const startBillingTimer = async (
   sessionId,
   chatId,
