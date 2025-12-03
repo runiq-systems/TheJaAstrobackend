@@ -7,7 +7,7 @@ import { ApiError } from "../../utils/ApiError.js";
 import { ApiResponse } from "../../utils/ApiResponse.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { WalletService } from "../Wallet/walletIntegrationController.js";
-import { emitSocketEvent,emitSocketEventGlobal } from "../../socket/index.js";
+import { emitSocketEvent } from "../../socket/index.js";
 import { ChatEventsEnum } from "../../constants.js";
 import mongoose from "mongoose";
 import admin from "../../utils/firabse.js";
@@ -373,16 +373,16 @@ export const startChatSession = asyncHandler(async (req, res) => {
         );
 
         // Also notify via user's personal room for reliability
-        // emitSocketEvent(
-        //     req,
-        //     chatSession.userId.toString(),
-        //     ChatEventsEnum.SESSION_STARTED_EVENT,
-        //     {
-        //         sessionId: chatSession.sessionId,
-        //         status: "ACTIVE",
-        //         startedAt: new Date()
-        //     }
-        // );
+        emitSocketEvent(
+            req,
+            chatSession.userId.toString(),
+            ChatEventsEnum.SESSION_STARTED_EVENT,
+            {
+                sessionId: chatSession.sessionId,
+                status: "ACTIVE",
+                startedAt: new Date()
+            }
+        );
 
         return res.status(200).json(
             new ApiResponse(200, {
@@ -1320,7 +1320,6 @@ function getDateFilter(period) {
 
 
 
-
 // Enhanced billing timer with better error handling
 // Enhanced billing timer with proper session duration calculation
 // Enhanced billing timer with proper session duration calculation
@@ -1526,7 +1525,8 @@ const sendSessionReminder = async (sessionId, chatId, minutesRemaining) => {
 
         if (!session) return;
 
-        emitSocketEventGlobal(
+        emitSocketEvent(
+            req,
             chatId,
             ChatEventsEnum.RESERVATION_ENDING_SOON,
             {
@@ -1595,6 +1595,94 @@ const stopBillingTimer = (sessionId) => {
     }
 };
 
+
+// // Enhanced billing timer with proper session duration calculation
+// const startBillingTimer = async (sessionId, chatId, ratePerMinute, reservationId) => {
+//     if (billingTimers.has(sessionId)) {
+//         console.log(`Billing already active for session: ${sessionId}`);
+//         return;
+//     }
+
+//     console.log(`Starting billing timer for session: ${sessionId}`);
+
+//     const interval = setInterval(async () => {
+//         try {
+//             const session = await ChatSession.findOne({ sessionId, status: "ACTIVE" });
+
+//             if (!session) {
+//                 stopBillingTimer(sessionId);
+//                 return;
+//             }
+
+//             // Update billed duration (only if session is active)
+//             const updateResult = await ChatSession.findByIdAndUpdate(
+//                 session._id,
+//                 {
+//                     $inc: { billedDuration: 60 }, // Add 60 seconds
+//                     lastActivityAt: new Date()
+//                 },
+//                 { new: true }
+//             );
+
+//             if (!updateResult) {
+//                 stopBillingTimer(sessionId);
+//                 return;
+//             }
+
+//             // Calculate current cost based on actual billed duration
+//             const billedMinutes = Math.ceil(updateResult.billedDuration / 60);
+//             const currentCost = ratePerMinute * billedMinutes;
+
+//             // Update reservation with actual cost
+//             await Reservation.findByIdAndUpdate(
+//                 reservationId,
+//                 {
+//                     $set: {
+//                         totalCost: currentCost,
+//                         billedMinutes: billedMinutes,
+//                         totalDurationSec: updateResult.billedDuration
+//                     }
+//                 }
+//             );
+
+//             // Notify clients about billing update
+//             emitSocketEvent(
+//                 chatId.toString(),
+//                 ChatEventsEnum.BILLING_UPDATE_EVENT,
+//                 {
+//                     sessionId,
+//                     billedDuration: updateResult.billedDuration,
+//                     billedMinutes: billedMinutes,
+//                     currentCost,
+//                     ratePerMinute,
+//                     nextBillingIn: 60
+//                 }
+//             );
+
+//             console.log(`Billed session ${sessionId}: ${updateResult.billedDuration}s, ${billedMinutes}m, ₹${currentCost}`);
+
+//         } catch (error) {
+//             console.error(`Billing error for session ${sessionId}:`, error);
+//             stopBillingTimer(sessionId);
+//         }
+//     }, 60000); // Every minute
+
+//     billingTimers.set(sessionId, {
+//         interval,
+//         startedAt: new Date(),
+//         reservationId
+//     });
+// };
+
+// const stopBillingTimer = (sessionId) => {
+//     const timer = billingTimers.get(sessionId);
+//     if (timer) {
+//         clearInterval(timer.interval);
+//         billingTimers.delete(sessionId);
+//         console.log(`Stopped billing for session: ${sessionId}`);
+//     }
+// };
+
 // Utility function to notify astrologer
 const notifyAstrologerAboutRequest = async (req, astrologerId, requestData) => {
     // Socket notification
@@ -1616,7 +1704,7 @@ const notifyAstrologerAboutRequest = async (req, astrologerId, requestData) => {
 };
 
 // Export billing timers for external management
-// export { billingTimers };
+export { billingTimers };
 
 
 export const sendNotification = async ({
@@ -1680,3 +1768,7 @@ export const sendNotification = async ({
         console.error("Error sending Firebase notification:", error);
     }
 };
+
+
+
+
