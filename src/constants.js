@@ -113,6 +113,46 @@ export const ChatEventsEnum = Object.freeze({
 
   NEW_GROUP_CHAT_EVENT: "newGroupChat",
   UPDATE_GROUP_EVENT: "updateGroup",
+
+
+  INCOMING_CALL_REQUEST: "incomingCallRequest",           // User clicked "Call" → notify astrologer
+  CALL_REQUEST_EXPIRED: "callRequestExpired",              // 3-minute timeout
+
+  // Astrologer Response
+  CALL_CANCELLED: "callCancelled",                               // User cancels before astrologer responds
+
+  // Call Ringing Phase
+
+  // Call Connected & Active
+  CALL_CONNECTED: "callConnected",                         // Both joined → actual call starts
+  CALL_RESERVED: "callReserved",                          // Wallet reservation successful
+  CALL_STARTED: "callStarted",                             // Same as CONNECTED, for clarity
+
+  // Real-time Call Control
+  CALL_NETWORK_QUALITY: "callNetworkQuality",             // poor/good/excellent
+
+  // Billing & Session Management
+  CALL_BILLING_UPDATE: "callBillingUpdate",                // Per-minute deduction
+  CALL_RESERVATION_ENDING_SOON: "callReservationEndingSoon", // < 2 mins left warning
+  CALL_LOW_BALANCE_WARNING: "callLowBalanceWarning",      // Balance too low to continue
+  CALL_EXTENDED_RESERVATION: "callExtendedReservation",   // Auto top-up or extended
+
+  // Call End Scenarios
+  CALL_ENDED_BY_USER: "callEndedByUser",
+  CALL_ENDED_BY_ASTROLOGER: "callEndedByAstrologer",
+  CALL_ENDED_BY_SYSTEM: "callEndedBySystem",               // Timeout, crash, network
+  CALL_DROPPED: "callDropped",                             // Due to network
+  CALL_FAILED: "callFailed",                               // Technical failure
+  CALL_MISSED: "callMissed",                               // Astrologer didn't pick up
+
+  // Post-call
+  CALL_RATING_REQUEST: "callRatingRequest",                // Ask user to rate
+  CALL_RATED: "callRated",                                 // User submitted rating + feedback
+  CALL_RECORDING_READY: "callRecordingReady",              // If recording enabled
+
+  // System & Debug
+  CALL_ERROR: "callError",
+  CALL_LOG: "callLog",
 });
 
 // ✅ Export as array (optional, useful for validation)
