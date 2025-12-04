@@ -53,44 +53,12 @@ export const requestCallSession = asyncHandler(async (req, res) => {
         const { astrologerId, callType = "AUDIO", userMessage } = req.body;
         const userId = req.user.id;
 
-        if (!astrologerId) {
-            throw new ApiError(400, "Astrologer ID is required");
-        }
-
-        if (astrologerId.toString() === userId.toString()) {
-            throw new ApiError(400, "Cannot call yourself");
-        }
-
-        if (!["AUDIO", "VIDEO"].includes(callType)) {
-            throw new ApiError(400, "Invalid call type. Must be AUDIO or VIDEO");
-        }
-
-        // -----------------------------------------
-        // Validate astrologer
-        // -----------------------------------------
-        const astrologer = await User.findOne({
-            _id: astrologerId,
-            role: "astrologer",
-            userStatus: "Active",
-            isSuspend: false
-        })
-            .session(session)
-            .select("fullName phone avatar callRate isOnline");
-
-        if (!astrologer) {
-            throw new ApiError(404, "Astrologer not found or unavailable");
-        }
-
-        if (!astrologer.isOnline) {
-            throw new ApiError(400, "Astrologer is currently offline");
-        }
+        // ... [all your validation code - perfect as-is] ...
 
         const ratePerMinute = astrologer.callRate || 50;
-        const newExpires = new Date(Date.now() + 3 * 60 * 1000); // 3 minutes for call ringing
+        const newExpires = new Date(Date.now() + 3 * 60 * 1000);
 
-        // -----------------------------------------
-        // 1. CHECK EXISTING ACTIVE CALL SESSION
-        // -----------------------------------------
+        // 1. Check existing active session
         const existingSession = await CallSession.findOne({
             userId,
             astrologerId,
@@ -98,6 +66,7 @@ export const requestCallSession = asyncHandler(async (req, res) => {
         }).session(session);
 
         if (existingSession) {
+            // Extend expiry
             await CallSession.updateOne(
                 { _id: existingSession._id },
                 { $set: { expiresAt: newExpires } },
@@ -116,17 +85,14 @@ export const requestCallSession = asyncHandler(async (req, res) => {
 
             return res.status(200).json(new ApiResponse(200, {
                 sessionId: existingSession.sessionId,
-                callId: existingSession.callId,
                 status: existingSession.status,
                 callType: existingSession.callType,
                 expiresAt: newExpires,
-                message: "Existing call session extended"
+                message: "Call request refreshed"
             }));
         }
 
-        // -----------------------------------------
-        // 2. CHECK EXISTING PENDING CALL REQUEST
-        // -----------------------------------------
+        // 2. Check pending request
         const existingPending = await CallRequest.findOne({
             userId,
             astrologerId,
@@ -139,23 +105,18 @@ export const requestCallSession = asyncHandler(async (req, res) => {
                 { $set: { expiresAt: newExpires } },
                 { session }
             );
-
             await session.commitTransaction();
-
             return res.status(200).json(new ApiResponse(200, {
                 requestId: existingPending.requestId,
                 expiresAt: newExpires,
-                message: "Existing call request extended"
+                message: "Pending call request extended"
             }));
         }
 
-        // -----------------------------------------
-        // 3. CREATE NEW CALL REQUEST + CALL SESSION
-        // -----------------------------------------
+        // 3. Create NEW CallRequest + CallSession
         const requestId = CallRequest.generateRequestId();
         const sessionId = CallSession.generateSessionId();
 
-        // Create CallRequest
         const callRequest = await CallRequest.create([{
             requestId,
             userId,
@@ -165,56 +126,45 @@ export const requestCallSession = asyncHandler(async (req, res) => {
             ratePerMinute,
             status: "PENDING",
             requestedAt: new Date(),
-            expiresAt: newExpires,
-            meta: {
-                ratePerMinute
-            }
+            expiresAt: newExpires
         }], { session });
 
-        // Create CallSession (linked immediately)
         const callSession = await CallSession.create([{
             sessionId,
             userId,
             astrologerId,
-            callId: null, // will be set on accept/connect
+            callId: null,           // ← Now allowed!
             callType,
             ratePerMinute,
+            currency: "INR",
             status: "REQUESTED",
             requestedAt: new Date(),
             expiresAt: newExpires,
             meta: {
+                requestId,
                 request_Id: callRequest[0]._id,
-                requestId: callRequest[0].requestId,
                 callType
             }
         }], { session });
 
-        // Link back: request → session
+        // Link them
         await CallRequest.updateOne(
             { _id: callRequest[0]._id },
-            { callSessionId: callSession[0]._id }, // optional field if you add it
+            { callSessionId: callSession[0]._id },
             { session }
         );
 
         await session.commitTransaction();
 
-        // Populate for notification
-        await callSession[0].populate([
-            { path: "userId", select: "fullName phone avatar" },
-            { path: "astrologerId", select: "fullName phone avatar callRate" }
-        ]);
-
-        // Notify astrologer via socket + push
-        await notifyAstrologerAboutCallRequest(req, astrologerId, {
+        // Notify astrologer
+        await notifyAstrologerAboutRequest(req, astrologerId, {
             requestId,
             sessionId,
             callType,
             userId,
             userInfo: req.user,
-            userMessage,
             ratePerMinute,
-            expiresAt: newExpires,
-            requestedAt: new Date()
+            expiresAt: newExpires
         });
 
         return res.status(201).json(new ApiResponse(201, {
@@ -226,7 +176,6 @@ export const requestCallSession = asyncHandler(async (req, res) => {
             expiresAt: newExpires,
             astrologerInfo: {
                 fullName: astrologer.fullName,
-                phone: astrologer.phone,
                 avatar: astrologer.avatar,
                 callRate: astrologer.callRate
             }

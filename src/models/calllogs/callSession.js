@@ -24,8 +24,9 @@ const callSessionSchema = new mongoose.Schema(
     callId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Call",
-      required: true,
-      index: true
+      required: false,
+      index: true,
+      sparse: true
     },
 
     // Call Type
