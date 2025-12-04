@@ -856,17 +856,17 @@ export const getAstrologerCallSessions = async (req, res) => {
     const sortOptions = { [sortBy]: sortOrder === "desc" ? -1 : 1 };
 
     // Main query with population
-    const calls = await Call.find(filter)
+    const callSession = await CallSession.find(filter)
       .populate("userId", "fullName avatar phone gender email")
       .sort(sortOptions)
       .skip(skip)
       .limit(parseInt(limit))
       .lean(); // faster + easier to manipulate
 
-    const total = await Call.countDocuments(filter);
+    const total = await CallSession.countDocuments(filter);
 
     // Format response exactly like chat sessions
-    const formattedCalls = calls.map((call) => ({
+    const formattedCalls = callSession.map((call) => ({
       _id: call._id,
       callId: call._id,
       callType: call.callType, // AUDIO or VIDEO
