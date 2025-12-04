@@ -50,10 +50,40 @@ export const requestCallSession = asyncHandler(async (req, res) => {
     try {
         session.startTransaction();
 
-        const { astrologerId, callType = "AUDIO", userMessage } = req.body;
+const { astrologerId, callType = "AUDIO", userMessage } = req.body;
         const userId = req.user.id;
 
-        // ... [all your validation code - perfect as-is] ...
+        if (!astrologerId) {
+            throw new ApiError(400, "Astrologer ID is required");
+        }
+
+        if (astrologerId.toString() === userId.toString()) {
+            throw new ApiError(400, "Cannot call yourself");
+        }
+
+        if (!["AUDIO", "VIDEO"].includes(callType)) {
+            throw new ApiError(400, "Invalid call type. Must be AUDIO or VIDEO");
+        }
+
+        // -----------------------------------------
+        // Validate astrologer
+        // -----------------------------------------
+        const astrologer = await User.findOne({
+            _id: astrologerId,
+            role: "astrologer",
+            userStatus: "Active",
+            isSuspend: false
+        })
+            .session(session)
+            .select("fullName phone avatar callRate isOnline");
+
+        if (!astrologer) {
+            throw new ApiError(404, "Astrologer not found or unavailable");
+        }
+
+        if (!astrologer.isOnline) {
+            throw new ApiError(400, "Astrologer is currently offline");
+        }
 
         const ratePerMinute = astrologer.callRate || 50;
         const newExpires = new Date(Date.now() + 3 * 60 * 1000);
