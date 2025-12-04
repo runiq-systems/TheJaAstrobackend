@@ -15,7 +15,7 @@ import { sendNotification } from "../chatapp/messageController.js";
 import { ChatSession } from "../../models/chatapp/chatSession.js";
 import { CallRequest } from "../../models/calllogs/callRequest.js";
 import { CallSession } from "../../models/calllogs/callSession.js";
-
+import { Astrologer } from "../../models/astrologer.js";
 const billingTimers = new Map();
 const autoEndTimers = new Map();
 const reminderTimers = new Map();
@@ -70,17 +70,17 @@ export const requestCallSession = asyncHandler(async (req, res) => {
     const userId = req.user.id;
 
     // === Validations ===
-        if (!astrologerId) {
-            throw new ApiError(400, "Astrologer ID is required");
-        }
+    if (!astrologerId) {
+      throw new ApiError(400, "Astrologer ID is required");
+    }
 
-        if (astrologerId.toString() === userId.toString()) {
-            throw new ApiError(400, "Cannot call yourself");
-        }
+    if (astrologerId.toString() === userId.toString()) {
+      throw new ApiError(400, "Cannot call yourself");
+    }
 
-        if (!["AUDIO", "VIDEO"].includes(callType)) {
-            throw new ApiError(400, "Invalid call type. Must be AUDIO or VIDEO");
-        }
+    if (!["AUDIO", "VIDEO"].includes(callType)) {
+      throw new ApiError(400, "Invalid call type. Must be AUDIO or VIDEO");
+    }
     // === Find Astrologer ===
     const astrologer = await User.findOne({
       _id: astrologerId,
@@ -91,10 +91,15 @@ export const requestCallSession = asyncHandler(async (req, res) => {
       .session(session)
       .select("fullName avatar callRate isOnline");
 
+    const astro = await Astrologer.findOne({
+      userId: astrologerId
+    })
+    if (!astro) throw new ApiError(404, "Astrologer Profile not completed")
+
     if (!astrologer) throw new ApiError(404, "Astrologer not found or unavailable");
     if (!astrologer.isOnline) throw new ApiError(400, "Astrologer is currently offline");
 
-    const ratePerMinute = astrologer.callRate || 50;
+    const ratePerMinute = astrologer.callRate || astro.ratepermin || 50;
     const newExpires = new Date(Date.now() + 3 * 60 * 1000);
 
     // === Reuse existing session? ===
@@ -211,7 +216,7 @@ export const requestCallSession = asyncHandler(async (req, res) => {
       astrologerInfo: {
         fullName: astrologer.fullName,
         avatar: astrologer.avatar,
-        callRate: astrologer.callRate
+        callRate: astrologer.callRate || astro.ratepermin || 50
       }
     }, "Call request sent successfully"));
 
@@ -1181,9 +1186,8 @@ const sendSessionReminder = async (sessionId, chatId, minutesRemaining) => {
     emitSocketEventGlobal(chatId, ChatEventsEnum.RESERVATION_ENDING_SOON, {
       sessionId,
       minutesRemaining,
-      message: `Your chat session will end in ${minutesRemaining} minute${
-        minutesRemaining > 1 ? "s" : ""
-      }.`,
+      message: `Your chat session will end in ${minutesRemaining} minute${minutesRemaining > 1 ? "s" : ""
+        }.`,
     });
 
     console.log(

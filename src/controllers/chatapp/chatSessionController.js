@@ -7,10 +7,12 @@ import { ApiError } from "../../utils/ApiError.js";
 import { ApiResponse } from "../../utils/ApiResponse.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { WalletService } from "../Wallet/walletIntegrationController.js";
-import { emitSocketEvent,emitSocketEventGlobal } from "../../socket/index.js";
+import { emitSocketEvent, emitSocketEventGlobal } from "../../socket/index.js";
 import { ChatEventsEnum } from "../../constants.js";
 import mongoose from "mongoose";
 import admin from "../../utils/firabse.js";
+import { Astrologer } from "../../models/astrologer.js";
+
 import { Reservation, calculateCommission, generateTxId } from "../../models/Wallet/AstroWallet.js";
 // Global billing timers map
 const billingTimers = new Map();
@@ -35,6 +37,9 @@ export const requestChatSession = asyncHandler(async (req, res) => {
             throw new ApiError(400, "Cannot start chat with yourself");
         }
 
+        const astro = await Astrologer.findOne({
+            userId: astrologerId
+        })
         // -----------------------------------------
         // 🌟 Validate astrologer
         // -----------------------------------------
@@ -51,6 +56,9 @@ export const requestChatSession = asyncHandler(async (req, res) => {
             throw new ApiError(404, "Astrologer not found or unavailable");
         }
 
+        if (!astro) {
+            throw new ApiError(404, "Astrologer profile not completed");
+        }
         if (!astrologer.isOnline) {
             throw new ApiError(400, "Astrologer is currently offline");
         }
@@ -130,7 +138,9 @@ export const requestChatSession = asyncHandler(async (req, res) => {
 
         const requestId = ChatRequest.generateRequestId();
         const sessionId = ChatSession.generateSessionId();
-        const ratePerMinute = astrologer.chatRate || 10;
+        const ratePerMinute = astrologer.chatRate || astro.ratepermin || 10;
+
+        // const ratePerMinute = astrologer.chatRate || 10;
 
         const request = await ChatRequest.create(
             [
@@ -207,7 +217,7 @@ export const requestChatSession = asyncHandler(async (req, res) => {
                 astrologerInfo: {
                     fullName: astrologer.fullName,
                     phone: astrologer.phone,
-                    chatRate: astrologer.chatRate
+                    chatRate: astrologer.chatRate || astro.ratepermin || 10,
                 }
             })
         );
@@ -220,7 +230,6 @@ export const requestChatSession = asyncHandler(async (req, res) => {
     }
 });
 
-// controllers/chatapp/chatController.js - Key Updates
 
 /**
  * @desc    Enhanced session start with better validation
@@ -251,6 +260,10 @@ export const startChatSession = asyncHandler(async (req, res) => {
             throw new ApiError(403, "Only the user can start the chat session");
         }
 
+        const astro = await Astrologer.findOne({
+
+        })
+        
         // Estimate initial cost
         const estimatedMinutes = 10;
         const estimatedCost = chatSession.ratePerMinute * estimatedMinutes;

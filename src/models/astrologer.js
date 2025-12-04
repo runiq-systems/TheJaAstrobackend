@@ -29,7 +29,7 @@ const astrologerSchema = new mongoose.Schema(
       required: true,
       unique: true,
     },
-    
+
     photo: {
       type: String,
       default: "",
@@ -53,11 +53,15 @@ const astrologerSchema = new mongoose.Schema(
       type: String,
       maxlength: 2000,
     },
-    languages: [
-      {
-        type: String,
-      },
-    ],
+    ratepermin: {
+      type: Number,
+      default: 5
+    },
+    languages: {
+      type: [String],
+      default: ["Hindi"],
+    },
+
     qualification: {
       type: String,
     },
