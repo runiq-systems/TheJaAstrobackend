@@ -21,30 +21,44 @@ const autoEndTimers = new Map();
 const reminderTimers = new Map();
 const reminderSent = new Map();
 
-const notifyAstrologerAboutRequest = async (req, astrologerId, requestData) => {
-  // Socket notification
+// utils/notification.utils.js or wherever you keep it
+
+export const notifyAstrologerAboutCallRequest = async (req, astrologerId, payload) => {
+  // 1. Socket notification – correct event for CALL
   emitSocketEvent(
     req,
     astrologerId.toString(),
-    ChatEventsEnum.CHAT_REQUEST_EVENT,
-    requestData
+    ChatEventsEnum.CALL_INITIATED_EVENT, // this is the right one
+    {
+      eventType: "incomingCall",
+      requestId: payload.requestId,
+      sessionId: payload.sessionId,
+      callType: payload.callType,
+      callerId: payload.callerId,
+      callerName: payload.callerName,
+      callerImage: payload.callerImage || "",
+      ratePerMinute: payload.ratePerMinute,
+      expiresAt: payload.expiresAt,
+      timestamp: new Date(),
+      message: payload.message || "Wants to connect via call",
+    }
   );
 
-  // Push notification
+  // 2. Push notification
   await sendNotification({
     userId: astrologerId,
-    title: "New Chat Request",
-    message: `${requestData.userInfo.fullName} wants to chat with you`,
-    type: "chat_request",
+    title: `Incoming ${payload.callType} Call`,
+    message: `${payload.callerName} is calling you (₹${payload.ratePerMinute}/min)`,
+    type: "incoming_call",
     data: {
-      requestId: requestData.requestId,
-      sessionId: requestData.sessionId,
-      userId: requestData.userId,
-      ratePerMinute: requestData.ratePerMinute,
+      requestId: payload.requestId,
+      sessionId: payload.sessionId,
+      callType: payload.callType,
+      callerId: payload.callerId,
+      ratePerMinute: payload.ratePerMinute,
     },
   });
 };
-
 export const requestCallSession = asyncHandler(async (req, res) => {
     const session = await mongoose.startSession();
     try {
