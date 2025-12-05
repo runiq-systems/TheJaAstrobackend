@@ -16,6 +16,7 @@ import { ChatSession } from "../../models/chatapp/chatSession.js";
 import { CallRequest } from "../../models/calllogs/callRequest.js";
 import { CallSession } from "../../models/calllogs/callSession.js";
 import { Astrologer } from "../../models/astrologer.js";
+import logger from "../../utils/logger.js";
 const billingTimers = new Map();
 const autoEndTimers = new Map();
 const reminderTimers = new Map();
@@ -447,21 +448,24 @@ export const acceptCallSession = asyncHandler(async (req, res) => {
     if (req.user.role !== "astrologer") {
       throw new ApiError(403, "Only astrologers can accept calls");
     }
-
+ logger.info("requestId",requestId)
+ logger.info("astrologerId",astrologerId)
     // Find call request
-    const callRequest = await CallRequest.findOne({
+    const call_Request = await CallRequest.findOne({
       requestId,
       astrologerId,
       status: "PENDING"
     }).session(session);
 
-    if (!callRequest) {
+    logger.info("call_Request 459 line ",call_Request)
+
+    if (!call_Request) {
       throw new ApiError(404, "Call request not found");
     }
 
-    if (callRequest.isExpired()) {
+    if (call_Request.isExpired()) {
       await CallRequest.findByIdAndUpdate(
-        callRequest._id,
+        call_Request._id,
         { status: "EXPIRED" },
         { session }
       );
@@ -470,7 +474,7 @@ export const acceptCallSession = asyncHandler(async (req, res) => {
 
     // Find linked session
     const callSession = await CallSession.findOne({
-      sessionId: callRequest.sessionId
+      sessionId: call_Request.sessionId
     }).session(session);
 
     if (!callSession) {
@@ -481,7 +485,7 @@ export const acceptCallSession = asyncHandler(async (req, res) => {
 
     // Update request
     await CallRequest.findByIdAndUpdate(
-      callRequest._id,
+      call_Request._id,
       {
         status: "ACCEPTED",
         respondedAt: now
@@ -502,12 +506,12 @@ export const acceptCallSession = asyncHandler(async (req, res) => {
 
     // Create Call document for history
     const call = await Call.create([{
-      userId: callRequest.userId,
+      userId: call_Request.userId,
       astrologerId,
-      callType: callRequest.callType,
+      callType: call_Request.callType,
       direction: "USER_TO_ASTROLOGER",
       status: "RINGING",
-      chargesPerMinute: callRequest.ratePerMinute,
+      chargesPerMinute: call_Request.ratePerMinute,
       startTime: now
     }], { session });
 
@@ -529,27 +533,27 @@ export const acceptCallSession = asyncHandler(async (req, res) => {
       requestId,
       sessionId: callSession.sessionId,
       callId: call[0]._id,
-      callType: callRequest.callType,
+      callType: call_Request.callType,
       astrologerInfo: {
         id: astrologerId,
         name: req.user.fullName,
         avatar: req.user.avatar
       },
-      ratePerMinute: callRequest.ratePerMinute,
+      ratePerMinute: call_Request.ratePerMinute,
       acceptedAt: now
     };
 
     // Notify user
     emitSocketEvent(
       req,
-      callRequest.userId.toString(),
+      call_Request.userId.toString(),
       ChatEventsEnum.CALL_ACCEPTED_EVENT,
       payload
     );
 
     // Send push notification
     await sendNotification({
-      userId: callRequest.userId,
+      userId: call_Request.userId,
       title: "Call Accepted!",
       message: `${req.user.fullName} accepted your call`,
       type: "call_accepted",
