@@ -1137,6 +1137,35 @@ const setupSessionReminders = (sessionId, chatId, estimatedMinutes) => {
   });
 };
 
+const startRingingTimer = (sessionId, callId) => {
+  const timer = setTimeout(async () => {
+    try {
+      const callSession = await CallSession.findOne({ sessionId, status: "RINGING" });
+      if (callSession) {
+        await Promise.all([
+          CallSession.findByIdAndUpdate(callSession._id, {
+            status: "MISSED",
+            endedAt: new Date()
+          }),
+          Call.findByIdAndUpdate(callId, {
+            status: "MISSED",
+            endTime: new Date()
+          }),
+          CallRequest.findOneAndUpdate(
+            { sessionId },
+            { status: "MISSED" }
+          )
+        ]);
+      }
+    } catch (error) {
+      console.error("Error in ringing timer:", error);
+    }
+  }, 45 * 1000); // 45 seconds for user to answer
+
+  activeCallTimers.set(`ringing_${sessionId}`, timer);
+};
+
+
 const clearReminders = (sessionId) => {
   reminderTimers.forEach((timer, key) => {
     if (key.startsWith(sessionId)) {
@@ -1210,5 +1239,54 @@ const sendSessionReminder = async (sessionId, chatId, minutesRemaining) => {
     );
   } catch (error) {
     console.error(`Failed to send reminder:`, error);
+  }
+};
+
+
+const setCallRequestTimer = (requestId, sessionId, astrologerId, userId) => {
+  const timer = setTimeout(async () => {
+    try {
+      // Mark request as expired
+      const callRequest = await CallRequest.findOne({ requestId, status: "PENDING" });
+      if (callRequest) {
+        await Promise.all([
+          CallRequest.findByIdAndUpdate(callRequest._id, { status: "EXPIRED" }),
+          CallSession.findOneAndUpdate(
+            { sessionId },
+            { status: "EXPIRED", endedAt: new Date() }
+          )
+        ]);
+
+        // Notify both parties
+        const io = req.app.get('socketio');
+        if (io) {
+          io.to(userId.toString()).emit(ChatEventsEnum.CALL_EXPIRED_EVENT, {
+            requestId,
+            sessionId,
+            message: "Call request expired"
+          });
+          
+          io.to(astrologerId.toString()).emit(ChatEventsEnum.CALL_EXPIRED_EVENT, {
+            requestId,
+            sessionId,
+            message: "Call request expired"
+          });
+        }
+      }
+    } catch (error) {
+      console.error("Error in call request expiry:", error);
+    }
+  }, 3 * 60 * 1000); // 3 minutes
+
+  // Store timer reference
+  activeCallTimers.set(`request_${requestId}`, timer);
+};
+
+const clearCallRequestTimer = (requestId) => {
+  const timerKey = `request_${requestId}`;
+  const timer = activeCallTimers.get(timerKey);
+  if (timer) {
+    clearTimeout(timer);
+    activeCallTimers.delete(timerKey);
   }
 };
