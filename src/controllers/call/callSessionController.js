@@ -20,6 +20,7 @@ const billingTimers = new Map();
 const autoEndTimers = new Map();
 const reminderTimers = new Map();
 const reminderSent = new Map();
+const activeCallTimers = new Map();
 
 // utils/notification.utils.js or wherever you keep it
 
