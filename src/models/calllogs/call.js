@@ -3,6 +3,7 @@ import mongoose, { Schema } from "mongoose";
 
 const CALL_TYPES = ["AUDIO", "VIDEO"];
 const CALL_STATUSES = [
+  "REQUESTED",
   "INITIATED",
   "RINGING",
   "CONNECTED",
