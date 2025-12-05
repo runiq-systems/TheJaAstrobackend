@@ -61,6 +61,7 @@ export const notifyAstrologerAboutCallRequest = async (req, astrologerId, payloa
     },
   });
 };
+
 export const requestCallSession = asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
   let hasCommitted = false;
@@ -69,9 +70,16 @@ export const requestCallSession = asyncHandler(async (req, res) => {
     session.startTransaction();
 
     const { astrologerId, callType = "AUDIO", userMessage } = req.body;
-    const userId = req.user.id;
+    const userId = req.user._id; // Use _id instead of id for consistency
+    const userName = req.user.fullName || "User";
+    const userAvatar = req.user.avatar || "";
 
-    // Validations
+    console.log("=== REQUEST CALL SESSION ===");
+    console.log("User ID:", userId);
+    console.log("Astrologer ID from body:", astrologerId);
+    console.log("Call type:", callType);
+
+    // ========== VALIDATIONS ==========
     if (!astrologerId) {
       throw new ApiError(400, "Astrologer ID is required");
     }
@@ -80,135 +88,312 @@ export const requestCallSession = asyncHandler(async (req, res) => {
       throw new ApiError(400, "Cannot call yourself");
     }
 
-    if (!["AUDIO", "VIDEO"].includes(callType)) {
-      throw new ApiError(400, "Invalid call type");
+    if (!["AUDIO", "VIDEO"].includes(callType.toUpperCase())) {
+      throw new ApiError(400, "Invalid call type. Must be AUDIO or VIDEO");
     }
 
-    // Check astrologer availability
+    // Convert astrologerId to ObjectId if string
+    const astrologerObjectId = mongoose.Types.ObjectId.isValid(astrologerId)
+      ? new mongoose.Types.ObjectId(astrologerId)
+      : astrologerId;
+
+    // ========== CHECK ASTROLOGER AVAILABILITY ==========
     const astrologer = await User.findOne({
-      _id: astrologerId,
+      _id: astrologerObjectId,
       role: "astrologer",
       userStatus: "Active",
-      isSuspend: false,
-      // isOnline: true
+      isSuspend: false
     })
       .session(session)
-      .select("fullName avatar callRate");
+      .select("fullName avatar callRate isOnline");
 
+    console.log("Found astrologer:", {
+      exists: !!astrologer,
+      name: astrologer?.fullName,
+      isOnline: astrologer?.isOnline,
+      callRate: astrologer?.callRate
+    });
+
+    if (!astrologer) {
+      throw new ApiError(404, "Astrologer not found or inactive");
+    }
+
+    // Check astrologer profile
     const astroProfile = await Astrologer.findOne({
-      userId: astrologerId
+      userId: astrologerObjectId
     }).session(session);
 
-    if (!astrologer) throw new ApiError(404, "Astrologer not found");
-    // if (!astrologer.isOnline) throw new ApiError(400, "Astrologer is offline");
-    if (!astroProfile) throw new ApiError(404, "Astrologer profile not completed");
+    console.log("Astrologer profile:", {
+      exists: !!astroProfile,
+      ratePerMin: astroProfile?.ratepermin
+    });
+
+    if (!astroProfile) {
+      throw new ApiError(404, "Astrologer profile not completed");
+    }
+
+    // Check if astrologer is online (optional - uncomment if needed)
+    // if (!astrologer.isOnline) {
+    //   throw new ApiError(400, "Astrologer is currently offline");
+    // }
 
     const ratePerMinute = astrologer.callRate || astroProfile.ratepermin || 50;
-    const expiresAt = new Date(Date.now() + 3 * 60 * 1000); // 3 minutes
+    console.log("Rate per minute:", ratePerMinute);
 
-    // Check for existing active sessions
+    const expiresAt = new Date(Date.now() + 3 * 60 * 1000); // 3 minutes
+    console.log("Expires at:", expiresAt);
+
+    // ========== CHECK FOR EXISTING ACTIVE SESSIONS ==========
     const existingSession = await CallSession.findOne({
       $or: [
-        { userId, astrologerId, status: { $in: ["REQUESTED", "RINGING", "CONNECTED", "ACTIVE"] } },
+        { userId, astrologerId: astrologerObjectId, status: { $in: ["REQUESTED", "RINGING", "CONNECTED", "ACTIVE"] } },
         { astrologerId: userId, status: { $in: ["REQUESTED", "RINGING", "CONNECTED", "ACTIVE"] } }
       ]
     }).session(session);
 
+    console.log("Existing session check:", {
+      exists: !!existingSession,
+      sessionId: existingSession?.sessionId,
+      status: existingSession?.status
+    });
+
     if (existingSession) {
-      throw new ApiError(400, "You already have an active call with this astrologer");
+      // If there's an existing session, return it instead of creating new
+      await session.abortTransaction();
+      return res.status(200).json(new ApiResponse(200, {
+        requestId: existingSession.requestId || existingSession._id,
+        sessionId: existingSession.sessionId,
+        callType: existingSession.callType,
+        ratePerMinute: existingSession.ratePerMinute,
+        expiresAt: existingSession.expiresAt || expiresAt,
+        status: existingSession.status,
+        message: "You already have an active call session with this astrologer"
+      }));
     }
 
-    // Check if astrologer is on another call
+    // ========== CHECK IF ASTROLOGER IS BUSY ==========
     const astrologerBusy = await CallSession.findOne({
-      astrologerId,
+      astrologerId: astrologerObjectId,
       status: { $in: ["CONNECTED", "ACTIVE", "RINGING"] }
     }).session(session);
 
+    console.log("Astrologer busy check:", {
+      isBusy: !!astrologerBusy,
+      busySessionId: astrologerBusy?.sessionId,
+      busyStatus: astrologerBusy?.status
+    });
+
     if (astrologerBusy) {
-      throw new ApiError(400, "Astrologer is currently on another call");
+      throw new ApiError(400, "Astrologer is currently on another call. Please try again later.");
     }
 
-    // Generate IDs
+    // ========== GENERATE IDs ==========
     const requestId = CallRequest.generateRequestId();
     const sessionId = CallSession.generateSessionId();
 
-    // Create Call Request
-    const callRequest = await CallRequest.create([{
+    console.log("Generated IDs:", {
       requestId,
-      userId,
-      astrologerId,
-      sessionId,
-      callType,
-      userMessage: userMessage?.trim() || null,
-      ratePerMinute,
-      status: "PENDING",
-      expiresAt,
-      meta: {
-        callerName: req.user.fullName,
-        callerImage: req.user.avatar
-      }
-    }], { session });
+      sessionId
+    });
 
-    // Create Call Session
+    // ========== CREATE CALL SESSION FIRST ==========
     const callSession = await CallSession.create([{
       sessionId,
       requestId,
       userId,
-      astrologerId,
-      callType,
+      astrologerId: astrologerObjectId,
+      callType: callType.toUpperCase(),
       ratePerMinute,
       status: "REQUESTED",
+      requestedAt: new Date(),
       expiresAt,
       meta: {
-        requestId: callRequest[0].requestId
+        requestId,
+        callerName: userName,
+        callerImage: userAvatar,
+        userMessage: userMessage?.trim() || ""
       }
     }], { session });
 
-    // Link request to session
-    await CallRequest.findByIdAndUpdate(
-      callRequest[0]._id,
-      { sessionId: callSession[0].sessionId },
+    console.log("Created Call Session:", {
+      sessionId: callSession[0].sessionId,
+      _id: callSession[0]._id
+    });
+
+    // ========== CREATE CALL REQUEST ==========
+    const callRequest = await CallRequest.create([{
+      requestId,
+      sessionId: callSession[0].sessionId, // Link to session
+      userId,
+      astrologerId: astrologerObjectId,
+      callType: callType.toUpperCase(),
+      userMessage: userMessage?.trim() || null,
+      ratePerMinute,
+      status: "PENDING",
+      requestedAt: new Date(),
+      expiresAt,
+      meta: {
+        callerName: userName,
+        callerImage: userAvatar,
+        sessionId: callSession[0].sessionId
+      }
+    }], { session });
+
+    console.log("Created Call Request:", {
+      requestId: callRequest[0].requestId,
+      sessionId: callRequest[0].sessionId,
+      _id: callRequest[0]._id
+    });
+
+    // ========== UPDATE SESSION WITH REQUEST ID ==========
+    await CallSession.findByIdAndUpdate(
+      callSession[0]._id,
+      { requestId: callRequest[0].requestId },
       { session }
     );
+
+    // ========== CREATE INITIAL CALL DOCUMENT FOR HISTORY ==========
+    try {
+      const callDoc = await Call.create([{
+        userId,
+        astrologerId: astrologerObjectId,
+        callType: callType.toUpperCase(),
+        direction: "USER_TO_ASTROLOGER",
+        status: "REQUESTED",
+        chargesPerMinute: ratePerMinute,
+        startTime: new Date(),
+        meta: {
+          requestId: callRequest[0].requestId,
+          sessionId: callSession[0].sessionId,
+          initialRequest: true
+        }
+      }], { session });
+
+      // Link call document to session and request
+      await Promise.all([
+        CallSession.findByIdAndUpdate(
+          callSession[0]._id,
+          { callId: callDoc[0]._id },
+          { session }
+        ),
+        CallRequest.findByIdAndUpdate(
+          callRequest[0]._id,
+          { callId: callDoc[0]._id },
+          { session }
+        )
+      ]);
+
+      console.log("Created Call Document:", callDoc[0]._id);
+    } catch (callError) {
+      console.warn("Could not create Call document:", callError.message);
+      // Continue without call document if there's an issue
+    }
 
     hasCommitted = true;
     await session.commitTransaction();
 
-    // Notify astrologer via socket
-    await notifyAstrologerAboutCallRequest(req, astrologerId, {
-      requestId,
-      sessionId,
-      callType,
-      callerId: userId,
-      callerName: req.user.fullName,
-      callerImage: req.user.avatar || "",
-      ratePerMinute,
-      expiresAt,
-      message: userMessage || "Wants to connect via call"
-    });
+    console.log("Transaction committed successfully");
 
-    // Set expiry timer
-    setCallRequestTimer(requestId, sessionId, astrologerId, userId);
+    // ========== NOTIFY ASTROLOGER VIA SOCKET ==========
+    try {
+      await notifyAstrologerAboutCallRequest(req, astrologerObjectId, {
+        requestId,
+        sessionId,
+        callType: callType.toUpperCase(),
+        callerId: userId,
+        callerName: userName,
+        callerImage: userAvatar,
+        ratePerMinute,
+        expiresAt,
+        message: userMessage?.trim() || `${userName} wants to connect via ${callType.toLowerCase()} call`
+      });
+      console.log("Astrologer notified via socket");
+    } catch (socketError) {
+      console.error("Failed to send socket notification:", socketError.message);
+      // Don't fail the request if socket fails
+    }
 
-    return res.status(201).json(new ApiResponse(201, {
-      requestId,
-      sessionId,
-      callType,
-      ratePerMinute,
-      expiresAt,
-      astrologerInfo: {
-        fullName: astrologer.fullName,
-        avatar: astrologer.avatar
-      }
-    }, "Call request sent successfully"));
+    // ========== SEND PUSH NOTIFICATION ==========
+    try {
+      await sendNotification({
+        userId: astrologerObjectId,
+        title: `Incoming ${callType} Call 📞`,
+        body: `${userName} wants to talk with you (₹${ratePerMinute}/min)`,
+        type: "incoming_call",
+        data: {
+          requestId,
+          sessionId,
+          callType: callType.toUpperCase(),
+          callerId: userId,
+          callerName: userName,
+          ratePerMinute,
+          expiresAt
+        }
+      });
+      console.log("Push notification sent to astrologer");
+    } catch (notifError) {
+      console.error("Failed to send push notification:", notifError.message);
+      // Don't fail the request if notification fails
+    }
+
+    // ========== SET EXPIRY TIMER ==========
+    setCallRequestTimer(requestId, sessionId, astrologerObjectId, userId);
+
+    // ========== RETURN SUCCESS RESPONSE ==========
+    return res.status(201).json(
+      new ApiResponse(
+        201,
+        {
+          requestId,
+          sessionId,
+          callType: callType.toUpperCase(),
+          ratePerMinute,
+          expiresAt,
+          status: "PENDING",
+          astrologerInfo: {
+            id: astrologerObjectId,
+            fullName: astrologer.fullName,
+            avatar: astrologer.avatar,
+            callRate: ratePerMinute
+          },
+          userInfo: {
+            id: userId,
+            name: userName,
+            avatar: userAvatar
+          },
+          timestamps: {
+            requestedAt: new Date(),
+            expiresIn: "3 minutes"
+          }
+        },
+        "Call request sent successfully. Waiting for astrologer to accept..."
+      )
+    );
 
   } catch (error) {
+    console.error("Error in requestCallSession:", {
+      message: error.message,
+      stack: error.stack,
+      userId: req.user?._id,
+      astrologerId: req.body?.astrologerId,
+      callType: req.body?.callType
+    });
+
     if (!hasCommitted && session.inTransaction()) {
       await session.abortTransaction();
+      console.log("Transaction aborted due to error");
     }
+
+    // Handle specific MongoDB errors
+    if (error.name === 'MongoError' && error.code === 11000) {
+      throw new ApiError(400, "Duplicate call request detected. Please try again.");
+    }
+
+    // Re-throw the error for asyncHandler to handle
     throw error;
   } finally {
     session.endSession();
+    console.log("Database session ended");
   }
 });
 
@@ -442,58 +627,160 @@ export const acceptCallSession = asyncHandler(async (req, res) => {
     session.startTransaction();
 
     const { requestId } = req.params;
-    const astrologerId = req.user.id;
+    const astrologerId = req.user._id; // Use _id instead of id
+    const astrologerName = req.user.fullName;
+    const astrologerAvatar = req.user.avatar || "";
 
-    // Verify astrologer
+    // 1. Verify astrologer
     if (req.user.role !== "astrologer") {
       throw new ApiError(403, "Only astrologers can accept calls");
     }
- logger.info("requestId",requestId)
- logger.info("astrologerId",astrologerId)
-    // Find call request
-    const call_Request = await CallRequest.findOne({
-      requestId,
-      astrologerId,
-      status: "PENDING"
+
+    console.log("=== ACCEPT CALL DEBUG ===");
+    console.log("Request ID:", requestId);
+    console.log("Astrologer ID:", astrologerId);
+    console.log("Astrologer Name:", astrologerName);
+
+    // 2. Find the call request
+    const callRequest = await CallRequest.findOne({
+      requestId: requestId.trim()
     }).session(session);
 
-    logger.info("call_Request 459 line ",call_Request)
-
-    if (!call_Request) {
-      throw new ApiError(404, "Call request not found");
+    if (!callRequest) {
+      throw new ApiError(404, `Call request "${requestId}" not found`);
     }
 
-    if (call_Request.isExpired()) {
+    console.log("Found Call Request:", {
+      requestId: callRequest.requestId,
+      dbAstrologerId: callRequest.astrologerId,
+      dbUserId: callRequest.userId,
+      status: callRequest.status,
+      expiresAt: callRequest.expiresAt,
+      sessionId: callRequest.sessionId
+    });
+
+    // 3. Verify authorization (astrologer matches)
+    const dbAstrologerId = callRequest.astrologerId.toString();
+    const incomingAstrologerId = astrologerId.toString();
+
+    if (dbAstrologerId !== incomingAstrologerId) {
+      throw new ApiError(403,
+        `Unauthorized. Call request belongs to astrologer: ${dbAstrologerId}, 
+        but you are: ${incomingAstrologerId}`
+      );
+    }
+
+    // 4. Check if already processed
+    if (callRequest.status !== "PENDING") {
+      throw new ApiError(400,
+        `Call request is already ${callRequest.status.toLowerCase()}. Current status: ${callRequest.status}`
+      );
+    }
+
+    // 5. Check if expired
+    if (callRequest.isExpired()) {
       await CallRequest.findByIdAndUpdate(
-        call_Request._id,
-        { status: "EXPIRED" },
+        callRequest._id,
+        {
+          status: "EXPIRED",
+          respondedAt: new Date()
+        },
         { session }
       );
+
+      // Also update linked session if exists
+      if (callRequest.sessionId) {
+        await CallSession.findOneAndUpdate(
+          { sessionId: callRequest.sessionId },
+          {
+            status: "EXPIRED",
+            endedAt: new Date()
+          },
+          { session }
+        );
+      }
+
       throw new ApiError(410, "Call request has expired");
     }
 
-    // Find linked session
-    const callSession = await CallSession.findOne({
-      sessionId: call_Request.sessionId
-    }).session(session);
+    // 6. Find or create call session
+    let callSession;
 
-    if (!callSession) {
-      throw new ApiError(404, "Call session not found");
+    if (callRequest.sessionId) {
+      // Find existing session
+      callSession = await CallSession.findOne({
+        sessionId: callRequest.sessionId
+      }).session(session);
+
+      if (!callSession) {
+        console.log("Session not found with sessionId:", callRequest.sessionId);
+        // Create new session
+        const sessionId = CallSession.generateSessionId();
+        callSession = await CallSession.create([{
+          sessionId,
+          requestId: callRequest.requestId,
+          userId: callRequest.userId,
+          astrologerId: callRequest.astrologerId,
+          callType: callRequest.callType,
+          ratePerMinute: callRequest.ratePerMinute,
+          status: "ACCEPTED",
+          acceptedAt: new Date(),
+          expiresAt: callRequest.expiresAt
+        }], { session });
+
+        // Update request with new sessionId
+        await CallRequest.findByIdAndUpdate(
+          callRequest._id,
+          { sessionId: sessionId },
+          { session }
+        );
+
+        callSession = callSession[0];
+      }
+    } else {
+      // Create new session
+      const sessionId = CallSession.generateSessionId();
+      callSession = await CallSession.create([{
+        sessionId,
+        requestId: callRequest.requestId,
+        userId: callRequest.userId,
+        astrologerId: callRequest.astrologerId,
+        callType: callRequest.callType,
+        ratePerMinute: callRequest.ratePerMinute,
+        status: "ACCEPTED",
+        acceptedAt: new Date(),
+        expiresAt: callRequest.expiresAt
+      }], { session });
+
+      // Update request with sessionId
+      await CallRequest.findByIdAndUpdate(
+        callRequest._id,
+        { sessionId: sessionId },
+        { session }
+      );
+
+      callSession = callSession[0];
     }
+
+    console.log("Call Session:", {
+      sessionId: callSession.sessionId,
+      status: callSession.status
+    });
 
     const now = new Date();
 
-    // Update request
+    // 7. Update call request status
     await CallRequest.findByIdAndUpdate(
-      call_Request._id,
+      callRequest._id,
       {
         status: "ACCEPTED",
-        respondedAt: now
+        respondedAt: now,
+        sessionId: callSession.sessionId
       },
       { session }
     );
 
-    // Update session
+    // 8. Update call session to RINGING
     await CallSession.findByIdAndUpdate(
       callSession._id,
       {
@@ -504,78 +791,135 @@ export const acceptCallSession = asyncHandler(async (req, res) => {
       { session }
     );
 
-    // Create Call document for history
-    const call = await Call.create([{
-      userId: call_Request.userId,
-      astrologerId,
-      callType: call_Request.callType,
-      direction: "USER_TO_ASTROLOGER",
-      status: "RINGING",
-      chargesPerMinute: call_Request.ratePerMinute,
-      startTime: now
-    }], { session });
+    // 9. Create Call document for history (optional, but recommended)
+    let callDoc;
+    try {
+      callDoc = await Call.create([{
+        userId: callRequest.userId,
+        astrologerId: callRequest.astrologerId,
+        callType: callRequest.callType,
+        direction: "USER_TO_ASTROLOGER",
+        status: "RINGING",
+        chargesPerMinute: callRequest.ratePerMinute,
+        startTime: now,
+        meta: {
+          requestId: callRequest.requestId,
+          sessionId: callSession.sessionId
+        }
+      }], { session });
 
-    // Link session to call
-    await CallSession.findByIdAndUpdate(
-      callSession._id,
-      { callId: call[0]._id },
-      { session }
-    );
+      // Link session and request to call
+      await Promise.all([
+        CallSession.findByIdAndUpdate(
+          callSession._id,
+          { callId: callDoc[0]._id },
+          { session }
+        ),
+        CallRequest.findByIdAndUpdate(
+          callRequest._id,
+          { callId: callDoc[0]._id },
+          { session }
+        )
+      ]);
+    } catch (callError) {
+      console.warn("Could not create Call document:", callError.message);
+      // Continue without Call document if there's an issue
+    }
 
     hasCommitted = true;
     await session.commitTransaction();
 
-    // Clear expiry timer
-    clearCallRequestTimer(requestId);
+    console.log("Transaction committed successfully");
 
-    // Notify user that call was accepted
+    // 10. Clear any expiry timer for this request
+    clearCallTimer(requestId, 'request');
+
+    // 11. Start ringing timer (45 seconds for user to answer)
+    startRingingTimer(callSession.sessionId, callRequest.userId);
+
+    // 12. Prepare notification payload
     const payload = {
-      requestId,
+      requestId: callRequest.requestId,
       sessionId: callSession.sessionId,
-      callId: call[0]._id,
-      callType: call_Request.callType,
+      callId: callDoc ? callDoc[0]._id : null,
+      callType: callRequest.callType,
       astrologerInfo: {
         id: astrologerId,
-        name: req.user.fullName,
-        avatar: req.user.avatar
+        name: astrologerName,
+        avatar: astrologerAvatar
       },
-      ratePerMinute: call_Request.ratePerMinute,
-      acceptedAt: now
+      ratePerMinute: callRequest.ratePerMinute,
+      acceptedAt: now,
+      expiresAt: callRequest.expiresAt,
+      message: "Astrologer accepted your call. Please answer within 45 seconds."
     };
 
-    // Notify user
+    // 13. Notify user via socket
     emitSocketEvent(
       req,
-      call_Request.userId.toString(),
+      callRequest.userId.toString(),
       ChatEventsEnum.CALL_ACCEPTED_EVENT,
       payload
     );
 
-    // Send push notification
-    await sendNotification({
-      userId: call_Request.userId,
-      title: "Call Accepted!",
-      message: `${req.user.fullName} accepted your call`,
-      type: "call_accepted",
-      data: payload
-    });
+    console.log(`Socket event sent to user: ${callRequest.userId}`);
 
-    // Start ringing timer (45 seconds for user to answer)
-    startRingingTimer(callSession.sessionId, call[0]._id);
+    // 14. Send push notification to user
+    try {
+      await sendNotification({
+        userId: callRequest.userId,
+        title: "Call Accepted! 📞",
+        body: `${astrologerName} accepted your ${callRequest.callType.toLowerCase()} call`,
+        type: "call_accepted",
+        data: {
+          requestId: callRequest.requestId,
+          sessionId: callSession.sessionId,
+          callType: callRequest.callType,
+          astrologerId: astrologerId,
+          astrologerName: astrologerName
+        }
+      });
+      console.log("Push notification sent to user");
+    } catch (notifError) {
+      console.error("Failed to send push notification:", notifError.message);
+    }
 
-    return res.status(200).json(new ApiResponse(200, {
-      sessionId: callSession.sessionId,
-      callId: call[0]._id,
-      status: "RINGING"
-    }, "Call accepted successfully"));
+    // 15. Return success response
+    return res.status(200).json(
+      new ApiResponse(
+        200,
+        {
+          requestId: callRequest.requestId,
+          sessionId: callSession.sessionId,
+          callId: callDoc ? callDoc[0]._id : null,
+          status: "RINGING",
+          callType: callRequest.callType,
+          ratePerMinute: callRequest.ratePerMinute,
+          acceptedAt: now,
+          expiresAt: callRequest.expiresAt,
+          timeRemaining: 45 // seconds for user to answer
+        },
+        "Call accepted successfully. Waiting for user to answer..."
+      )
+    );
 
   } catch (error) {
+    console.error("Error in acceptCallSession:", {
+      message: error.message,
+      stack: error.stack,
+      requestId: req.params.requestId,
+      astrologerId: req.user?._id
+    });
+
     if (!hasCommitted && session.inTransaction()) {
       await session.abortTransaction();
+      console.log("Transaction aborted due to error");
     }
+
     throw error;
   } finally {
     session.endSession();
+    console.log("Database session ended");
   }
 });
 
@@ -1270,7 +1614,7 @@ const setCallRequestTimer = (requestId, sessionId, astrologerId, userId) => {
             sessionId,
             message: "Call request expired"
           });
-          
+
           io.to(astrologerId.toString()).emit(ChatEventsEnum.CALL_EXPIRED_EVENT, {
             requestId,
             sessionId,

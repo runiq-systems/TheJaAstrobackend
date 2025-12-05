@@ -21,12 +21,18 @@ const callSessionSchema = new mongoose.Schema(
       required: true,
       index: true
     },
+    
+    // === ADD THIS: Link back to CallRequest ===
+    requestId: {
+      type: String,
+      ref: "CallRequest",
+      index: true
+    },
+    
     callId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Call",
-      required: false,
-      index: true,
-      sparse: true
+      index: true
     },
 
     // Call Type
@@ -49,24 +55,24 @@ const callSessionSchema = new mongoose.Schema(
     },
     minimumCharge: {
       type: Number,
-      default: 50 // e.g., min 1 min charge
+      default: 50
     },
 
-    // Enhanced Status Management
+    // Status
     status: {
       type: String,
       enum: [
         "REQUESTED",     // User initiated call
-        "ACCEPTED",      // Astrologer accepted → ringing
+        "ACCEPTED",      // Astrologer accepted
         "RINGING",       // User side ringing
         "CONNECTED",     // Both joined → billing starts
-        "ACTIVE",        // Same as CONNECTED (kept for consistency)
-        "ON_HOLD",       // Call on hold (rare, but possible)
+        "ACTIVE",        // Call ongoing
+        "ON_HOLD",       // Call paused
         "COMPLETED",     // Normal end
         "REJECTED",
         "MISSED",
         "CANCELLED",
-        "FAILED",        // Network, payment, crash
+        "FAILED",
         "EXPIRED",
         "AUTO_ENDED"
       ],
@@ -78,7 +84,7 @@ const callSessionSchema = new mongoose.Schema(
     requestedAt: { type: Date, default: Date.now },
     acceptedAt: Date,
     ringingAt: Date,
-    connectedAt: Date,    // When call actually connects (billing starts)
+    connectedAt: Date,
     endedAt: Date,
     lastActivityAt: Date,
     expiresAt: {
@@ -86,10 +92,10 @@ const callSessionSchema = new mongoose.Schema(
       index: true
     },
 
-    // Duration Tracking (in seconds)
-    totalDuration: { type: Number, default: 0 },     // From connect → end
-    billedDuration: { type: Number, default: 0 },     // What user is charged for
-    holdDuration: { type: Number, default: 0 },       // If on hold
+    // Duration Tracking
+    totalDuration: { type: Number, default: 0 },
+    billedDuration: { type: Number, default: 0 },
+    holdDuration: { type: Number, default: 0 },
 
     // Billing
     totalCost: { type: Number, default: 0 },
@@ -109,9 +115,6 @@ const callSessionSchema = new mongoose.Schema(
         "RESERVED",
         "PAID",
         "FAILED",
-        "FAILED_INSUFFICIENT_BALANCE",
-        "FAILED_INVALID_RESERVATION",
-        "NO_RESERVATION",
         "CANCELLED",
         "REFUNDED"
       ],
@@ -125,26 +128,10 @@ const callSessionSchema = new mongoose.Schema(
       ratedAt: { type: Date }
     },
 
-    // Call Quality & Tech
-    networkQuality: {
-      type: String,
-      enum: ["excellent", "good", "poor", "bad"],
-      default: "good"
-    },
-    recordingUrl: String,
-    socketIds: {
-      caller: String,
-      receiver: String
-    },
-
-    // System
-    autoExpire: { type: Boolean, default: true },
-    timeoutDuration: { type: Number, default: 180 }, // 3 mins ringing
-
+    // Meta
     meta: {
       type: mongoose.Schema.Types.Mixed,
       default: {}
-      // e.g., { requestId, deviceInfo, ip, userAgent, platform: "android" }
     }
   },
   {
@@ -152,29 +139,25 @@ const callSessionSchema = new mongoose.Schema(
   }
 );
 
-// ────────────────────────────── Indexes ──────────────────────────────
+// Indexes
 callSessionSchema.index({ userId: 1, status: 1 });
 callSessionSchema.index({ astrologerId: 1, status: 1 });
 callSessionSchema.index({ status: 1, expiresAt: 1 });
 callSessionSchema.index({ callId: 1 });
-callSessionSchema.index({ "meta.requestId": 1 });
+callSessionSchema.index({ requestId: 1 });
 
-// ────────────────────────────── Statics ──────────────────────────────
+// Statics
 callSessionSchema.statics.generateSessionId = function () {
   const timestamp = Date.now().toString(36).toUpperCase();
   const random = Math.random().toString(36).substr(2, 8).toUpperCase();
   return `CALL_${timestamp}_${random}`;
 };
 
-callSessionSchema.statics.findActiveCallSession = function (userId, astrologerId) {
-  return this.findOne({
-    $or: [{ userId }, { astrologerId: userId }],
-    astrologerId: astrologerId || this.astrologerId,
-    status: { $in: ["REQUESTED", "ACCEPTED", "RINGING", "CONNECTED", "ACTIVE"] }
-  });
+callSessionSchema.statics.findByRequestId = function (requestId) {
+  return this.findOne({ requestId });
 };
 
-// ────────────────────────────── Methods ──────────────────────────────
+// Methods
 callSessionSchema.methods.calculateCurrentCost = function () {
   const minutes = Math.ceil(this.billedDuration / 60);
   return Math.max(this.minimumCharge, minutes * this.ratePerMinute);
@@ -183,46 +166,5 @@ callSessionSchema.methods.calculateCurrentCost = function () {
 callSessionSchema.methods.isExpired = function () {
   return this.expiresAt && new Date() > this.expiresAt;
 };
-
-callSessionSchema.methods.completeSession = async function () {
-  if (!["CONNECTED", "ACTIVE"].includes(this.status)) return false;
-
-  this.endedAt = new Date();
-  this.status = "COMPLETED";
-
-  // Total connect duration
-  if (this.connectedAt) {
-    this.totalDuration = Math.floor((this.endedAt - this.connectedAt) / 1000);
-  }
-
-  this.billedDuration = this.totalDuration; // calls usually bill full connected time
-
-  // Final cost
-  const billedMinutes = Math.ceil(this.billedDuration / 60);
-  this.totalCost = Math.max(this.minimumCharge, billedMinutes * this.ratePerMinute);
-
-  // Commission & Tax (same as chat)
-  const commissionRate = 0.20;
-  const taxRate = 0.18;
-  const base = this.totalCost;
-
-  this.platformCommission = base * commissionRate;
-  this.taxAmount = base * taxRate;
-  this.astrologerEarnings = base - this.platformCommission - this.taxAmount;
-
-  await this.save();
-  return true;
-};
-
-// Auto-set connectedAt when status becomes CONNECTED
-callSessionSchema.pre("save", function (next) {
-  if (this.isModified("status") && this.status === "CONNECTED" && !this.connectedAt) {
-    this.connectedAt = new Date();
-  }
-  if (this.isModified("status") && ["ACCEPTED", "RINGING"].includes(this.status) && !this.ringingAt) {
-    this.ringingAt = new Date();
-  }
-  next();
-});
 
 export const CallSession = mongoose.model("CallSession", callSessionSchema);
