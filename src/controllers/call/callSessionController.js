@@ -88,7 +88,7 @@ export const requestCallSession = asyncHandler(async (req, res) => {
       role: "astrologer",
       userStatus: "Active",
       isSuspend: false,
-      isOnline: true
+      // isOnline: true
     })
       .session(session)
       .select("fullName avatar callRate");
