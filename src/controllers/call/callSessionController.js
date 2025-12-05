@@ -1142,6 +1142,7 @@ export const getAstrologerCallSessions = async (req, res) => {
     const callSession = await CallSession.find(filter)
       .populate("userId", "fullName avatar phone gender email")
       .sort(sortOptions)
+
       .skip(skip)
       .limit(parseInt(limit))
       .lean(); // faster + easier to manipulate
@@ -1566,28 +1567,3 @@ const clearCallTimer = (id, type = 'request') => {
   }
 };
 
-/**
- * Notify astrologer about incoming call
- */
-const notifyAstrologerAboutCallRequest = async (req, astrologerId, payload) => {
-  // Socket notification
-  emitSocketEvent(
-    req,
-    astrologerId.toString(),
-    ChatEventsEnum.CALL_INITIATED_EVENT,
-    {
-      eventType: "incomingCall",
-      requestId: payload.requestId,
-      sessionId: payload.sessionId,
-      callType: payload.callType,
-      callerId: payload.callerId,
-      callerName: payload.callerName,
-      callerImage: payload.callerImage,
-      ratePerMinute: payload.ratePerMinute,
-      expiresAt: payload.expiresAt,
-      timestamp: new Date(),
-      message: payload.message,
-      timeRemaining: Math.floor((payload.expiresAt - new Date()) / 1000) // seconds
-    }
-  );
-};
