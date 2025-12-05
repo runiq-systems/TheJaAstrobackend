@@ -5,7 +5,6 @@ import {
   cancelCallRequest,
   getAstrologerCallSessions,
   requestCallSession,
-  resumeCallSession,
   startCallSession,
 } from "../../controllers/call/callSessionController.js";
 import { endChatSession } from "../../controllers/chatapp/chatSessionController.js";
@@ -18,7 +17,6 @@ router.post("/request/:requestId/cancel", authMiddleware, cancelCallRequest);
 router.post("/session/:sessionId/end", authMiddleware, endChatSession);
 
 router.post("/request/:requestId/accept", authMiddleware, acceptCallSession);
-router.post("/session/:sessionId/resume", authMiddleware, resumeCallSession);
 
 router.get("/session", authMiddleware, getAstrologerCallSessions);
 

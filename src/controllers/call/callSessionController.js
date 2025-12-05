@@ -59,7 +59,7 @@ export const notifyAstrologerAboutCallRequest = async (req, astrologerId, payloa
     },
   });
 };
-export const requestCall = asyncHandler(async (req, res) => {
+export const requestCallSession = asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
   let hasCommitted = false;
 
@@ -432,7 +432,7 @@ export const startCallSession = asyncHandler(async (req, res) => {
   }
 });
 
-export const acceptCall = asyncHandler(async (req, res) => {
+export const acceptCallSession = asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
   let hasCommitted = false;
 
