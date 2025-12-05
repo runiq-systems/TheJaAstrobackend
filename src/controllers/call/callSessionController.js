@@ -1554,3 +1554,40 @@ const clearCallRequestTimer = (requestId) => {
     activeCallTimers.delete(timerKey);
   }
 };
+
+
+const clearCallTimer = (id, type = 'request') => {
+  const timerKey = `${type}_${id}`;
+  const timer = activeTimers.get(timerKey);
+  if (timer) {
+    clearTimeout(timer);
+    activeTimers.delete(timerKey);
+    console.log(`Cleared ${type} timer for: ${id}`);
+  }
+};
+
+/**
+ * Notify astrologer about incoming call
+ */
+const notifyAstrologerAboutCallRequest = async (req, astrologerId, payload) => {
+  // Socket notification
+  emitSocketEvent(
+    req,
+    astrologerId.toString(),
+    ChatEventsEnum.CALL_INITIATED_EVENT,
+    {
+      eventType: "incomingCall",
+      requestId: payload.requestId,
+      sessionId: payload.sessionId,
+      callType: payload.callType,
+      callerId: payload.callerId,
+      callerName: payload.callerName,
+      callerImage: payload.callerImage,
+      ratePerMinute: payload.ratePerMinute,
+      expiresAt: payload.expiresAt,
+      timestamp: new Date(),
+      message: payload.message,
+      timeRemaining: Math.floor((payload.expiresAt - new Date()) / 1000) // seconds
+    }
+  );
+};
