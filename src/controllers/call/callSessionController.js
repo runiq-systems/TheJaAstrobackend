@@ -1152,6 +1152,7 @@ export const getAstrologerCallSessions = async (req, res) => {
     const formattedCalls = callSession.map((call) => ({
       _id: call._id,
       callId: call._id,
+      requestId:call.requestId,
       callType: call.callType, // AUDIO or VIDEO
       direction: call.direction,
       status: call.status,
