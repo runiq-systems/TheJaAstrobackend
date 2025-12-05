@@ -1559,10 +1559,10 @@ const clearCallRequestTimer = (requestId) => {
 
 const clearCallTimer = (id, type = 'request') => {
   const timerKey = `${type}_${id}`;
-  const timer = activeTimers.get(timerKey);
+  const timer = activeCallTimers.get(timerKey);
   if (timer) {
     clearTimeout(timer);
-    activeTimers.delete(timerKey);
+    activeCallTimers.delete(timerKey);
     console.log(`Cleared ${type} timer for: ${id}`);
   }
 };
