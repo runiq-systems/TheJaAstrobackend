@@ -98,7 +98,7 @@ export const requestCallSession = asyncHandler(async (req, res) => {
     }).session(session);
 
     if (!astrologer) throw new ApiError(404, "Astrologer not found");
-    if (!astrologer.isOnline) throw new ApiError(400, "Astrologer is offline");
+    // if (!astrologer.isOnline) throw new ApiError(400, "Astrologer is offline");
     if (!astroProfile) throw new ApiError(404, "Astrologer profile not completed");
 
     const ratePerMinute = astrologer.callRate || astroProfile.ratepermin || 50;
