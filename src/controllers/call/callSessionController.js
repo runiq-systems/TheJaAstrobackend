@@ -230,7 +230,7 @@ export const requestCallSession = asyncHandler(async (req, res) => {
     }], { session });
 
     console.log("Call Request created:", callRequest[0].requestId);
-    const callId = ""
+    let callId = null
 
     // ========== CREATE CALL DOCUMENT (Optional - fix enum issue) ==========
     try {
@@ -270,8 +270,6 @@ export const requestCallSession = asyncHandler(async (req, res) => {
       console.warn("Call document creation skipped:", callError.message);
       // Continue without call document - it's optional for now
     }
-
-
 
     hasCommitted = true;
     await session.commitTransaction();
