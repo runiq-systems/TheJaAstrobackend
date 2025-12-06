@@ -4,6 +4,7 @@ import {
   acceptCallSession,
   cancelCallRequest,
   getAstrologerCallSessions,
+  rejectCall,
   requestCallSession,
   startCallSession,
 } from "../../controllers/call/callSessionController.js";
@@ -15,6 +16,7 @@ router.post("/request", authMiddleware, requestCallSession);
 router.post("/session/:sessionId/start", authMiddleware, startCallSession);
 router.post("/request/:requestId/cancel", authMiddleware, cancelCallRequest);
 router.post("/session/:sessionId/end", authMiddleware, endChatSession);
+router.post("/request/:requestId/reject", authMiddleware, rejectCall);
 
 router.post("/request/:requestId/accept", authMiddleware, acceptCallSession);
 
