@@ -248,8 +248,7 @@ export const requestCallSession = asyncHandler(async (req, res) => {
           initialRequest: true
         }
       }], { session });
-      callId = callDoc[0]._id;
-
+      callId = callDoc[0]._id.toString();  // ← Fix this
 
       // Link documents
       await Promise.all([
@@ -309,7 +308,7 @@ export const requestCallSession = asyncHandler(async (req, res) => {
           requestId,
           sessionId,
           callId: callId.toString(),  // THIS IS CRITICAL
-  callRecordId: callId.toString(),
+          callRecordId: callId.toString(),
           callType: callType.toUpperCase(),
           ratePerMinute,
           expiresAt,
@@ -356,10 +355,10 @@ export const startCallSession = asyncHandler(async (req, res) => {
   session.startTransaction();
 
   try {
- 
+
 
     // Find the call (must be in RINGING or CONNECTED state)
-// Find CallSession
+    // Find CallSession
     const callSession = await CallSession.findOne({ sessionId }).session(session);
     if (!callSession) throw new ApiError(404, "Call session not found");
 
@@ -477,7 +476,7 @@ export const startCallSession = asyncHandler(async (req, res) => {
     await call.save({ session });
 
     await session.commitTransaction();
- 
+
 
     // Start real-time per-minute billing
     try {
@@ -794,6 +793,7 @@ export const acceptCallSession = asyncHandler(async (req, res) => {
           requestId: callRequest.requestId,
           sessionId: callSession.sessionId,
           callType: callRequest.callType,
+          screen: "Ongoingcall",           // ← CRITICAL
           astrologerId: astrologerId,
           astrologerName: req.user.fullName
         }
@@ -1160,7 +1160,7 @@ export const getAstrologerCallSessions = async (req, res) => {
     const formattedCalls = callSession.map((call) => ({
       _id: call._id,
       callId: call._id,
-      requestId:call.requestId,
+      requestId: call.requestId,
       callType: call.callType, // AUDIO or VIDEO
       direction: call.direction,
       status: call.status,
