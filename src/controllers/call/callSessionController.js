@@ -79,6 +79,8 @@ export const requestCallSession = asyncHandler(async (req, res) => {
     console.log("Requesting Astrologer ID:", astrologerId);
     console.log("Request User Role:", req.user.role);
     console.log("Call type:", callType);
+    console.log("=== REQUEST CALL SESSION ===");
+
 
     // ========== VALIDATIONS ==========
     if (!astrologerId) {
@@ -228,6 +230,7 @@ export const requestCallSession = asyncHandler(async (req, res) => {
     }], { session });
 
     console.log("Call Request created:", callRequest[0].requestId);
+    const callId = ""
 
     // ========== CREATE CALL DOCUMENT (Optional - fix enum issue) ==========
     try {
@@ -245,6 +248,8 @@ export const requestCallSession = asyncHandler(async (req, res) => {
           initialRequest: true
         }
       }], { session });
+      callId = callDoc[0]._id;
+
 
       // Link documents
       await Promise.all([
@@ -266,6 +271,8 @@ export const requestCallSession = asyncHandler(async (req, res) => {
       // Continue without call document - it's optional for now
     }
 
+
+
     hasCommitted = true;
     await session.commitTransaction();
 
@@ -277,6 +284,8 @@ export const requestCallSession = asyncHandler(async (req, res) => {
         requestId,
         sessionId,
         callType: callType.toUpperCase(),
+        callId: callId.toString(),  // THIS IS CRITICAL
+        callRecordId: callId.toString(),
         callerId: userId,
         callerName: userName,
         callerImage: userAvatar,
@@ -299,6 +308,8 @@ export const requestCallSession = asyncHandler(async (req, res) => {
         {
           requestId,
           sessionId,
+          callId: callId.toString(),  // THIS IS CRITICAL
+  callRecordId: callId.toString(),
           callType: callType.toUpperCase(),
           ratePerMinute,
           expiresAt,
@@ -338,39 +349,33 @@ export const requestCallSession = asyncHandler(async (req, res) => {
 });
 
 export const startCallSession = asyncHandler(async (req, res) => {
-  const { callId } = req.params; // callId is the Mongo _id from requestCallSession
+  const { sessionId } = req.params; // callId is the Mongo _id from requestCallSession
   const userId = req.user.id; // this is the USER (caller)
 
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
-    console.log(
-      `Starting call session: ${callId} initiated by user: ${userId}`
-    );
+ 
 
     // Find the call (must be in RINGING or CONNECTED state)
-    const call = await Call.findOne({
-      _id: callId,
-      userId, // Only the user who initiated can "start" it after astrologer accepts
-      status: { $in: ["RINGING", "CONNECTED"] },
-    }).session(session);
+// Find CallSession
+    const callSession = await CallSession.findOne({ sessionId }).session(session);
+    if (!callSession) throw new ApiError(404, "Call session not found");
 
-    if (!call) {
-      throw new ApiError(404, "Call not found or cannot be started");
+    // Find linked Call document
+    const call = await Call.findById(callSession.callId).session(session);
+    if (!call) throw new ApiError(404, "Call record not found");
+
+    if (call.userId.toString() !== userId.toString()) {
+      throw new ApiError(403, "Unauthorized to start this call");
     }
 
-    // Prevent double-start
-    if (call.status === "CONNECTED") {
-      await session.commitTransaction();
-      return res.status(200).json(
-        new ApiResponse(200, {
-          callId: call._id,
-          status: "CONNECTED",
-          connectTime: call.connectTime,
-          message: "Call already connected",
-        })
-      );
+    if (call.status !== "RINGING") {
+      if (call.status === "CONNECTED") {
+        return res.status(200).json(new ApiResponse(200, { status: "CONNECTED" }));
+      }
+      throw new ApiError(400, `Call is ${call.status}, cannot start`);
     }
 
     // Estimate initial duration: 10 minutes (same as chat)
@@ -465,14 +470,14 @@ export const startCallSession = asyncHandler(async (req, res) => {
 
     // Mark call as CONNECTED
     await call.markConnected(); // uses your model method
+    call.status = "CONNECTED";
+    call.connectTime = new Date();
     call.paymentStatus = "RESERVED";
     call.reservationId = reservation[0]._id;
     await call.save({ session });
 
     await session.commitTransaction();
-    console.log(
-      `Call connected: ${callId}, reservation: ${reservation[0].reservationId}`
-    );
+ 
 
     // Start real-time per-minute billing
     try {
@@ -491,7 +496,9 @@ export const startCallSession = asyncHandler(async (req, res) => {
 
     // Notify both parties via socket that call is now LIVE
     const payload = {
-      callId: call._id,
+      callId: call._id.toString(),
+      sessionId: callSession.sessionId,
+      callRecordId: call._id.toString(),
       status: "CONNECTED",
       connectTime: call.connectTime,
       ratePerMinute: call.chargesPerMinute,
