@@ -1196,7 +1196,7 @@ export const getAstrologerCallSessions = async (req, res) => {
 
 export const getCallSessionDetails = asyncHandler(async (req, res) => {
   const { callId } = req.params; // Mongo _id (or you can change to custom callId if you add one)
-  const userId = req.user.id;
+  const userId = req.user._id;
 
   const call = await Call.findOne({
     _id: callId,
