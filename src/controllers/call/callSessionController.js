@@ -754,34 +754,34 @@ export const acceptCallSession = asyncHandler(async (req, res) => {
     startRingingTimer(callSession.sessionId, callRequest.userId, callRequest.astrologerId);
 
     // ========== NOTIFY USER ==========
-    const payload = {
-      requestId: callRequest.requestId,
-      sessionId: callSession.sessionId,
-      callId: callDocument._id,
-      callType: callRequest.callType,
-      astrologerInfo: {
-        id: astrologerId,
-        name: req.user.fullName || "Astrologer",
-        avatar: req.user.avatar || ""
-      },
-      ratePerMinute: callRequest.ratePerMinute,
-      acceptedAt: now,
-      ringingExpiresAt: new Date(Date.now() + 45 * 1000),
-      message: "Astrologer accepted your call! Please answer within 45 seconds."
-    };
+    // const payload = {
+    //   requestId: callRequest.requestId,
+    //   sessionId: callSession.sessionId,
+    //   callId: callDocument._id,
+    //   callType: callRequest.callType,
+    //   astrologerInfo: {
+    //     id: astrologerId,
+    //     name: req.user.fullName || "Astrologer",
+    //     avatar: req.user.avatar || ""
+    //   },
+    //   ratePerMinute: callRequest.ratePerMinute,
+    //   acceptedAt: now,
+    //   ringingExpiresAt: new Date(Date.now() + 45 * 1000),
+    //   message: "Astrologer accepted your call! Please answer within 45 seconds."
+    // };
 
-    // Socket notification to user
-    try {
-      emitSocketEvent(
-        req,
-        callRequest.userId.toString(),
-        ChatEventsEnum.CALL_ACCEPTED_EVENT,
-        payload
-      );
-      console.log(`✅ Socket event sent to user: ${callRequest.userId}`);
-    } catch (socketError) {
-      console.error("Failed to send socket event:", socketError.message);
-    }
+    // // Socket notification to user
+    // try {
+    //   emitSocketEvent(
+    //     req,
+    //     callRequest.userId.toString(),
+    //     ChatEventsEnum.CALL_ACCEPTED_EVENT,
+    //     payload
+    //   );
+    //   console.log(`✅ Socket event sent to user: ${callRequest.userId}`);
+    // } catch (socketError) {
+    //   console.error("Failed to send socket event:", socketError.message);
+    // }
 
     // Push notification to user
     try {
