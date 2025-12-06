@@ -786,7 +786,7 @@ export const acceptCallSession = asyncHandler(async (req, res) => {
         userId: callRequest.userId,
         title: "Call Accepted! 📞",
         body: `${req.user.fullName || "Astrologer"} accepted your call`,
-        type: "call_accepted",
+        type: "accept_call",
         data: {
           requestId: callRequest.requestId,
           sessionId: callSession.sessionId,
