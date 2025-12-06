@@ -1104,7 +1104,7 @@ export const getAstrologerCallSessions = async (req, res) => {
 
     const {
       page = 1,
-      limit = 10,
+      limit = 100,
       status, // e.g., CONNECTED, COMPLETED, MISSED, etc.
       dateFrom,
       dateTo,
