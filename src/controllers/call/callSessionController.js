@@ -11,7 +11,6 @@ import {
   Reservation,
 } from "../../models/Wallet/AstroWallet.js";
 import { emitSocketEvent, emitSocketEventGlobal } from "../../socket/index.js";
-import { sendNotification } from "../chatapp/messageController.js";
 import { ChatSession } from "../../models/chatapp/chatSession.js";
 import { CallRequest } from "../../models/calllogs/callRequest.js";
 import { CallSession } from "../../models/calllogs/callSession.js";
@@ -50,14 +49,17 @@ export const notifyAstrologerAboutCallRequest = async (req, astrologerId, payloa
   await sendNotification({
     userId: astrologerId,
     title: `Incoming ${payload.callType} Call`,
-    message: `${payload.callerName} is calling you (₹${payload.ratePerMinute}/min)`,
+    body: `${payload.callerName} is calling you (₹${payload.ratePerMinute}/min)`,
     type: "incoming_call",
     data: {
+      screen: "IncomingCall", // Critical: Opens IncomingCall screen
       requestId: payload.requestId,
       sessionId: payload.sessionId,
       callType: payload.callType,
       callerId: payload.callerId,
-      ratePerMinute: payload.ratePerMinute,
+      callerName: payload.callerName,
+      callerImage: payload.callerImage,
+      ratePerMinute: payload.ratePerMinute.toString(),
     },
   });
 };
@@ -1572,3 +1574,64 @@ const clearCallTimer = (id, type = 'request') => {
   }
 };
 
+
+
+
+const sendNotification = async ({
+  userId,
+  title,
+  body,
+  type = "call",
+  data = {},
+}) => {
+  try {
+    const user = await User.findById(userId).select("deviceToken fullName");
+    if (!user || !user.deviceToken) {
+      console.log(`No device token for user ${userId}`);
+      return;
+    }
+
+    const defaultData = {
+      screen: type === "incoming_call" ? "IncomingCall" : "OngoingCall",
+      type,
+      ...data,
+    };
+
+    const message = {
+      token: user.deviceToken,
+      notification: {
+        title,
+        body,
+      },
+      data: Object.keys(defaultData).reduce((acc, key) => {
+        acc[key] = String(defaultData[key]);
+        return acc;
+      }, {}),
+      android: {
+        priority: "high",
+        notification: {
+          channelId: "call_notifications", // Must match Android channel
+          sound: "default",
+          vibrate: true,
+          priority: "high",
+          visibility: "public",
+        },
+      },
+      apns: {
+        payload: {
+          aps: {
+            sound: "default",
+            "content-available": 1,
+          },
+        },
+      },
+    };
+
+    const response = await admin.messaging().send(message);
+    logger.info(`Push sent to ${user.fullName || userId}: ${response}`);
+    console.log("Notification sent:", response);
+  } catch (error) {
+    logger.error("FCM Notification failed:", error.message);
+    console.error("Push notification error:", error);
+  }
+};
