@@ -16,6 +16,7 @@ import { CallRequest } from "../../models/calllogs/callRequest.js";
 import { CallSession } from "../../models/calllogs/callSession.js";
 import { Astrologer } from "../../models/astrologer.js";
 import logger from "../../utils/logger.js";
+import admin from "../../utils/firabse.js";
 const billingTimers = new Map();
 const autoEndTimers = new Map();
 const reminderTimers = new Map();
