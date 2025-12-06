@@ -79,6 +79,8 @@ export const requestCallSession = asyncHandler(async (req, res) => {
     console.log("Requesting Astrologer ID:", astrologerId);
     console.log("Request User Role:", req.user.role);
     console.log("Call type:", callType);
+    console.log("=== REQUEST CALL SESSION ===");
+
 
     // ========== VALIDATIONS ==========
     if (!astrologerId) {
