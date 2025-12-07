@@ -350,7 +350,7 @@ export const acceptCallSession = asyncHandler(async (req, res) => {
     const payload = {
       requestId,
       sessionId: callSession.sessionId,
-      callId: callSession.call.toString(),
+      callId: callSession.callId.toString(),
       callType: callRequest.callType,
       ratePerMinute: callRequest.ratePerMinute,
       acceptedAt: now,
