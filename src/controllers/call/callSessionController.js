@@ -747,6 +747,7 @@ export const getAstrologerCallSessions = async (req, res) => {
       _id: call._id,
       callId: call._id,
       requestId: call.requestId,
+      sessionId: call.sessionId, // AUDIO or VIDEO
       callType: call.callType, // AUDIO or VIDEO
       direction: call.direction,
       status: call.status,
