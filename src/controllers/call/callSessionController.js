@@ -26,6 +26,8 @@ const activeCallTimers = new Map();
 // utils/notification.utils.js or wherever you keep it
 
 export const notifyAstrologerAboutCallRequest = async (req, astrologerId, payload) => {
+
+
   // 1. Socket notification – correct event for CALL
   emitSocketEvent(
     req,
@@ -36,6 +38,7 @@ export const notifyAstrologerAboutCallRequest = async (req, astrologerId, payloa
       requestId: payload.requestId,
       sessionId: payload.sessionId,
       callType: payload.callType,
+      receiverId: astrologerId,
       callerId: payload.callerId,
       callerName: payload.callerName,
       callerImage: payload.callerImage || "",
@@ -347,14 +350,14 @@ export const acceptCallSession = asyncHandler(async (req, res) => {
     const payload = {
       requestId,
       sessionId: callSession.sessionId,
-      callId: call?._id.toString(),
+      callId: callSession.call.toString(),
       callType: callRequest.callType,
       ratePerMinute: callRequest.ratePerMinute,
       acceptedAt: now,
       ringingExpiresAt: callSession.expiresAt
     };
 
-    // emitSocketEvent(req, callRequest.userId.toString(), ChatEventsEnum.CALL_ACCEPTED_EVENT, payload);
+    emitSocketEvent(req, callRequest.userId.toString(), ChatEventsEnum.CALL_ACCEPTED_EVENT, payload);
 
     // await sendNotification({
     //   userId: callRequest.userId,
@@ -1001,9 +1004,9 @@ const startRingingTimer = (sessionId, callId, reservationId) => {
     const mongoSession = await mongoose.startSession();
     try {
       await mongoSession.withTransaction(async () => {
-        const callSession = await CallSession.findOne({ 
-          sessionId, 
-          status: "RINGING" 
+        const callSession = await CallSession.findOne({
+          sessionId,
+          status: "RINGING"
         }).session(mongoSession);
 
         if (!callSession) return;
@@ -1128,29 +1131,29 @@ const setCallRequestTimer = (requestId, sessionId, astrologerId, userId, reserva
     const mongoSession = await mongoose.startSession();
     try {
       await mongoSession.withTransaction(async () => {
-        const callRequest = await CallRequest.findOne({ 
-          requestId, 
-          status: "PENDING" 
+        const callRequest = await CallRequest.findOne({
+          requestId,
+          status: "PENDING"
         }).session(mongoSession);
 
         if (!callRequest) return; // already handled
 
         // Mark everything as EXPIRED
         await Promise.all([
-          CallRequest.findByIdAndUpdate(callRequest._id, { 
-            status: "EXPIRED", 
-            respondedAt: new Date() 
+          CallRequest.findByIdAndUpdate(callRequest._id, {
+            status: "EXPIRED",
+            respondedAt: new Date()
           }, { session: mongoSession }),
 
-          CallSession.findOneAndUpdate({ sessionId }, { 
-            status: "EXPIRED", 
+          CallSession.findOneAndUpdate({ sessionId }, {
+            status: "EXPIRED",
             endedAt: new Date(),
             paymentStatus: "REFUNDED"
           }, { session: mongoSession }),
 
-          Call.findOneAndUpdate({ "meta.requestId": requestId }, { 
-            status: "EXPIRED", 
-            endTime: new Date() 
+          Call.findOneAndUpdate({ "meta.requestId": requestId }, {
+            status: "EXPIRED",
+            endTime: new Date()
           }, { session: mongoSession })
         ]);
 
