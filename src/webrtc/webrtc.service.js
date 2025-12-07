@@ -4,7 +4,7 @@ import logger from "../utils/logger.js";
 import admin from "../utils/firabse.js";
 import { CallNotificationService } from "./notification.js";
 import { Call } from "../models/calllogs/call.js";
-
+import { CallSession } from "../models/calllogs/callSession.js";
 export class WebRTCService {
   constructor(io) {
     this.io = io;
@@ -257,14 +257,18 @@ export class WebRTCService {
     }, timeoutMs);
   }
 
-  async handleAcceptCall(socket, { receiverId, callerId, callRecordId }) {
+  async handleAcceptCall(socket, { receiverId, callerId, callRecordId, sessionId }) {
     try {
+
       const callKey = this.generateCallKey(callerId, receiverId);
       logger.info(
         `[CALL_ACCEPT] ${receiverId} accepting call from ${callerId}`,
         { callRecordId, socketId: socket.id }
       );
+      const session = CallSession.findOne({ sessionId })
+      if (!session) throw new Error("Session Not found ");
 
+      
       const callRecord = await Call.findById(callRecordId);
       if (!callRecord) throw new Error("Call record not found");
 
@@ -948,8 +952,7 @@ export class WebRTCService {
         });
 
         logger.debug(
-          `[VIDEO_TOGGLED] User ${userId} ${
-            enabled ? "enabled" : "disabled"
+          `[VIDEO_TOGGLED] User ${userId} ${enabled ? "enabled" : "disabled"
           } video`,
           {
             callRecordId,
@@ -975,8 +978,7 @@ export class WebRTCService {
         });
 
         logger.debug(
-          `[AUDIO_TOGGLED] User ${userId} ${
-            enabled ? "enabled" : "disabled"
+          `[AUDIO_TOGGLED] User ${userId} ${enabled ? "enabled" : "disabled"
           } audio`,
           {
             callRecordId,
@@ -1002,8 +1004,7 @@ export class WebRTCService {
         });
 
         logger.debug(
-          `[SCREEN_SHARE_TOGGLED] User ${userId} ${
-            enabled ? "started" : "stopped"
+          `[SCREEN_SHARE_TOGGLED] User ${userId} ${enabled ? "started" : "stopped"
           } screen share`,
           {
             callRecordId,
