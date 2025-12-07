@@ -357,7 +357,7 @@ export const acceptCallSession = asyncHandler(async (req, res) => {
       ringingExpiresAt: callSession.expiresAt
     };
 
-    emitSocketEvent(req, callRequest.userId.toString(), ChatEventsEnum.CALL_ACCEPTED_EVENT, payload);
+    // emitSocketEvent(req, callRequest.userId.toString(), ChatEventsEnum.CALL_ACCEPTED_EVENT, payload);
 
     // await sendNotification({
     //   userId: callRequest.userId,
