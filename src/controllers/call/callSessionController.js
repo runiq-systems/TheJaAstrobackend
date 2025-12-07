@@ -343,16 +343,16 @@ export const acceptCallSession = asyncHandler(async (req, res) => {
     // START RINGING TIMER (with potential refund if missed)
     startRingingTimer(callSession.sessionId, callSession.callId, callSession.reservationId);
 
-    // // NOTIFY USER VIA SOCKET AND PUSH
-    // const payload = {
-    //   requestId,
-    //   sessionId: callSession.sessionId,
-    //   callId: call?._id.toString(),
-    //   callType: callRequest.callType,
-    //   ratePerMinute: callRequest.ratePerMinute,
-    //   acceptedAt: now,
-    //   ringingExpiresAt: callSession.expiresAt
-    // };
+    // NOTIFY USER VIA SOCKET AND PUSH
+    const payload = {
+      requestId,
+      sessionId: callSession.sessionId,
+      callId: call?._id.toString(),
+      callType: callRequest.callType,
+      ratePerMinute: callRequest.ratePerMinute,
+      acceptedAt: now,
+      ringingExpiresAt: callSession.expiresAt
+    };
 
     // emitSocketEvent(req, callRequest.userId.toString(), ChatEventsEnum.CALL_ACCEPTED_EVENT, payload);
 
