@@ -39,6 +39,7 @@ const astrologerSchema = new mongoose.Schema(
         type: String,
       },
     ],
+    
     yearOfExpertise: {
       type: String,
     },
@@ -56,6 +57,10 @@ const astrologerSchema = new mongoose.Schema(
     ratepermin: {
       type: Number,
       default: 5
+    },
+    rank: {
+      type: Number,
+      default: null
     },
     languages: {
       type: [String],
@@ -89,5 +94,11 @@ const astrologerSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+
+astrologerSchema.index({ rank: 1 });           // Rank sorting very fast
+astrologerSchema.index({ astrologerApproved: 1 });
+astrologerSchema.index({ accountStatus: 1 });
+astrologerSchema.index({ userId: 1 });
 
 export const Astrologer = mongoose.model("Astrologer", astrologerSchema)
