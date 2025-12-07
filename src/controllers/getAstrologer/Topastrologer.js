@@ -12,10 +12,20 @@ export const getTopAstrologers = async (req, res) => {
                 }
             },
             {
-                $sort: { rank: 1 }   // fastest due to index
+                $sort: { rank: 1 }
             },
             {
                 $limit: 10
+            },
+            {
+                $project: {
+                    _id: 1,
+                    userId: 1,
+                    languages: 1,
+                    ratepermin: 1,
+                    rank: 1,
+                    photo: 1
+                }
             },
             {
                 $lookup: {
@@ -27,12 +37,7 @@ export const getTopAstrologers = async (req, res) => {
                         {
                             $project: {
                                 _id: 1,
-                                fullName: 1,
-                                phone: 1,
-                                email: 1,
-                                gender: 1,
-                                isOnline: 1,
-                                status: 1
+                                fullName: 1
                             }
                         }
                     ]
