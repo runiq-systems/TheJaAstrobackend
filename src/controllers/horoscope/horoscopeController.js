@@ -1,4 +1,9 @@
+// src/controllers/horoscopeController.js
 import horoscope from "horoscope"; // Daily horoscope npm
+import NodeGeocoder from "node-geocoder";
+
+import { calculateKundali,matchKundali } from "../../utils/kundali.js";
+const geocoder = NodeGeocoder({ provider: "openstreetmap" });
 
 /**
  * Helper function to generate random percentage for Love/Career/Overall
@@ -81,3 +86,48 @@ export const getDailyHoroscope = async (req, res) => {
     }
 };
 
+/**
+ * Controller: Get Kundali report
+ */
+export const getKundaliReport = async (req, res) => {
+    try {
+        const { dob, time, place, gender } = req.body;
+
+        if (!dob || !time || !place || !gender) {
+            return res.status(400).json({ ok: false, message: "Missing required fields" });
+        }
+
+        const kundali = await calculateKundali({ dob, time, place, gender });
+
+        res.json({
+            ok: true,
+            data: kundali,
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ ok: false, message: "Server error", error: err.message });
+    }
+};
+
+/**
+ * Controller: Kundali Matchmaking
+ */
+export const getKundaliMatch = async (req, res) => {
+    try {
+        const { groom, bride } = req.body; // groom/bride = { dob, time, place, gender }
+
+        if (!groom || !bride) {
+            return res.status(400).json({ ok: false, message: "Missing groom or bride data" });
+        }
+
+        const matchResult = await matchKundali(groom, bride);
+
+        res.json({
+            ok: true,
+            data: matchResult,
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ ok: false, message: "Server error", error: err.message });
+    }
+};
