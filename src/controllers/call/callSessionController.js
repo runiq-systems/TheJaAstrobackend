@@ -86,42 +86,66 @@ export const requestCallSession = asyncHandler(async (req, res) => {
     const userName = req.user.fullName || "User";
     const userAvatar = req.user.avatar || "";
 
-    // VALIDATIONS (same as before)
+    // === VALIDATIONS ===
     if (!astrologerId) throw new ApiError(400, "Astrologer ID is required");
-    if (req.user.role === "astrologer") throw new ApiError(403, "Astrologers cannot request calls");
-    if (astrologerId.toString() === userId.toString()) throw new ApiError(400, "Cannot call yourself");
+    if (req.user.role === "astrologer") throw new ApiError(403, "Astrologers cannot initiate calls");
+    if (astrologerId.toString() === userId.toString()) throw new ApiError(400, "You cannot call yourself");
     if (!["AUDIO", "VIDEO"].includes(callType.toUpperCase())) throw new ApiError(400, "Invalid call type");
 
     const astrologerObjectId = new mongoose.Types.ObjectId(astrologerId);
 
+    // === CHECK ASTROLOGER EXISTS & ONLINE ===
     const astrologer = await User.findOne({
       _id: astrologerObjectId,
       role: "astrologer",
       userStatus: "Active",
-      isSuspend: false
-    }).session(session).select("fullName avatar callRate isOnline");
+      isSuspend: false,
+      isOnline: true
+    }).session(session).select("fullName avatar callRate");
 
-    if (!astrologer) throw new ApiError(404, "Astrologer not found or inactive");
-    if (!astrologer.isOnline) throw new ApiError(400, "Astrologer is offline");
+    if (!astrologer) throw new ApiError(404, "Astrologer not found, offline, or suspended");
 
     const astroProfile = await Astrologer.findOne({ userId: astrologerObjectId }).session(session);
     if (!astroProfile) throw new ApiError(404, "Astrologer profile not completed");
 
     const ratePerMinute = astroProfile.ratepermin || astrologer.callRate || 50;
 
-    // Check existing or busy (same)
-    const existingSession = await CallSession.findOne({ /* same */ });
-    if (existingSession) { /* return existing */ }
+    // === CHECK IF THERE IS ALREADY AN ACTIVE CALL BETWEEN THESE TWO ===
+    const existingSession = await CallSession.findOne({
+      $or: [
+        { userId, astrologerId: astrologerObjectId },
+        { userId: astrologerObjectId, astrologerId: userId }
+      ],
+      status: { $in: ["REQUESTED", "RINGING", "CONNECTED", "ACTIVE"] }
+    }).session(session);
 
-    const astrologerBusy = await CallSession.findOne({ /* busy check */ });
-    if (astrologerBusy) throw new ApiError(400, "Astrologer is busy");
+    if (existingSession) {
+      await session.abortTransaction();
+      return res.status(200).json(new ApiResponse(200, {
+        sessionId: existingSession.sessionId,
+        requestId: existingSession.requestId,
+        status: existingSession.status,
+        callType: existingSession.callType,
+        ratePerMinute: existingSession.ratePerMinute,
+        message: `Existing ${existingSession.status.toLowerCase()} call found`
+      }, "Existing call session found"));
+    }
 
-    // === NO BALANCE CHECK, NO RESERVATION HERE ===
-    // Just create session documents
+    // === CHECK IF ASTROLOGER IS ALREADY IN A CALL (BUSY) ===
+    const astrologerBusy = await CallSession.findOne({
+      astrologerId: astrologerObjectId,
+      status: { $in: ["RINGING", "CONNECTED", "ACTIVE"] }
+    }).session(session);
 
+    if (astrologerBusy) {
+      throw new ApiError(400, "Astrologer is currently busy in another call");
+    }
+
+    // === GENERATE IDs ===
     const requestId = CallRequest.generateRequestId();
     const sessionId = CallSession.generateSessionId();
 
+    // === CREATE CALL DOCUMENTS (NO MONEY RESERVED) ===
     const callSession = await CallSession.create([{
       sessionId,
       requestId,
@@ -131,9 +155,13 @@ export const requestCallSession = asyncHandler(async (req, res) => {
       ratePerMinute,
       status: "REQUESTED",
       requestedAt: new Date(),
-      expiresAt: new Date(Date.now() + 3 * 60 * 1000),
+      expiresAt: new Date(Date.now() + 3 * 60 * 1000), // 3 minutes to accept
       minimumCharge: Math.max(50, ratePerMinute),
-      meta: { callerName: userName, callerImage: userAvatar, userMessage: userMessage?.trim() || "" }
+      meta: {
+        callerName: userName,
+        callerImage: userAvatar,
+        userMessage: userMessage?.trim() || ""
+      }
     }], { session });
 
     await CallRequest.create([{
@@ -160,12 +188,17 @@ export const requestCallSession = asyncHandler(async (req, res) => {
       meta: { requestId, sessionId }
     }], { session });
 
-    await CallSession.findByIdAndUpdate(callSession[0]._id, { callId: callDoc[0]._id }, { session });
+    // Link callId
+    await CallSession.findByIdAndUpdate(
+      callSession[0]._id,
+      { callId: callDoc[0]._id },
+      { session }
+    );
 
     hasCommitted = true;
     await session.commitTransaction();
 
-    // Notify astrologer
+    // === NOTIFY ASTROLOGER ===
     await notifyAstrologerAboutCallRequest(req, astrologerObjectId, {
       requestId,
       sessionId,
@@ -175,28 +208,32 @@ export const requestCallSession = asyncHandler(async (req, res) => {
       callerImage: userAvatar,
       ratePerMinute,
       expiresAt: new Date(Date.now() + 3 * 60 * 1000),
+      message: userMessage || `${userName} wants to connect via ${callType.toLowerCase()} call`
     });
 
-    // Set expiry timer (no refund needed — nothing reserved)
+    // === SET EXPIRY TIMER (auto-cancel after 3 mins if not accepted) ===
     setCallRequestTimer(requestId, sessionId, astrologerObjectId, userId);
 
-    return res.status(201).json(new ApiResponse(201, {
-      requestId,
-      sessionId,
-      callType: callType.toUpperCase(),
-      ratePerMinute,
-      expiresAt: new Date(Date.now() + 3 * 60 * 1000),
-      status: "PENDING"
-    }, "Call request sent"));
+    return res.status(201).json(
+      new ApiResponse(201, {
+        requestId,
+        sessionId,
+        callType: callType.toUpperCase(),
+        ratePerMinute,
+        expiresAt: new Date(Date.now() + 3 * 60 * 1000),
+        status: "PENDING"
+      }, "Call request sent successfully")
+    );
 
   } catch (error) {
-    if (!hasCommitted && session.inTransaction()) await session.abortTransaction();
+    if (!hasCommitted && session.inTransaction()) {
+      await session.abortTransaction();
+    }
     throw error;
   } finally {
     session.endSession();
   }
 });
-
 // Updated acceptCallSession (no balance check, just set RINGING)
 export const acceptCallSession = asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
