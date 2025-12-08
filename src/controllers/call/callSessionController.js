@@ -332,25 +332,41 @@ export const acceptCallSession = asyncHandler(async (req, res) => {
 
 // Updated startCallSession (no balance check, start billing)
 export const startCallSession = asyncHandler(async (req, res) => {
-  const session = await mongoose.startSession();
+  const mongoSession = await mongoose.startSession();
+  let sessionId; // ← Declare outside
 
   try {
-    await session.withTransaction(async () => {
-      const { sessionId } = req.params;
-      const userId = req.user._id;
+    // CRITICAL: Extract sessionId safely
+    sessionId = req.params.sessionId || req.params.sessionid || req.body.sessionId;
 
-      const callSession = await CallSession.findOne({ sessionId }).session(session);
+    if (!sessionId) {
+      throw new ApiError(400, "sessionId is required in URL params");
+    }
+
+    const userId = req.user._id;
+
+    await mongoSession.withTransaction(async () => {
+      const callSession = await CallSession.findOne({
+        sessionId
+      }).session(mongoSession);
+
       if (!callSession) throw new ApiError(404, "Call session not found");
-      if (callSession.userId.toString() !== userId.toString()) throw new ApiError(403, "Unauthorized");
+
+      if (callSession.userId.toString() !== userId.toString()) {
+        throw new ApiError(403, "You are not authorized to start this call");
+      }
+
       if (callSession.status !== "RINGING") {
-        if (callSession.status === "CONNECTED") throw new ApiError(200, "Call already connected");
-        throw new ApiError(400, `Invalid status: ${callSession.status}`);
+        if (callSession.status === "CONNECTED" || callSession.status === "ACTIVE") {
+          throw new ApiError(200, "Call already connected");
+        }
+        throw new ApiError(400, `Cannot start call: current status is ${callSession.status}`);
       }
 
       const now = new Date();
       const ratePerMinute = callSession.ratePerMinute;
 
-      // === RESERVE 10 MINUTES NOW (when call actually starts) ===
+      // Reserve 10 minutes only when call actually connects
       const estimatedMinutes = 10;
       const estimatedCost = ratePerMinute * estimatedMinutes;
 
@@ -363,7 +379,8 @@ export const startCallSession = asyncHandler(async (req, res) => {
       if (!balanceCheck.hasSufficientBalance) {
         throw new ApiError(402, "Insufficient balance to start call", {
           required: estimatedCost,
-          available: balanceCheck.availableBalance
+          available: balanceCheck.availableBalance,
+          shortfall: balanceCheck.shortfall
         });
       }
 
@@ -391,8 +408,8 @@ export const startCallSession = asyncHandler(async (req, res) => {
         startAt: now,
         expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
         commissionDetails,
-        meta: { estimatedMinutes }
-      }], { session });
+        meta: { estimatedMinutes, initialReservation: true }
+      }], { session: mongoSession });
 
       // Lock money
       await WalletService.reserveAmount({
@@ -400,28 +417,28 @@ export const startCallSession = asyncHandler(async (req, res) => {
         amount: estimatedCost,
         reservationId: reservation[0]._id,
         sessionType: "CALL",
-        description: `Reserved for ${callSession.callType} call (10 mins)`,
-        session
+        description: `Reserved ₹${estimatedCost} for ${callSession.callType} call (10 mins)`,
+        session: mongoSession
       });
 
-      // Update session
+      // Update session to CONNECTED
       callSession.status = "CONNECTED";
       callSession.connectedAt = now;
       callSession.reservationId = reservation[0]._id;
-      await callSession.save({ session });
+      await callSession.save({ session: mongoSession });
 
-      const call = await Call.findById(callSession.callId).session(session);
+      const call = await Call.findById(callSession.callId).session(mongoSession);
       if (call) {
         call.connectTime = now;
         call.status = "CONNECTED";
         call.reservationId = reservation[0]._id;
-        await call.save({ session });
+        await call.save({ session: mongoSession });
       }
-    });
+    }); // end transaction
 
-    // === AFTER COMMIT: Start real billing ===
-    const callSession = await CallSession.findOne({ sessionId: req.params.sessionId });
-    const reservation = await Reservation.findById(callSession.reservationId);
+    // AFTER COMMIT — Safe to use sessionId now
+    const callSession = await CallSession.findOne({ sessionId });
+    if (!callSession) throw new ApiError(500, "Session lost after connect");
 
     // Mark reservation as ONGOING
     await Reservation.findByIdAndUpdate(callSession.reservationId, {
@@ -429,10 +446,10 @@ export const startCallSession = asyncHandler(async (req, res) => {
       startAt: new Date()
     });
 
-    // Clear ringing timer
+    // Clear ringing timeout
     clearCallTimer(sessionId, "ringing");
 
-    // === START REAL-TIME BILLING ===
+    // START REAL-TIME BILLING
     startBillingTimer(
       sessionId,
       callSession.callId,
@@ -448,22 +465,32 @@ export const startCallSession = asyncHandler(async (req, res) => {
       callId: callSession.callId.toString(),
       status: "CONNECTED",
       ratePerMinute: callSession.ratePerMinute,
-      connectTime: new Date()
+      connectTime: callSession.connectedAt || new Date(),
+      reservedAmount: callSession.ratePerMinute * 10
     };
 
+    // Notify both users
     emitSocketEvent(req, callSession.userId.toString(), ChatEventsEnum.CALL_CONNECTED, payload);
     emitSocketEvent(req, callSession.astrologerId.toString(), ChatEventsEnum.CALL_CONNECTED, payload);
 
-    return res.status(200).json(new ApiResponse(200, payload, "Call connected & billing started"));
+    return res.status(200).json(
+      new ApiResponse(200, payload, "Call connected successfully. Billing started.")
+    );
 
   } catch (error) {
+    // Handle idempotency: if already connected
     if (error.statusCode === 200) {
-      // Already connected
-      return res.status(200).json(new ApiResponse(200, {}, "Call already connected"));
+      const fallbackSession = await CallSession.findOne({ sessionId });
+      if (fallbackSession && ["CONNECTED", "ACTIVE"].includes(fallbackSession.status)) {
+        return res.status(200).json(
+          new ApiResponse(200, { sessionId, status: "CONNECTED" }, "Call already connected")
+        );
+      }
     }
+
     throw error;
   } finally {
-    session.endSession();
+    mongoSession.endSession();
   }
 });
 // Updated endCall (deduct actual, refund excess)
