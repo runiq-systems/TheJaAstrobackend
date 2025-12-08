@@ -42,10 +42,10 @@ export class WebRTCService {
 
       socket.on("join", this.handleJoin.bind(this, socket));
       socket.on("disconnect", this.handleDisconnect.bind(this, socket));
-      socket.on(
-        "getOnlineStatus",
-        this.handleGetOnlineStatus.bind(this, socket)
-      );
+      // socket.on(
+      //   "getOnlineStatus",
+      //   this.handleGetOnlineStatus.bind(this, socket)
+      // );
 
       // Call lifecycle
       socket.on("call", this.handleCall.bind(this, socket));
@@ -70,7 +70,7 @@ export class WebRTCService {
       socket.on("qualityMetrics", this.handleQualityMetrics.bind(this, socket));
 
       // User status
-      socket.on("updateStatus", this.handleUpdateStatus.bind(this, socket));
+      // socket.on("updateStatus", this.handleUpdateStatus.bind(this, socket));
     });
   }
 
@@ -88,7 +88,7 @@ export class WebRTCService {
       this.users.get(userId).add(socket.id);
       socket.userId = userId;
 
-      await this.updateUserStatus(userId, "Online");
+      // await this.updateUserStatus(userId, "Online");
 
       logger.info(`User ${userId} joined with socket ${socket.id}`, {
         totalSockets: this.users.get(userId).size,
@@ -102,7 +102,7 @@ export class WebRTCService {
         isOnline: user.isOnline,
       });
 
-      this.broadcastUserStatus(userId, "Online", user);
+      // this.broadcastUserStatus(userId, "Online", user);
     } catch (error) {
       logger.error(`Join error for user ${userId}:`, error);
       socket.emit("error", {
@@ -122,10 +122,10 @@ export class WebRTCService {
       const userSockets = this.users.get(userId);
       if (userSockets) {
         userSockets.delete(socket.id);
-        if (userSockets.size === 0) {
-          this.users.delete(userId);
-          await this.updateUserStatus(userId, "offline");
-        }
+        // if (userSockets.size === 0) {
+        //   this.users.delete(userId);
+        //   await this.updateUserStatus(userId, "offline");
+        // }
       }
 
       await this.handleCallDisconnection(userId, socket);
@@ -1112,10 +1112,10 @@ export class WebRTCService {
       const user = await User.findByIdAndUpdate(userId, updateData, {
         new: true,
       }).select("name fullName profilePicture status isOnline lastSeen");
-      if (user) {
-        this.broadcastUserStatus(userId, user.status, user);
-        logger.debug(`User ${userId} status updated to ${status}`);
-      }
+      // if (user) {
+      //   // this.broadcastUserStatus(userId, user.status, user);
+      //   logger.debug(`User ${userId} status updated to ${status}`);
+      // }
     } catch (error) {
       logger.error(`Status update error for user ${userId}:`, error);
     }
@@ -1135,37 +1135,37 @@ export class WebRTCService {
     return null;
   }
 
-  async handleGetOnlineStatus(socket, { userId }) {
-    try {
-      const user = await User.findById(userId).select(
-        "status isOnline lastSeen"
-      );
-      if (user)
-        socket.emit("onlineStatus", {
-          userId,
-          status: user.status,
-          isOnline: user.isOnline,
-          lastSeen: user.lastSeen,
-        });
-    } catch (error) {
-      logger.error(`Get online status error:`, error);
-    }
-  }
+  // async handleGetOnlineStatus(socket, { userId }) {
+  //   try {
+  //     const user = await User.findById(userId).select(
+  //       "status isOnline lastSeen"
+  //     );
+  //     if (user)
+  //       socket.emit("onlineStatus", {
+  //         userId,
+  //         status: user.status,
+  //         isOnline: user.isOnline,
+  //         lastSeen: user.lastSeen,
+  //       });
+  //   } catch (error) {
+  //     logger.error(`Get online status error:`, error);
+  //   }
+  // }
 
-  async handleUpdateStatus(socket, { status }) {
-    try {
-      const userId = socket.userId;
-      if (!userId) return;
-      await this.updateUserStatus(userId, status);
-      socket.emit("statusUpdated", { status });
-    } catch (error) {
-      logger.error(`Update status error:`, error);
-      socket.emit("error", {
-        type: "STATUS_UPDATE_ERROR",
-        message: error.message,
-      });
-    }
-  }
+  // async handleUpdateStatus(socket, { status }) {
+  //   try {
+  //     const userId = socket.userId;
+  //     if (!userId) return;
+  //     // await this.updateUserStatus(userId, status);
+  //     // socket.emit("statusUpdated", { status });
+  //   } catch (error) {
+  //     logger.error(`Update status error:`, error);
+  //     socket.emit("error", {
+  //       type: "STATUS_UPDATE_ERROR",
+  //       message: error.message,
+  //     });
+  //   }
+  // }
 
   getServiceStats() {
     return {
