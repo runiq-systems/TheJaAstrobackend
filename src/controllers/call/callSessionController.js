@@ -387,49 +387,69 @@ export const acceptCallSession = asyncHandler(async (req, res) => {
 // Updated startCallSession (no balance check, start billing)
 export const startCallSession = asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
-  let hasCommitted = false;
 
   try {
-    session.startTransaction();
-
     const { sessionId } = req.params;
     const userId = req.user._id;
 
-    const callSession = await CallSession.findOne({ sessionId }).session(session);
-    if (!callSession) throw new ApiError(404, "Call session not found");
+    // ─────── TRANSACTION: Only update state if still RINGING ───────
+    await session.withTransaction(async () => {
+      const callSession = await CallSession.findOne({ sessionId }).session(session);
+      if (!callSession) throw new ApiError(404, "Call session not found");
 
-    const call = await Call.findById(callSession.callId).session(session);
-    if (!call) throw new ApiError(404, "Call record not found");
-
-    if (call.userId.toString() !== userId.toString()) throw new ApiError(403, "Unauthorized");
-
-    if (call.status !== "RINGING") {
-      if (call.status === "CONNECTED" || call.status === "ACTIVE") {
-        await session.abortTransaction();
-        return res.status(200).json(new ApiResponse(200, { status: call.status }, "Call already connected"));
+      // Only the user (caller) can pick up
+      if (callSession.userId.toString() !== userId.toString()) {
+        throw new ApiError(403, "Unauthorized");
       }
-      throw new ApiError(400, `Cannot start: status is ${call.status}`);
-    }
 
-    const now = new Date();
+      // MAIN CHECK: Must be RINGING
+      if (callSession.status !== "RINGING") {
+        if (["CONNECTED", "ACTIVE"].includes(callSession.status)) {
+          // Already connected → just return success (idempotent)
+          throw new ApiError(200, "Call already connected");
+        }
+        throw new ApiError(400, `Cannot start call: current status is ${callSession.status}`);
+      }
 
-    // UPDATE TO CONNECTED
-    call.status = "CONNECTED";
-    call.connectTime = now;
-    call.paymentStatus = "RESERVED";
-    await call.save({ session });
+      const now = new Date();
 
-    callSession.status = "CONNECTED";
-    callSession.connectedAt = now;
-    await callSession.save({ session });
+      // ── Update CallSession (MAIN source of truth) ──
+      callSession.status = "CONNECTED";
+      callSession.connectedAt = now;
+      await callSession.save();
 
-    hasCommitted = true;
-    await session.commitTransaction();
+      // ── Update Call document (only if needed — idempotent!) ──
+      const call = await Call.findById(callSession.callId).session(session);
+      if (call) {
+        let needsSave = false;
 
-    // CLEAR RINGING TIMER
-    clearCallTimer(sessionId, 'ringing');
+        // Set connectTime only once!
+        if (!call.connectTime) {
+          call.connectTime = now;
+          needsSave = true;
+        }
 
-    // START BILLING TIMER
+        // Update status only if not already connected
+        if (!["CONNECTED", "ACTIVE"].includes(call.status)) {
+          call.status = "CONNECTED";
+          call.paymentStatus = "RESERVED";
+          needsSave = true;
+        }
+
+        if (needsSave) {
+          await call.save();
+        }
+      }
+    }); // ← transaction ends here
+
+    // ─────── AFTER COMMIT: Start billing & clear timer (SAFE) ───────
+    const callSession = await CallSession.findOne({ sessionId });
+    const call = await Call.findById(callSession.callId);
+
+    // 1. Clear the 45-second "missed call" timer
+    clearCallTimer(sessionId, "ringing");
+
+    // 2. Start billing (only once!)
     startBillingTimer(
       sessionId,
       call._id,
@@ -440,22 +460,37 @@ export const startCallSession = asyncHandler(async (req, res) => {
       call.callType
     );
 
-    // NOTIFY BOTH
+    // 3. Notify both sides
     const payload = {
       sessionId,
       callId: call._id.toString(),
       status: "CONNECTED",
-      connectTime: now,
-      ratePerMinute: call.chargesPerMinute
+      connectTime: call.connectTime || new Date(),
+      ratePerMinute: call.chargesPerMinute,
     };
 
     emitSocketEvent(req, call.userId.toString(), ChatEventsEnum.CALL_CONNECTED, payload);
     emitSocketEvent(req, call.astrologerId.toString(), ChatEventsEnum.CALL_CONNECTED, payload);
 
-    return res.status(200).json(new ApiResponse(200, payload, "Call connected"));
+    return res.status(200).json(new ApiResponse(200, payload, "Call connected successfully"));
 
   } catch (error) {
-    if (!hasCommitted && session.inTransaction()) await session.abortTransaction();
+    // Special handling for "already connected" (idempotent success)
+    if (error.statusCode === 200 && error.message === "Call already connected") {
+      const callSession = await CallSession.findOne({ sessionId: req.params.sessionId });
+      const call = callSession ? await Call.findById(callSession.callId) : null;
+
+      const payload = {
+        sessionId: req.params.sessionId,
+        callId: call?._id?.toString() || "",
+        status: "CONNECTED",
+        connectTime: call?.connectTime || new Date(),
+        ratePerMinute: call?.chargesPerMinute || 0,
+      };
+
+      return res.status(200).json(new ApiResponse(200, payload, "Call already connected"));
+    }
+
     throw error;
   } finally {
     session.endSession();
