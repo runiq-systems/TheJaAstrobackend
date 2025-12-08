@@ -822,152 +822,117 @@ export const getCallSessionDetails = asyncHandler(async (req, res) => {
     );
 });
 
+// ─────────────────────── CALL BILLING TIMER (NOT CHAT) ───────────────────────
 const startBillingTimer = async (
   sessionId,
-  chatId,
+  callId,                    // ← Call._id (MongoID)
+  userId,
+  astrologerId,
   ratePerMinute,
   reservationId,
+  callType,
   estimatedMinutes = 10
 ) => {
   if (billingTimers.has(sessionId)) {
-    console.log(`Billing already active for session: ${sessionId}`);
+    console.log(`[CALL] Billing already running for ${sessionId}`);
     return;
   }
 
-  console.log(
-    `Starting billing timer for session: ${sessionId}, Estimated: ${estimatedMinutes} mins`
-  );
+  console.log(`[CALL] Starting billing for session: ${sessionId}, rate: ₹${ratePerMinute}/min`);
 
-  // Clear any existing timer first
-  stopBillingTimer(sessionId);
+  stopBillingTimer(sessionId); // cleanup
 
-  // Store session details for auto-end
   const sessionDurationMs = estimatedMinutes * 60 * 1000;
   const startedAt = new Date();
 
-  // Set up auto-end timer
-  const autoEndTimer = setTimeout(async () => {
-    await handleSessionAutoEnd(sessionId, chatId, reservationId);
+  // Auto-end after estimated minutes
+  const autoEndTimer = setTimeout(() => {
+    handleCallAutoEnd(sessionId, callId, reservationId);
   }, sessionDurationMs);
-
-  // Store auto-end timer
   autoEndTimers.set(sessionId, autoEndTimer);
 
-  // Set up reminders (5 minutes, 2 minutes, 1 minute before end)
-  setupSessionReminders(sessionId, chatId, estimatedMinutes);
+  // Setup reminders (5, 2, 1 min)
+  [5, 2, 1].forEach(min => {
+    if (estimatedMinutes > min) {
+      const delay = (estimatedMinutes - min) * 60 * 1000;
+      const timer = setTimeout(() => {
+        sendCallReminder(sessionId, min);
+      }, delay);
+      reminderTimers.set(`${sessionId}_${min}min`, timer);
+    }
+  });
 
-  // Start per-minute billing interval
+  // Per-minute billing
   const interval = setInterval(async () => {
     try {
-      const session = await ChatSession.findOne({
+      // ← CORRECT: Use CallSession, not ChatSession!
+      const callSession = await CallSession.findOne({
         sessionId,
-        status: { $in: ["ACTIVE", "PAUSED"] },
+        status: { $in: ["CONNECTED", "ACTIVE"] }
       });
 
-      if (!session || session.status !== "ACTIVE") {
+      if (!callSession || !["CONNECTED", "ACTIVE"].includes(callSession.status)) {
+        console.log(`[CALL] Session ${sessionId} no longer active. Stopping billing.`);
         stopBillingTimer(sessionId);
         return;
       }
 
-      // Update billed duration (only if session is active)
-      const updateResult = await ChatSession.findByIdAndUpdate(
-        session._id,
+      // Increment billed duration
+      const updated = await CallSession.findOneAndUpdate(
+        { sessionId },
         {
-          $inc: { billedDuration: 60 }, // Add 60 seconds
-          lastActivityAt: new Date(),
+          $inc: { billedDuration: 60 },
+          $set: { lastActivityAt: new Date() }
         },
         { new: true }
       );
 
-      if (!updateResult) {
-        stopBillingTimer(sessionId);
-        return;
-      }
+      const billedMinutes = Math.ceil(updated.billedDuration / 60);
+      const currentCost = Math.max(updated.minimumCharge || ratePerMinute, billedMinutes * ratePerMinute);
 
-      // Calculate current cost based on actual billed duration
-      const billedMinutes = Math.ceil(updateResult.billedDuration / 60);
-      const currentCost = ratePerMinute * billedMinutes;
-
-      // Update reservation with actual cost
+      // Update reservation
       if (reservationId) {
         await Reservation.findByIdAndUpdate(reservationId, {
-          $set: {
-            totalCost: currentCost,
-            billedMinutes: billedMinutes,
-            totalDurationSec: updateResult.billedDuration,
-            status: "ONGOING",
-          },
+          totalCost: currentCost,
+          billedMinutes,
+          totalDurationSec: updated.billedDuration,
+          status: "ONGOING"
         });
       }
 
-      // Calculate time remaining
-      const elapsedMs = billedMinutes * 60 * 1000;
-      const remainingMs = Math.max(0, sessionDurationMs - elapsedMs);
-      const minutesRemaining = Math.ceil(remainingMs / (60 * 1000));
+      const minutesRemaining = Math.max(0, Math.ceil((sessionDurationMs - updated.billedDuration * 1000) / 60000));
 
-      // Check if session needs to be auto-ended (if no time left)
-      if (remainingMs <= 0) {
-        console.log(
-          `Session ${sessionId} time limit reached, triggering auto-end`
-        );
-        await handleSessionAutoEnd(sessionId, chatId, reservationId);
-        return;
-      }
-
-      // Send reminder at specific intervals
-      if (minutesRemaining === 5 && !reminderSent.has(`${sessionId}_5min`)) {
-        sendSessionReminder(sessionId, chatId, 5);
-        reminderSent.set(`${sessionId}_5min`, true);
-      }
-
-      if (minutesRemaining === 2 && !reminderSent.has(`${sessionId}_2min`)) {
-        sendSessionReminder(sessionId, chatId, 2);
-        reminderSent.set(`${sessionId}_2min`, true);
-      }
-
-      if (minutesRemaining === 1 && !reminderSent.has(`${sessionId}_1min`)) {
-        sendSessionReminder(sessionId, chatId, 1);
-        reminderSent.set(`${sessionId}_1min`, true);
-      }
-
-      // Notify clients about billing update
-      emitSocketEventGlobal(chatId, ChatEventsEnum.BILLING_UPDATE_EVENT, {
+      // Send billing update
+      emitSocketEventGlobal(callId.toString(), ChatEventsEnum.BILLING_UPDATE_EVENT, {
         sessionId,
-        billedDuration: updateResult.billedDuration,
-        billedMinutes: billedMinutes,
+        billedDuration: updated.billedDuration,
+        billedMinutes,
         currentCost,
         ratePerMinute,
         minutesRemaining,
-        nextBillingIn: 60,
       });
 
-      console.log(
-        `Billed session ${sessionId}: ${updateResult.billedDuration}s, ${billedMinutes}m, ₹${currentCost}, ${minutesRemaining} min remaining`
-      );
-    } catch (error) {
-      console.error(`Billing error for session ${sessionId}:`, error);
+      // Auto-end if time up
+      if (minutesRemaining <= 0) {
+        handleCallAutoEnd(sessionId, callId, reservationId);
+      }
+
+    } catch (err) {
+      console.error(`[CALL] Billing error for ${sessionId}:`, err);
       stopBillingTimer(sessionId);
     }
-  }, 60000); // Every minute
+  }, 60000);
 
-  // Store the interval
-  billingTimers.set(sessionId, {
-    interval,
-    startedAt,
-    reservationId,
-    chatId,
-    ratePerMinute,
-  });
+  billingTimers.set(sessionId, { interval, startedAt });
 
-  // Immediately send first billing update
-  emitSocketEventGlobal(chatId, ChatEventsEnum.BILLING_UPDATE_EVENT, {
+  // Initial billing update
+  emitSocketEventGlobal(callId.toString(), ChatEventsEnum.BILLING_UPDATE_EVENT, {
     sessionId,
     billedDuration: 0,
     billedMinutes: 0,
     currentCost: 0,
     ratePerMinute,
     minutesRemaining: estimatedMinutes,
-    nextBillingIn: 60,
   });
 };
 
@@ -999,6 +964,31 @@ const setupSessionReminders = (sessionId, chatId, estimatedMinutes) => {
   });
 };
 
+
+const handleCallAutoEnd = async (sessionId, callId, reservationId) => {
+  try {
+    const callSession = await CallSession.findOne({ sessionId });
+    if (!callSession || callSession.status === "COMPLETED") return;
+
+    await endCallLogic(sessionId, "AUTO_ENDED", "Insufficient balance / time limit");
+  } catch (err) {
+    console.error("Auto-end failed:", err);
+  }
+};
+
+const sendCallReminder = async (sessionId, minutes) => {
+  const callSession = await CallSession.findOne({ sessionId })
+    .populate("userId", "fullName")
+    .populate("astrologerId", "fullName");
+
+  if (!callSession) return;
+
+  emitSocketEventGlobal(callSession.callId?.toString(), ChatEventsEnum.RESERVATION_ENDING_SOON, {
+    sessionId,
+    minutesRemaining: minutes,
+    message: `Your call will end in ${minutes} minute${minutes > 1 ? 's' : ''}`
+  });
+};
 const startRingingTimer = (sessionId, callId, reservationId) => {
   const timer = setTimeout(async () => {
     const mongoSession = await mongoose.startSession();
