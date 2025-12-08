@@ -696,6 +696,173 @@ export const getRecentChats = async (req, res) => {
 
 
 
+// services/chatService.js or controllers/chatController.js
+
+const getRecentChats = async (currentUserId) => {
+  const chats = await Chat.aggregate([
+    // 1. Match only chats where the user is a participant
+    {
+      $match: {
+        participants: new mongoose.Types.ObjectId(currentUserId)
+      }
+    },
+
+    // 2. Lookup the last message (most recent one)
+    {
+      $lookup: {
+        from: "messages",
+        let: { chatId: "$_id" },
+        pipeline: [
+          { $match: { $expr: { $eq: ["$chat", "$$chatId"] } } },
+          { $sort: { createdAt: -1 } },
+          { $limit: 1 },
+          {
+            $project: {
+              content: 1,
+              type: 1,
+              sender: 1,
+              createdAt: 1,
+              readBy: 1,
+              deleted: 1
+            }
+          }
+        ],
+        as: "lastMessage"
+      }
+    },
+    { $unwind: { path: "$lastMessage", preserveNullAndEmptyArrays: true } },
+
+    // 3. Count unread messages (messages not read by current user)
+    {
+      $lookup: {
+        from: "messages",
+        let: { chatId: "$_id" },
+        pipeline: [
+          {
+            $match: {
+              $expr: { $eq: ["$chat", "$$chatId"] },
+              "readBy.user": { $ne: new mongoose.Types.ObjectId(currentUserId) },
+              sender: { $ne: new mongoose.Types.ObjectId(currentUserId) },
+              "deleted.isDeleted": { $ne: true }
+            }
+          },
+          { $count: "total" }
+        ],
+        as: "unreadInfo"
+      }
+    },
+    {
+      $addFields: {
+        unreadCount: {
+          $ifNull: [{ $arrayElemAt: ["$unreadInfo.total", 0] }, 0]
+        }
+      }
+    },
+
+    // 4. Sort by last message time (most recent first), fallback to chat updatedAt
+    {
+      $sort: {
+        "lastMessage.createdAt": -1,
+        updatedAt: -1
+      }
+    },
+
+    // 5. Final projection (clean output)
+    {
+      $project: {
+        _id: 1,
+        name: 1,
+        isGroupChat: 1,
+        participants: 1,
+        admins: 1,
+        avatar: 1,
+        description: 1,
+        isPrivate: 1,
+        settings: 1,
+        createdAt: 1,
+        updatedAt: 1,
+
+        lastMessage: {
+          _id: "$lastMessage._id",
+          sender: "$lastMessage.sender",
+          content: "$lastMessage.content",
+          type: "$lastMessage.type",
+          createdAt: "$lastMessage.createdAt",
+          isDeleted: "$lastMessage.deleted.isDeleted",
+          preview: {
+            $cond: {
+              if: {
+                $or: [
+                  { $eq: ["$lastMessage.deleted.isDeleted", true] },
+                  { $eq: ["$lastMessage.type", "system"] }
+                ]
+              },
+              then: "Message deleted",
+              else: {
+                $cond: {
+                  if: { $gt: [{ $strLenCP: "$lastMessage.content.text" }, 0] },
+                  then: { $substrCP: ["$lastMessage.content.text", 0, 50] },
+                  else: {
+                    $cond: {
+                      if: { $gt: [{ $size: "$lastMessage.content.media" }, 0] },
+                      then: {
+                        $concat: [
+                          "",
+                          { $toUpper: { $arrayElemAt: ["$lastMessage.content.media.type", 0] } },
+                          " ",
+                          { $arrayElemAt: ["$lastMessage.content.media.type", 0] }
+                        ]
+                      },
+                      else: "System message"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        unreadCount: 1,
+        lastMessageAt: {
+          $ifNull: ["$lastMessage.createdAt", "$updatedAt"]
+        }
+      }
+    },
+
+    // 6. Populate participants (only needed fields for chat list)
+    {
+      $lookup: {
+        from: "users",
+        localField: "participants",
+        foreignField: "_id",
+        as: "participantsInfo",
+        pipeline: [
+          { $project: { username: 1, fullName: 1, avatar: 1, isOnline: 1, lastActiveAt: 1 } }
+        ]
+      }
+    },
+
+    // For personal chats → add "otherUser" field (the person you're chatting with)
+    {
+      $addFields: {
+        otherUser: {
+          $arrayElemAt: [
+            {
+              $filter: {
+                input: "$participantsInfo",
+                cond: { $ne: ["$$this._id", new mongoose.Types.ObjectId(currentUserId)] }
+              }
+            },
+            0
+          ]
+        }
+      }
+    }
+  ]);
+
+  return chats;
+};
+
+
 
 // mark all unread messages in a chat as read by current user
 export const markChatAsRead = async (req, res) => {
