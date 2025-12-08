@@ -728,4 +728,54 @@ export class WalletService {
             throw new ApiError(500, `Balance check failed: ${error.message}`);
         }
     }
+
+
+    // Add this method to WalletService class
+    static async cancelReservation(reservationId, session = null) {
+        const ownSession = !session;
+        const mongoSession = session || (await mongoose.startSession());
+
+        try {
+            if (ownSession) mongoSession.startTransaction();
+
+            const reservation = await Reservation.findById(reservationId).session(mongoSession);
+            if (!reservation) {
+                console.log("Reservation not found for cancel:", reservationId);
+                return { success: true, message: "Reservation already processed or not found" };
+            }
+
+            if (reservation.status !== "RESERVED") {
+                console.log("Reservation already processed:", reservation.status);
+                return { success: true, message: `Reservation already ${reservation.status}` };
+            }
+
+            const amount = reservation.lockedAmount || 0;
+
+            if (amount > 0) {
+                await this.releaseAmount({
+                    userId: reservation.userId,
+                    amount,
+                    currency: reservation.currency || "INR",
+                    reservationId: reservation._id,
+                    description: "Call request expired/rejected/cancelled - full refund",
+                    session: mongoSession,
+                });
+            }
+
+            reservation.status = "CANCELLED";
+            reservation.cancelledAt = new Date();
+            reservation.refundedAmount = amount;
+            await reservation.save({ session: mongoSession });
+
+            if (ownSession) await mongoSession.commitTransaction();
+
+            return { success: true, refundedAmount: amount };
+        } catch (error) {
+            if (ownSession) await mongoSession.abortTransaction();
+            console.error("cancelReservation failed:", error);
+            throw error;
+        } finally {
+            if (ownSession) mongoSession.endSession();
+        }
+    }
 }

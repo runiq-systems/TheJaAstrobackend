@@ -268,7 +268,7 @@ export class WebRTCService {
       const session = CallSession.findOne({ sessionId })
       if (!session) throw new Error("Session Not found ");
 
-      
+
       const callRecord = await Call.findById(callRecordId);
       if (!callRecord) throw new Error("Call record not found");
 
@@ -301,6 +301,7 @@ export class WebRTCService {
         receiverPicture: receiverUser?.profilePicture,
         callRecordId: callRecord._id,
         callType: callRecord.callType,
+        sessionId: sessionId,
         timestamp: new Date(),
       };
 
@@ -311,6 +312,7 @@ export class WebRTCService {
         callerPicture: callerUser?.profilePicture,
         callRecordId: callRecord._id,
         callType: callRecord.callType,
+        sessionId: sessionId, // ADD THIS LINE
         timestamp: new Date(),
       };
 

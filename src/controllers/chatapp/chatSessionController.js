@@ -263,7 +263,7 @@ export const startChatSession = asyncHandler(async (req, res) => {
         const astro = await Astrologer.findOne({
 
         })
-        
+
         // Estimate initial cost
         const estimatedMinutes = 10;
         const estimatedCost = chatSession.ratePerMinute * estimatedMinutes;
@@ -615,113 +615,7 @@ export const cancelChatRequest = asyncHandler(async (req, res) => {
         }, "Chat request cancelled successfully")
     );
 });
-/**
- * @desc    Astrologer accepts chat request
- * @route   POST /api/v1/chat/request/:requestId/accept
- * @access  Private (Astrologer)
- */
-// export const acceptChatRequest = asyncHandler(async (req, res) => {
-//     const session = await mongoose.startSession();
 
-//     try {
-//         session.startTransaction();
-
-//         const { requestId } = req.params;
-//         const astrologerId = req.user.id; // Changed from req.astrologer._id to req.user.id
-
-//         // Verify user is an astrologer
-//         if (req.user.role !== "astrologer") {
-//             throw new ApiError(403, "Only astrologers can accept chat requests");
-//         }
-
-//         // Find and validate request
-//         const chatRequest = await ChatRequest.findOne({
-//             requestId,
-//             astrologerId,
-//             status: "PENDING"
-//         }).session(session);
-
-//         if (!chatRequest) {
-//             throw new ApiError(404, "Chat request not found or already processed");
-//         }
-
-//         if (chatRequest.isExpired()) {
-//             await ChatRequest.findByIdAndUpdate(
-//                 chatRequest._id,
-//                 { status: "EXPIRED" },
-//                 { session }
-//             );
-//             throw new ApiError(400, "Chat request has expired");
-//         }
-
-//         // Find associated session
-//         const chatSession = await ChatSession.findById(chatRequest.sessionId).session(session);
-//         if (!chatSession) {
-//             throw new ApiError(404, "Chat session not found");
-//         }
-
-//         // Update request and session
-//         const now = new Date();
-
-//         await ChatRequest.findByIdAndUpdate(
-//             chatRequest._id,
-//             {
-//                 status: "ACCEPTED",
-//                 respondedAt: now
-//             },
-//             { session }
-//         );
-
-//         await ChatSession.findByIdAndUpdate(
-//             chatSession._id,
-//             {
-//                 status: "ACCEPTED",
-//                 acceptedAt: now
-//             },
-//             { session }
-//         );
-
-//         await session.commitTransaction();
-
-//         // Notify user via socket
-//         emitSocketEvent(req, chatRequest.userId.toString(), ChatEventsEnum.CHAT_ACCEPTED_EVENT, {
-//             requestId: chatRequest.requestId,
-//             sessionId: chatSession.sessionId,
-//             astrologerId: astrologerId,
-//             astrologerInfo: {
-//                 fullName: req.user.fullName,
-//                 phone: req.user.phone
-//             }
-//         });
-
-//         // Send push notification to user
-//         await sendNotification({
-//             userId: chatRequest.userId,
-//             title: "Chat Request Accepted",
-//             message: `${req.user.fullName} has accepted your chat request`,
-//             type: "chat_accepted",
-//             data: {
-//                 requestId: chatRequest.requestId,
-//                 sessionId: chatSession.sessionId,
-//                 astrologerId: astrologerId
-//             }
-//         });
-
-//         return res.status(200).json(
-//             new ApiResponse(200, {
-//                 requestId: chatRequest.requestId,
-//                 sessionId: chatSession.sessionId,
-//                 status: "ACCEPTED"
-//             }, "Chat request accepted successfully")
-//         );
-
-//     } catch (error) {
-//         await session.abortTransaction();
-//         throw error;
-//     } finally {
-//         session.endSession();
-//     }
-// });
 
 /**
  * @desc    Astrologer rejects chat request
@@ -1521,6 +1415,21 @@ const handleSessionAutoEnd = async (sessionId, chatId, reservationId) => {
                 message: "Session auto-ended due to time limit"
             }
         );
+
+
+
+        emitSocketEventGlobal(
+            session.astrologerId.toString(),
+            ChatEventsEnum.SESSION_ENDED_EVENT,
+            {
+                sessionId: session.sessionId,
+                status: "COMPLETED",
+                reason: "AUTO_ENDED",
+                message: "Chat session auto-ended due to time limit."
+            }
+        );
+
+
 
         console.log(`Auto-ended session: ${sessionId}`);
 
