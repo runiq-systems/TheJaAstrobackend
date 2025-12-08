@@ -405,7 +405,6 @@ export const startCallSession = asyncHandler(async (req, res) => {
       // MAIN CHECK: Must be RINGING
       if (callSession.status !== "RINGING") {
         if (["CONNECTED", "ACTIVE"].includes(callSession.status)) {
-          // Already connected → just return success (idempotent)
           throw new ApiError(200, "Call already connected");
         }
         throw new ApiError(400, `Cannot start call: current status is ${callSession.status}`);
@@ -423,13 +422,11 @@ export const startCallSession = asyncHandler(async (req, res) => {
       if (call) {
         let needsSave = false;
 
-        // Set connectTime only once!
         if (!call.connectTime) {
           call.connectTime = now;
           needsSave = true;
         }
 
-        // Update status only if not already connected
         if (!["CONNECTED", "ACTIVE"].includes(call.status)) {
           call.status = "CONNECTED";
           call.paymentStatus = "RESERVED";
@@ -442,14 +439,28 @@ export const startCallSession = asyncHandler(async (req, res) => {
       }
     }); // ← transaction ends here
 
-    // ─────── AFTER COMMIT: Start billing & clear timer (SAFE) ───────
+    // ─────── AFTER COMMIT: Safe external operations ───────
     const callSession = await CallSession.findOne({ sessionId });
     const call = await Call.findById(callSession.callId);
 
-    // 1. Clear the 45-second "missed call" timer
+    // 1. Mark reservation as ONGOING (CRITICAL FOR REFUND!)
+    if (callSession.reservationId) {
+      await Reservation.findByIdAndUpdate(
+        callSession.reservationId,
+        {
+          $set: {
+            status: "ONGOING",
+            startAt: new Date(),
+          },
+        }
+      );
+      console.log(`[CALL] Reservation ${callSession.reservationId} → ONGOING`);
+    }
+
+    // 2. Clear the 45-second "missed call" timer
     clearCallTimer(sessionId, "ringing");
 
-    // 2. Start billing (only once!)
+    // 3. Start billing
     startBillingTimer(
       sessionId,
       call._id,
@@ -460,7 +471,7 @@ export const startCallSession = asyncHandler(async (req, res) => {
       call.callType
     );
 
-    // 3. Notify both sides
+    // 4. Notify both sides
     const payload = {
       sessionId,
       callId: call._id.toString(),
@@ -475,7 +486,7 @@ export const startCallSession = asyncHandler(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, payload, "Call connected successfully"));
 
   } catch (error) {
-    // Special handling for "already connected" (idempotent success)
+    // Handle idempotent case
     if (error.statusCode === 200 && error.message === "Call already connected") {
       const callSession = await CallSession.findOne({ sessionId: req.params.sessionId });
       const call = callSession ? await Call.findById(callSession.callId) : null;
@@ -905,7 +916,7 @@ const setupSessionReminders = (sessionId, chatId, estimatedMinutes) => {
 // ─────────────────────── FINAL CALL BILLING TIMER (100% CORRECT) ───────────────────────
 const startBillingTimer = async (
   sessionId,
-  callId,           // Call._id
+  callId,
   userId,
   astrologerId,
   ratePerMinute,
@@ -923,10 +934,11 @@ const startBillingTimer = async (
   stopBillingTimer(sessionId); // cleanup old
 
   const totalReservedMs = estimatedMinutes * 60 * 1000;
-  const startTime = Date.now();
+  const billingStartTime = Date.now(); // More accurate than Date.now() at start
 
-  // Auto-end when reserved time is over
+  // Auto-end timer
   const autoEndTimer = setTimeout(() => {
+    console.log(`[CALL] Reserved time expired for ${sessionId}. Auto-ending...`);
     handleCallAutoEnd(sessionId, callId, reservationId);
   }, totalReservedMs);
   autoEndTimers.set(sessionId, autoEndTimer);
@@ -940,7 +952,7 @@ const startBillingTimer = async (
     }
   });
 
-  // PER-MINUTE BILLING
+  // PER-MINUTE BILLING TICK
   const interval = setInterval(async () => {
     try {
       const callSession = await CallSession.findOne({
@@ -949,7 +961,7 @@ const startBillingTimer = async (
       });
 
       if (!callSession) {
-        console.log(`[CALL] Session ${sessionId} ended. Stopping billing.`);
+        console.log(`[CALL] Session ${sessionId} no longer active. Stopping billing.`);
         stopBillingTimer(sessionId);
         return;
       }
@@ -968,20 +980,33 @@ const startBillingTimer = async (
       const billedMinutes = Math.ceil(billedSeconds / 60);
       const currentCost = Math.max(updated.minimumCharge || ratePerMinute, billedMinutes * ratePerMinute);
 
-      // UPDATE RESERVATION EVERY MINUTE (CRITICAL FOR REFUND!)
+      // UPDATE RESERVATION — CRITICAL FIX!
       if (reservationId) {
-        await Reservation.findByIdAndUpdate(reservationId, {
-          totalCost: currentCost,
-          billedMinutes,
-          totalDurationSec: billedSeconds,
-          status: "ONGOING"
-        });
+        const reservation = await Reservation.findByIdAndUpdate(
+          reservationId,
+          {
+            $set: {
+              totalCost: currentCost,
+              billedMinutes,
+              totalDurationSec: billedSeconds,
+              status: "ONGOING"
+            }
+          },
+          { new: true } // ← Return updated doc
+        );
+
+        if (!reservation) {
+          console.warn(`[CALL] Failed to update reservation ${reservationId} — not found`);
+        } else {
+          console.log(`[CALL] Reservation updated → ₹${currentCost} (${billedMinutes} min)`);
+        }
       }
 
-      const elapsedMs = Date.now() - startTime;
+      // Accurate remaining time
+      const elapsedMs = Date.now() - billingStartTime;
       const minutesRemaining = Math.max(0, Math.ceil((totalReservedMs - elapsedMs) / 60000));
 
-      // Send live billing update
+      // Emit billing update
       emitSocketEventGlobal(callId.toString(), ChatEventsEnum.BILLING_UPDATE_EVENT, {
         sessionId,
         billedDuration: billedSeconds,
@@ -989,21 +1014,24 @@ const startBillingTimer = async (
         currentCost,
         ratePerMinute,
         minutesRemaining,
+        estimatedTotalMinutes: estimatedMinutes,
       });
 
       // Auto-end if time is up
       if (minutesRemaining <= 0) {
+        console.log(`[CALL] Time limit reached. Triggering auto-end.`);
         handleCallAutoEnd(sessionId, callId, reservationId);
       }
 
     } catch (err) {
       console.error(`[CALL] Billing tick failed for ${sessionId}:`, err);
+      // Don't stop timer — keep trying
     }
   }, 60_000);
 
-  billingTimers.set(sessionId, { interval, startTime });
+  billingTimers.set(sessionId, { interval, startTime: billingStartTime });
 
-  // Initial update
+  // Initial billing update
   emitSocketEventGlobal(callId.toString(), ChatEventsEnum.BILLING_UPDATE_EVENT, {
     sessionId,
     billedDuration: 0,
@@ -1011,7 +1039,10 @@ const startBillingTimer = async (
     currentCost: 0,
     ratePerMinute,
     minutesRemaining: estimatedMinutes,
+    estimatedTotalMinutes: estimatedMinutes,
   });
+
+  console.log(`[CALL] Billing timer started for ${sessionId}`);
 };
 
 // ─────────────────────── STOP BILLING SAFELY ───────────────────────
