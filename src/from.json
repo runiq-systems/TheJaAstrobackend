@@ -1,0 +1,315 @@
+{
+    "title": "Student Academic & Experience Details Form",
+    "description": "Please fill all the required details carefully.",
+    "items": [
+        {
+            "title": "Full Name",
+            "questionItem": {
+                "question": {
+                    "required": true,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "Email ID",
+            "questionItem": {
+                "question": {
+                    "required": true,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "Mobile Number",
+            "questionItem": {
+                "question": {
+                    "required": true,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "10th Passing Year",
+            "questionItem": {
+                "question": {
+                    "required": true,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "10th Percentage / CGPA",
+            "questionItem": {
+                "question": {
+                    "required": true,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "10th School Name",
+            "questionItem": {
+                "question": {
+                    "required": true,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "10th City",
+            "questionItem": {
+                "question": {
+                    "required": true,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "10th State",
+            "questionItem": {
+                "question": {
+                    "required": true,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "10th Specialization (Optional)",
+            "questionItem": {
+                "question": {
+                    "required": false,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "12th Passing Year",
+            "questionItem": {
+                "question": {
+                    "required": true,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "12th Percentage",
+            "questionItem": {
+                "question": {
+                    "required": true,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "12th School Name",
+            "questionItem": {
+                "question": {
+                    "required": true,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "12th City",
+            "questionItem": {
+                "question": {
+                    "required": true,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "12th State",
+            "questionItem": {
+                "question": {
+                    "required": true,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "12th Stream / Specialization",
+            "questionItem": {
+                "question": {
+                    "required": true,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "Are you currently pursuing Graduation?",
+            "questionItem": {
+                "question": {
+                    "required": false,
+                    "choiceQuestion": {
+                        "type": "RADIO",
+                        "options": [
+                            {
+                                "value": "Yes"
+                            },
+                            {
+                                "value": "No"
+                            }
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            "title": "Graduation Course / Degree",
+            "questionItem": {
+                "question": {
+                    "required": false,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "Graduation College / University Name",
+            "questionItem": {
+                "question": {
+                    "required": false,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "Graduation Year of Passing / Currently Studying",
+            "questionItem": {
+                "question": {
+                    "required": false,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "Graduation Specialization",
+            "questionItem": {
+                "question": {
+                    "required": false,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "Are you pursuing Post-Graduation?",
+            "questionItem": {
+                "question": {
+                    "required": false,
+                    "choiceQuestion": {
+                        "type": "RADIO",
+                        "options": [
+                            {
+                                "value": "Yes"
+                            },
+                            {
+                                "value": "No"
+                            }
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            "title": "PG Course / Degree",
+            "questionItem": {
+                "question": {
+                    "required": false,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "PG College / University Name",
+            "questionItem": {
+                "question": {
+                    "required": false,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "PG Year of Passing / Currently Studying",
+            "questionItem": {
+                "question": {
+                    "required": false,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "PG Specialization",
+            "questionItem": {
+                "question": {
+                    "required": false,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "Do you have any work experience?",
+            "questionItem": {
+                "question": {
+                    "required": false,
+                    "choiceQuestion": {
+                        "type": "RADIO",
+                        "options": [
+                            {
+                                "value": "Yes"
+                            },
+                            {
+                                "value": "No"
+                            }
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            "title": "Job Title / Role",
+            "questionItem": {
+                "question": {
+                    "required": false,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "Company Name",
+            "questionItem": {
+                "question": {
+                    "required": false,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "Experience Duration",
+            "questionItem": {
+                "question": {
+                    "required": false,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "Experience Type (Full-Time / Part-Time / Internship)",
+            "questionItem": {
+                "question": {
+                    "required": false,
+                    "textQuestion": {}
+                }
+            }
+        },
+        {
+            "title": "Job Responsibilities (Optional)",
+            "questionItem": {
+                "question": {
+                    "required": false,
+                    "paragraphQuestion": {}
+                }
+            }
+        }
+    ]
+}
