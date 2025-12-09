@@ -449,10 +449,14 @@ export const startCallSession = asyncHandler(async (req, res) => {
 
     // Clear ringing timeout
     clearCallTimer(sessionId, "ringing");
-
-    // START REAL-TIME BILLING
-    startBillingTimer(sessionId, callSession.callId, callSession.ratePerMinute, callSession.reservationId);
-
+    const estimatedMinutes = 10; // or calculate: Math.ceil(callSession.minimumCharge / callSession.ratePerMinute)
+    startBillingTimer(
+      sessionId,
+      callSession.callId,
+      callSession.ratePerMinute,
+      callSession.reservationId,
+      estimatedMinutes
+    );
     const payload = {
       sessionId,
       callId: callSession.callId.toString(),
@@ -1196,21 +1200,11 @@ const stopBillingTimer = (sessionId) => {
     clearTimeout(autoEndTimers.get(sessionId));
     autoEndTimers.delete(sessionId);
   }
+
+  // Clear all reminder timers for this session
   clearReminders(sessionId);
 
-  // Set reminders at 5, 2, and 1 minute marks
-  const reminderTimes = [5, 2, 1];
-
-  reminderTimes.forEach((minutes) => {
-    if (estimatedMinutes > minutes) {
-      const reminderTimeMs = (estimatedMinutes - minutes) * 60 * 1000;
-      const timer = setTimeout(() => {
-        sendSessionReminder(sessionId, chatId, minutes);
-      }, reminderTimeMs);
-
-      reminderTimers.set(`${sessionId}_${minutes}min`, timer);
-    }
-  });
+  console.log(`[CALL] All timers cleared for session: ${sessionId}`);
 };
 
 const startRingingTimer = (sessionId, callId, reservationId) => {
