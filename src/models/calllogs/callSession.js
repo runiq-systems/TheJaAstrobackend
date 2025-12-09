@@ -21,14 +21,14 @@ const callSessionSchema = new mongoose.Schema(
       required: true,
       index: true
     },
-    
+
     // === ADD THIS: Link back to CallRequest ===
     requestId: {
       type: String,
       ref: "CallRequest",
       index: true
     },
-    
+
     callId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Call",
@@ -127,7 +127,8 @@ const callSessionSchema = new mongoose.Schema(
       review: { type: String, maxlength: 500 },
       ratedAt: { type: Date }
     },
-
+    // In your CallSession schema — add this line
+    networkDropHandled: { type: Boolean, default: false },
     // Meta
     meta: {
       type: mongoose.Schema.Types.Mixed,

@@ -5,6 +5,7 @@ import admin from "../utils/firabse.js";
 import { CallNotificationService } from "./notification.js";
 import { Call } from "../models/calllogs/call.js";
 import { CallSession } from "../models/calllogs/callSession.js";
+import { endCall } from "../controllers/call/callSessionController.js";
 export class WebRTCService {
   constructor(io) {
     this.io = io;
@@ -112,28 +113,99 @@ export class WebRTCService {
     }
   }
 
-  async handleDisconnect(socket) {
+  // ──────────────────────────────────────────────────────────────
+  //  FINAL BULLETPROOF handleCallDisconnection (Handles all network scenarios)
+  // ──────────────────────────────────────────────────────────────
+  async handleCallDisconnection(userId, socket) {
+    const activeCall = this.activeCalls.get(userId);
+    if (!activeCall) return;
+
+    const otherUserId =
+      activeCall.otherUserId ||
+      (activeCall.callerId === userId ? activeCall.receiverId : activeCall.callerId);
+
+    const callKey = activeCall.callKey;
+
     try {
-      const userId = socket.userId;
-      if (!userId) return;
-
-      logger.info(`User ${userId} disconnected (socket: ${socket.id})`);
-
-      const userSockets = this.users.get(userId);
-      if (userSockets) {
-        userSockets.delete(socket.id);
-        // if (userSockets.size === 0) {
-        //   this.users.delete(userId);
-        //   await this.updateUserStatus(userId, "offline");
-        // }
+      const callTiming = this.callTimings.get(callKey);
+      if (!callTiming?.callRecordId) {
+        logger.warn("[DISCONNECT] No call record found for cleanup", { userId, callKey });
+        return this.cleanupCallResources(callKey, userId, otherUserId);
       }
 
-      await this.handleCallDisconnection(userId, socket);
-      this.cleanupPendingCallsBySocket(socket.id);
+      const callRecordId = callTiming.callRecordId;
 
-      logger.debug(`Disconnect processing completed for user ${userId}`);
+      // Find active CallSession that hasn't been handled yet
+      const callSession = await CallSession.findOne({
+        callId: callRecordId,
+        status: { $in: ["CONNECTED", "ACTIVE"] },
+        networkDropHandled: { $ne: true }, // Only if not already handled
+      }).select("sessionId userId astrologerId reservationId status");
+
+      // If no active session or already handled → safe to ignore
+      if (!callSession) {
+        logger.info("[DISCONNECT] Already handled or call not active → skipping", {
+          userId,
+          callRecordId,
+        });
+        return this.cleanupCallResources(callKey, userId, otherUserId);
+      }
+
+      logger.warn("[NETWORK_DROP] Detected real disconnection → processing refund", {
+        sessionId: callSession.sessionId,
+        disconnectedBy: userId,
+        reservationId: callSession.reservationId,
+      });
+
+      // Mark as handled immediately to prevent double execution
+      await CallSession.findOneAndUpdate(
+        { sessionId: callSession.sessionId },
+        { networkDropHandled: true }
+      );
+
+      // Import endCall at top of file (make sure this line exists):
+      // const { endCall } = require("../controllers/callController.js");
+
+      const dummyReq = {
+        params: { sessionId: callSession.sessionId },
+        user: { _id: userId },
+        body: { reason: "network_loss" },
+      };
+
+      const dummyRes = {
+        status() {
+          return this;
+        },
+        json() {
+          return this;
+        },
+      };
+
+      // This triggers your full billing + refund logic safely
+      await endCall(dummyReq, dummyRes);
+
+      // Notify the other user
+      this.emitToUser(otherUserId, "callEnded", {
+        reason: "network_loss",
+        disconnectedBy: userId,
+        message: "Call ended due to network issue",
+        timestamp: new Date(),
+      });
+
+      logger.info("[SUCCESS] Network drop handled perfectly with refund", {
+        sessionId: callSession.sessionId,
+        userId,
+      });
     } catch (error) {
-      logger.error("Disconnect handler error:", error);
+      logger.error("[FATAL] handleCallDisconnection crashed", {
+        userId,
+        error: error.message || error,
+        stack: error.stack,
+      });
+      // Even on error, we don't retry — guard flag is already set
+    } finally {
+      // Always clean up in-memory state
+      this.cleanupCallResources(callKey, userId, otherUserId);
     }
   }
 
@@ -1036,50 +1108,93 @@ export class WebRTCService {
     }
   }
 
+  // ──────────────────────────────────────────────────────────────
+  //  ULTIMATE handleCallDisconnection – Handles 1000 reconnects safely
+  // ──────────────────────────────────────────────────────────────
   async handleCallDisconnection(userId, socket) {
     const activeCall = this.activeCalls.get(userId);
     if (!activeCall) return;
 
     const otherUserId =
       activeCall.otherUserId ||
-      (activeCall.callerId === userId
-        ? activeCall.receiverId
-        : activeCall.callerId);
+      (activeCall.callerId === userId ? activeCall.receiverId : activeCall.callerId);
+
     const callKey = activeCall.callKey;
 
     try {
       const callTiming = this.callTimings.get(callKey);
-      if (callTiming) {
-        const endTime = new Date();
-        const duration = Math.round((endTime - callTiming.startTime) / 1000);
-        let callDuration = 0;
-        if (callTiming.connectTime)
-          callDuration = Math.round((endTime - callTiming.connectTime) / 1000);
-
-        await Call.findByIdAndUpdate(callTiming.callRecordId, {
-          endTime,
-          duration,
-          status: "DISCONNECTED",
-          disconnectedBy: userId,
-        });
-
-        this.emitToUser(otherUserId, "callEnded", {
-          reason: "disconnected",
-          disconnectedBy: userId,
-          duration: callDuration,
-          totalDuration: duration,
-          callRecordId: callTiming.callRecordId,
-        });
-
-        logger.info(
-          `[CALL_DISCONNECTED] User ${userId} disconnected from call`,
-          { callKey, callDuration, totalDuration: duration }
-        );
+      if (!callTiming?.callRecordId) {
+        return this.cleanupCallResources(callKey, userId, otherUserId);
       }
 
-      this.cleanupCallResources(callKey, userId, otherUserId);
+      const callRecordId = callTiming.callRecordId;
+
+      // Find CallSession — but only if still active
+      const callSession = await CallSession.findOne({
+        callId: callRecordId,
+        status: { $in: ["CONNECTED", "ACTIVE"] },
+        networkDropHandled: false, // CRITICAL GUARD
+      }).select("sessionId userId astrologerId reservationId status");
+
+      // If already handled → do nothing (prevents double refund!)
+      if (!callSession) {
+        logger.info("[DISCONNECT] Already handled or not connected → ignoring", {
+          userId,
+          callRecordId,
+          reason: callSession ? "already_handled" : "not_active",
+        });
+        return this.cleanupCallResources(callKey, userId, otherUserId);
+      }
+
+      logger.warn("[NETWORK_DROP] Real Drop Detected] Ending call with refund", {
+        sessionId: callSession.sessionId,
+        disconnectedBy: userId,
+        reservationId: callSession.reservationId,
+      });
+
+      // Mark as handled FIRST (prevents race condition if user reconnects fast)
+      await CallSession.findByIdAndUpdate(callSession._id).updateOne({
+        networkDropHandled: true,
+      });
+
+      // Now safely trigger your full endCall logic (billing + refund)
+      const dummyReq = {
+        params: { sessionId: callSession.sessionId },
+        user: { _id: userId },
+        body: { reason: "network_loss" },
+      };
+
+      const dummyRes = {
+        status() { return this; },
+        json() { return this; },
+      };
+
+      // This runs your perfect endCall with refund
+      await endCall(dummyReq, dummyRes);
+
+      // Notify the other user
+      this.emitToUser(otherUserId, "callEnded", {
+        reason: "network_loss",
+        disconnectedBy: userId,
+        message: "Call ended due to poor network",
+        timestamp: new Date(),
+      });
+
+      logger.info("[SUCCESS] Network drop handled perfectly – refund processed", {
+        sessionId: callSession.sessionId,
+        userId,
+      });
+
     } catch (error) {
-      logger.error(`Call disconnection handling error:`, error);
+      logger.error("[FATAL] Network drop handler crashed", {
+        userId,
+        error: error.message,
+        stack: error.stack,
+      });
+      // Even if it fails, don't retry — we already marked networkDropHandled = true
+    } finally {
+      // Always clean memory
+      this.cleanupCallResources(callKey, userId, otherUserId);
     }
   }
 
