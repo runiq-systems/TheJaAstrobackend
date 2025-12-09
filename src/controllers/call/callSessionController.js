@@ -495,7 +495,7 @@ export const startCallSession = asyncHandler(async (req, res) => {
   }
 });
 // Updated endCall (deduct actual, refund excess)
-// Updated endCall (deduct actual, including partial last minute, then refund excess)
+
 export const endCall = asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
   let hasCommitted = false;
@@ -648,53 +648,61 @@ export const rejectCall = asyncHandler(async (req, res) => {
     const { requestId } = req.params;
     const astrologerId = req.user._id;
 
-    if (req.user.role !== "astrologer") throw new ApiError(403, "Only astrologers can reject calls");
+    if (req.user.role !== "astrologer")
+      throw new ApiError(403, "Only astrologers can reject calls");
 
-    const callRequest = await CallRequest.findOne({ requestId, astrologerId, status: "PENDING" }).session(session);
-    if (!callRequest) throw new ApiError(404, "Call request not found or not pending");
+    const callRequest = await CallRequest.findOne({
+      requestId,
+      astrologerId,
+      status: "PENDING"
+    }).session(session);
+
+    if (!callRequest)
+      throw new ApiError(404, "Call request not found or already handled");
 
     const now = new Date();
 
-    // UPDATE REQUEST
+    // Update request
     callRequest.status = "REJECTED";
     callRequest.respondedAt = now;
     await callRequest.save({ session });
 
-    // UPDATE SESSION
+    // Update session
     const callSession = await CallSession.findOneAndUpdate(
       { sessionId: callRequest.sessionId },
       { status: "REJECTED", endedAt: now },
       { session, new: true }
     );
 
-    // UPDATE CALL
-    await Call.findByIdAndUpdate(callSession.callId, { status: "REJECTED", endTime: now }, { session });
-
-    // FULL REFUND
-    if (callRequest.reservationId) {
-      await WalletService.cancelReservation(callRequest.reservationId);
-      callSession.paymentStatus = "REFUNDED";
-      await callSession.save({ session });
-    }
+    // Update main call log
+    await Call.findByIdAndUpdate(
+      callSession.callId,
+      { status: "REJECTED", endTime: now },
+      { session }
+    );
 
     hasCommitted = true;
     await session.commitTransaction();
 
-    // CLEAR TIMER
+    // Clear expiry timer
     clearCallTimer(requestId, 'request');
 
-    // NOTIFY USER
+    // Notify user
     emitSocketEvent(req, callRequest.userId.toString(), ChatEventsEnum.CALL_REJECTED_EVENT, {
       requestId,
       sessionId: callRequest.sessionId,
       rejectedAt: now,
-      message: "Call rejected by astrologer"
+      message: "Astrologer rejected the call"
     });
 
-    return res.status(200).json(new ApiResponse(200, { requestId, status: "REJECTED" }, "Call rejected"));
+    return res.status(200).json(
+      new ApiResponse(200, { requestId, status: "REJECTED" }, "Call rejected successfully")
+    );
 
   } catch (error) {
-    if (!hasCommitted && session.inTransaction()) await session.abortTransaction();
+    if (!hasCommitted && session.inTransaction()) {
+      await session.abortTransaction();
+    }
     throw error;
   } finally {
     session.endSession();
@@ -710,52 +718,61 @@ export const cancelCallRequest = asyncHandler(async (req, res) => {
     session.startTransaction();
 
     const { requestId } = req.params;
+
     const userId = req.user._id;
 
-    const callRequest = await CallRequest.findOne({ requestId, userId, status: "PENDING" }).session(session);
-    if (!callRequest) throw new ApiError(404, "Call request not found or not pending");
+    const callRequest = await CallRequest.findOne({
+      requestId,
+      userId,
+      status: "PENDING"
+    }).session(session);
+
+    if (!callRequest)
+      throw new ApiError(404, "Call request not found or already handled");
 
     const now = new Date();
 
-    // UPDATE REQUEST
+    // Update request
     callRequest.status = "CANCELLED";
     callRequest.respondedAt = now;
     await callRequest.save({ session });
 
-    // UPDATE SESSION
+    // Update session
     const callSession = await CallSession.findOneAndUpdate(
       { sessionId: callRequest.sessionId },
       { status: "CANCELLED", endedAt: now },
       { session, new: true }
     );
 
-    // UPDATE CALL
-    await Call.findByIdAndUpdate(callSession.callId, { status: "CANCELLED", endTime: now }, { session });
-
-    // FULL REFUND
-    if (callRequest.reservationId) {
-      await WalletService.cancelReservation(callRequest.reservationId);
-      callSession.paymentStatus = "REFUNDED";
-      await callSession.save({ session });
-    }
+    // Update main call log
+    await Call.findByIdAndUpdate(
+      callSession.callId,
+      { status: "CANCELLED", endTime: now },
+      { session }
+    );
 
     hasCommitted = true;
     await session.commitTransaction();
 
-    // CLEAR TIMER
+    // Clear timer
     clearCallTimer(requestId, 'request');
 
-    // NOTIFY ASTROLOGER
+    // Notify astrologer
     emitSocketEvent(req, callRequest.astrologerId.toString(), ChatEventsEnum.CALL_CANCELLED, {
       requestId,
       sessionId: callRequest.sessionId,
-      cancelledAt: now
+      cancelledAt: now,
+      message: "User cancelled the call request"
     });
 
-    return res.status(200).json(new ApiResponse(200, { requestId, status: "CANCELLED" }, "Call cancelled"));
+    return res.status(200).json(
+      new ApiResponse(200, { requestId, status: "CANCELLED" }, "Call request cancelled successfully")
+    );
 
   } catch (error) {
-    if (!hasCommitted && session.inTransaction()) await session.abortTransaction();
+    if (!hasCommitted && session.inTransaction()) {
+      await session.abortTransaction();
+    }
     throw error;
   } finally {
     session.endSession();
