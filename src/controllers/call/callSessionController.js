@@ -157,7 +157,7 @@ export const requestCallSession = asyncHandler(async (req, res) => {
       status: "REQUESTED",
       requestedAt: new Date(),
       expiresAt: new Date(Date.now() + 3 * 60 * 1000), // 3 minutes to accept
-      minimumCharge: Math.max(50, ratePerMinute),
+      minimumCharge: ratePerMinute,
       meta: {
         callerName: userName,
         callerImage: userAvatar,
@@ -332,45 +332,34 @@ export const acceptCallSession = asyncHandler(async (req, res) => {
 });
 
 // Updated startCallSession (no balance check, start billing)
+
 export const startCallSession = asyncHandler(async (req, res) => {
   const mongoSession = await mongoose.startSession();
-  let sessionId; // ← Declare outside
+  let sessionId;
 
   try {
-    // CRITICAL: Extract sessionId safely
     sessionId = req.params.sessionId || req.params.sessionid || req.body.sessionId;
-
-    if (!sessionId) {
-      throw new ApiError(400, "sessionId is required in URL params");
-    }
+    if (!sessionId) throw new ApiError(400, "sessionId is required");
 
     const userId = req.user._id;
 
     await mongoSession.withTransaction(async () => {
       const callSession = await CallSession.findOne({
-        sessionId
+        sessionId,
+        userId,
+        status: "RINGING"
       }).session(mongoSession);
 
       if (!callSession) throw new ApiError(404, "Call session not found");
 
-      if (callSession.userId.toString() !== userId.toString()) {
-        throw new ApiError(403, "You are not authorized to start this call");
-      }
-
-      if (callSession.status !== "RINGING") {
-        if (callSession.status === "CONNECTED" || callSession.status === "ACTIVE") {
-          throw new ApiError(200, "Call already connected");
-        }
-        throw new ApiError(400, `Cannot start call: current status is ${callSession.status}`);
-      }
-
       const now = new Date();
       const ratePerMinute = callSession.ratePerMinute;
 
-      // Reserve 10 minutes only when call actually connects
+      // Reserve 10 minutes upfront
       const estimatedMinutes = 10;
       const estimatedCost = ratePerMinute * estimatedMinutes;
 
+      // Check balance
       const balanceCheck = await WalletService.checkBalance({
         userId,
         amount: estimatedCost,
@@ -385,6 +374,7 @@ export const startCallSession = asyncHandler(async (req, res) => {
         });
       }
 
+      // Calculate commission
       const commissionDetails = await calculateCommission(
         callSession.astrologerId,
         "CALL",
@@ -405,20 +395,20 @@ export const startCallSession = asyncHandler(async (req, res) => {
         platformEarnings: commissionDetails.platformAmount,
         astrologerEarnings: commissionDetails.astrologerAmount,
         commissionPercent: commissionDetails.finalCommissionPercent,
+        commissionDetails,
         status: "RESERVED",
         startAt: now,
         expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
-        commissionDetails,
-        meta: { estimatedMinutes, initialReservation: true }
+        meta: { estimatedMinutes }
       }], { session: mongoSession });
 
-      // Lock money
+      // Lock money in wallet
       await WalletService.reserveAmount({
         userId,
         amount: estimatedCost,
         reservationId: reservation[0]._id,
         sessionType: "CALL",
-        description: `Reserved ₹${estimatedCost} for ${callSession.callType} call (10 mins)`,
+        description: `Reserved ₹${estimatedCost} for ${callSession.callType} call`,
         session: mongoSession
       });
 
@@ -435,38 +425,35 @@ export const startCallSession = asyncHandler(async (req, res) => {
         call.reservationId = reservation[0]._id;
         await call.save({ session: mongoSession });
       }
-    }); // end transaction
-
-    // AFTER COMMIT — Safe to use sessionId now
-    const callSession = await CallSession.findOne({ sessionId });
-    if (!callSession) throw new ApiError(500, "Session lost after connect");
-
-    // Mark reservation as ONGOING
-    await Reservation.findByIdAndUpdate(callSession.reservationId, {
-      status: "ONGOING",
-      startAt: new Date()
     });
+
+    // After transaction success
+    const callSession = await CallSession.findOne({ sessionId });
 
     // Clear ringing timeout
     clearCallTimer(sessionId, "ringing");
 
-    // START REAL-TIME BILLING
+    // Start billing timer
+    const estimatedMinutes = 10;
     startBillingTimer(
       sessionId,
       callSession.callId,
-      callSession.userId,
-      callSession.astrologerId,
       callSession.ratePerMinute,
       callSession.reservationId,
-      callSession.callType
+      estimatedMinutes
     );
+
+    // Mark reservation as ONGOING
+    await Reservation.findByIdAndUpdate(callSession.reservationId, {
+      status: "ONGOING"
+    });
 
     const payload = {
       sessionId,
       callId: callSession.callId.toString(),
       status: "CONNECTED",
       ratePerMinute: callSession.ratePerMinute,
-      connectTime: callSession.connectedAt || new Date(),
+      connectTime: new Date(),
       reservedAmount: callSession.ratePerMinute * 10
     };
 
@@ -479,7 +466,7 @@ export const startCallSession = asyncHandler(async (req, res) => {
     );
 
   } catch (error) {
-    // Handle idempotency: if already connected
+    // Handle idempotency
     if (error.statusCode === 200) {
       const fallbackSession = await CallSession.findOne({ sessionId });
       if (fallbackSession && ["CONNECTED", "ACTIVE"].includes(fallbackSession.status)) {
@@ -488,14 +475,13 @@ export const startCallSession = asyncHandler(async (req, res) => {
         );
       }
     }
-
     throw error;
   } finally {
     mongoSession.endSession();
   }
 });
-// Updated endCall (deduct actual, refund excess)
 
+// Updated endCall (deduct actual, refund excess)
 export const endCall = asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
   let hasCommitted = false;
@@ -521,7 +507,16 @@ export const endCall = asyncHandler(async (req, res) => {
     const connectedAt = callSession.connectedAt || now;
     const totalSeconds = Math.floor((now - connectedAt) / 1000);
     const billedMinutes = Math.ceil(totalSeconds / 60);
-    const finalCost = Math.max(callSession.minimumCharge || 0, billedMinutes * callSession.ratePerMinute);
+    const ratePerMinute = callSession.ratePerMinute;
+
+    // FIXED: Remove minimum charge override, bill only for actual minutes
+    const finalCost = billedMinutes * ratePerMinute; // Only this line changed
+
+    console.log(`[BILLING CALCULATION] Session: ${sessionId}`);
+    console.log(`  - Duration: ${totalSeconds}s (${(totalSeconds / 60).toFixed(2)} min)`);
+    console.log(`  - Billed minutes: ${billedMinutes} min`);
+    console.log(`  - Rate: ₹${ratePerMinute}/min`);
+    console.log(`  - Final cost: ₹${finalCost}`);
 
     // Stop billing timer
     stopBillingTimer(sessionId);
@@ -545,90 +540,131 @@ export const endCall = asyncHandler(async (req, res) => {
       await call.save({ session });
     }
 
-    // FINAL SETTLEMENT OF UNUSED RESERVED AMOUNT
+    // FINAL SETTLEMENT
+    let refundedAmount = 0;
+    let astrologerEarnings = 0;
+    let platformEarnings = 0;
+
     if (callSession.reservationId) {
       const reservation = await Reservation.findById(callSession.reservationId).session(session);
       if (reservation) {
-        const ratePerMinute = callSession.ratePerMinute;
-        const currentCost = reservation.totalCost || 0;
-        const additionalCost = finalCost - currentCost;
+        const reservedAmount = reservation.lockedAmount || 0;
 
-        // FIX: Deduct additional cost for partial last minute or minimum charge
-        if (additionalCost > 0) {
-          // Release the additional from locked to available
-          await WalletService.releaseAmount({
-            userId,
-            amount: additionalCost,
-            currency: "INR",
-            reservationId: reservation._id,
-            description: "Final billing for partial minute or minimum charge",
-            session
-          });
+        // Calculate actual used amount vs reserved amount
+        const usedAmount = finalCost;
+        refundedAmount = Math.max(0, reservedAmount - usedAmount);
 
-          // Immediately debit the additional (actual deduction)
+        // Calculate commission (20% platform, 80% astrologer)
+        platformEarnings = Math.round(usedAmount * 0.20);
+        astrologerEarnings = usedAmount - platformEarnings;
+
+        console.log(`[SETTLEMENT] Session: ${sessionId}`);
+        console.log(`  - Reserved: ₹${reservedAmount}`);
+        console.log(`  - Used: ₹${usedAmount} (${billedMinutes} min × ₹${ratePerMinute}/min)`);
+        console.log(`  - Refund: ₹${refundedAmount}`);
+        console.log(`  - Platform: ₹${platformEarnings}`);
+        console.log(`  - Astrologer: ₹${astrologerEarnings}`);
+
+        // 1. RELEASE ALL LOCKED AMOUNT BACK TO AVAILABLE
+        await WalletService.releaseAmount({
+          userId,
+          amount: reservedAmount,
+          currency: "INR",
+          reservationId: reservation._id,
+          description: "Release locked amount for final settlement",
+          session
+        });
+
+        // 2. DEBIT ONLY THE USED AMOUNT FROM USER
+        if (usedAmount > 0) {
           await WalletService.debit({
             userId,
-            amount: additionalCost,
+            amount: usedAmount,
             currency: "INR",
             category: "CALL_SESSION",
             subcategory: callSession.callType,
-            description: "Final partial minute or minimum charge billing",
+            description: `Call session: ${billedMinutes} min × ₹${ratePerMinute}/min`,
             reservationId: reservation._id,
+            meta: {
+              sessionId,
+              billedMinutes,
+              duration: totalSeconds,
+              astrologerId: callSession.astrologerId,
+              ratePerMinute
+            },
             session
           });
-
-          // Update reservation with the final totals
-          reservation.totalCost = finalCost;
-          reservation.billedMinutes = billedMinutes;
-          reservation.totalDurationSec = totalSeconds;
-          await reservation.save({ session });
-
-          console.log(`[BILLING] Deducted additional ₹${additionalCost} for partial minute/min charge | Session: ${sessionId}`);
         }
 
-        // Now calculate and release the unused (refund to available balance)
-        const reservedAmount = reservation.lockedAmount || 0;
-        const usedAmount = reservation.totalCost;  // Now includes additional
-        const refundAmount = Math.max(0, reservedAmount - usedAmount);
-
-        if (refundAmount > 0) {
-          await WalletService.releaseAmount({
-            userId,
-            amount: refundAmount,
+        // 3. CREDIT ASTROLOGER EARNINGS
+        if (astrologerEarnings > 0) {
+          await WalletService.credit({
+            userId: callSession.astrologerId,
+            amount: astrologerEarnings,
             currency: "INR",
-            reservationId: reservation._id,
-            description: "Call ended - refunding unused reserved amount",
+            category: "EARNINGS",
+            subcategory: "CALL_SESSION",
+            description: `Earnings from ${billedMinutes} min call (₹${ratePerMinute}/min)`,
+            meta: {
+              sessionId,
+              callSessionId: callSession._id,
+              billedMinutes,
+              duration: totalSeconds,
+              ratePerMinute,
+              commissionPercent: 20
+            },
             session
           });
 
-          console.log(`[REFUND] ₹${refundAmount} refunded | Used: ₹${usedAmount} | Reserved: ₹${reservedAmount}`);
+          // Update astrologer earnings in reservation
+          reservation.astrologerEarnings = astrologerEarnings;
         }
 
-        // Mark as settled
+        // Update reservation with final settlement
         reservation.status = "SETTLED";
+        reservation.totalCost = usedAmount;
+        reservation.platformEarnings = platformEarnings;
+        reservation.billedMinutes = billedMinutes;
+        reservation.totalDurationSec = totalSeconds;
+        reservation.refundedAmount = refundedAmount;
         reservation.settledAt = now;
-        reservation.refundedAmount = (reservation.refundedAmount || 0) + refundAmount;
         await reservation.save({ session });
+
+        // Update call session with payment info
+        callSession.platformCommission = platformEarnings;
+        callSession.astrologerEarnings = astrologerEarnings;
+        callSession.paymentStatus = "PAID";
+        await callSession.save({ session });
       }
     }
 
     hasCommitted = true;
     await session.commitTransaction();
 
-    // Notify both
+    // Notify both parties
     const payload = {
       sessionId,
       status: "COMPLETED",
       totalCost: finalCost,
+      refundedAmount,
       durationSeconds: totalSeconds,
       billedMinutes,
-      endedAt: now
+      ratePerMinute,
+      endedAt: now,
+      astrologerEarnings,
+      platformEarnings,
+      calculation: {
+        actualMinutes: (totalSeconds / 60).toFixed(2),
+        roundedMinutes: billedMinutes,
+        rate: ratePerMinute,
+        total: finalCost
+      }
     };
 
     emitSocketEvent(req, callSession.userId.toString(), ChatEventsEnum.CALL_ENDED_EVENT, payload);
     emitSocketEvent(req, callSession.astrologerId.toString(), ChatEventsEnum.CALL_ENDED_EVENT, payload);
 
-    return res.status(200).json(new ApiResponse(200, payload, "Call ended & refund processed"));
+    return res.status(200).json(new ApiResponse(200, payload, "Call ended & settlement completed"));
 
   } catch (error) {
     if (!hasCommitted && session.inTransaction()) await session.abortTransaction();
@@ -637,128 +673,6 @@ export const endCall = asyncHandler(async (req, res) => {
     session.endSession();
   }
 });
-
-// export const endCall = asyncHandler(async (req, res) => {
-//   const session = await mongoose.startSession();
-//   let hasCommitted = false;
-
-//   try {
-//     session.startTransaction();
-
-//     const { sessionId } = req.params;
-//     const userId = req.user._id;
-
-//     // Fetch session for either user or astrologer
-//     const callSession = await CallSession.findOne({
-//       sessionId,
-//       $or: [{ userId }, { astrologerId: userId }],
-//       status: { $in: ["CONNECTED", "ACTIVE"] }
-//     }).session(session);
-
-//     if (!callSession) throw new ApiError(404, "Active call not found");
-
-//     const call = await Call.findById(callSession.callId).session(session);
-//     if (!call) throw new ApiError(404, "Call record not found");
-
-//     // STOP BILLING + TIMERS
-//     stopBillingTimer(sessionId);
-//     clearReminders(sessionId);
-//     if (autoEndTimers.has(sessionId)) {
-//       clearTimeout(autoEndTimers.get(sessionId));
-//       autoEndTimers.delete(sessionId);
-//     }
-
-//     // ------------------ FINAL DURATION CALC ------------------
-//     const endedAt = new Date();
-//     const connectedAt = callSession.connectedAt || endedAt;
-
-//     const totalSeconds = Math.max(
-//       1,
-//       Math.floor((endedAt - connectedAt) / 1000)
-//     );
-
-//     const billedMinutes = Math.max(
-//       1,
-//       Math.ceil(totalSeconds / 60)
-//     );
-
-//     const actualCost = billedMinutes * callSession.ratePerMinute;
-
-//     let settlement = null;
-
-//     // ------------------ PROCESS PAYMENT ------------------
-//     if (callSession.reservationId) {
-//       settlement = await WalletService.processSessionPayment(
-//         callSession.reservationId,
-//         {
-//           actualCost,
-//           actualMinutes: billedMinutes,
-//           totalDurationSec: totalSeconds
-//         }
-//       );
-
-//       callSession.paymentStatus = "PAID";
-//       callSession.platformCommission = settlement.platformCommission || 0;
-//       callSession.astrologerEarnings = settlement.astrologerEarnings || 0;
-//     }
-
-//     // ------------------ UPDATE CALL SESSION ------------------
-//     callSession.status = "COMPLETED";
-//     callSession.endedAt = endedAt;
-//     callSession.totalDuration = totalSeconds;
-//     callSession.billedDuration = billedMinutes * 60;
-//     callSession.totalCost = actualCost;
-
-//     await callSession.save({ session });
-
-//     // ------------------ UPDATE CALL RECORD ------------------
-//     call.status = "COMPLETED";
-//     call.endTime = endedAt;
-//     call.duration = totalSeconds;
-//     call.totalAmount = actualCost;
-//     call.endedBy = userId;
-//     call.endedByRole = req.user.role;
-
-//     await call.save({ session });
-
-//     // ------------------ UPDATE REQUEST STATUS ------------------
-//     await CallRequest.findOneAndUpdate(
-//       { sessionId },
-//       { status: "COMPLETED" },
-//       { session }
-//     );
-
-//     // COMMIT
-//     hasCommitted = true;
-//     await session.commitTransaction();
-
-//     // ------------------ SOCKET NOTIFICATION ------------------
-//     const payload = {
-//       sessionId,
-//       callId: call._id.toString(),
-//       status: "COMPLETED",
-//       totalCost: actualCost,
-//       durationSeconds: totalSeconds,
-//       billedMinutes,
-//       endedAt
-//     };
-
-//     emitSocketEvent(req, callSession.userId.toString(), ChatEventsEnum.CALL_ENDED_EVENT, payload);
-//     emitSocketEvent(req, callSession.astrologerId.toString(), ChatEventsEnum.CALL_ENDED_EVENT, payload);
-
-//     return res.status(200).json(
-//       new ApiResponse(200, payload, "Call ended")
-//     );
-
-//   } catch (error) {
-//     if (!hasCommitted && session.inTransaction()) {
-//       await session.abortTransaction();
-//     }
-//     throw error;
-//   } finally {
-//     session.endSession();
-//   }
-// });
 
 // Updated rejectCall (full refund)
 export const rejectCall = asyncHandler(async (req, res) => {
@@ -1204,21 +1118,11 @@ const stopBillingTimer = (sessionId) => {
     clearTimeout(autoEndTimers.get(sessionId));
     autoEndTimers.delete(sessionId);
   }
+
+  // Clear all reminder timers for this session
   clearReminders(sessionId);
 
-  // Set reminders at 5, 2, and 1 minute marks
-  const reminderTimes = [5, 2, 1];
-
-  reminderTimes.forEach((minutes) => {
-    if (estimatedMinutes > minutes) {
-      const reminderTimeMs = (estimatedMinutes - minutes) * 60 * 1000;
-      const timer = setTimeout(() => {
-        sendSessionReminder(sessionId, chatId, minutes);
-      }, reminderTimeMs);
-
-      reminderTimers.set(`${sessionId}_${minutes}min`, timer);
-    }
-  });
+  console.log(`[CALL] All timers cleared for session: ${sessionId}`);
 };
 
 const startRingingTimer = (sessionId, callId, reservationId) => {
@@ -1363,6 +1267,30 @@ const clearCallRequestTimer = (requestId) => {
   }
 };
 
+// Add this function near your other timer management functions (around line 40-50)
+const clearReminders = (sessionId) => {
+  // Clear all reminder timers for this session
+  const reminderKeys = [
+    `${sessionId}_5min`,
+    `${sessionId}_2min`,
+    `${sessionId}_1min`
+  ];
+
+  reminderKeys.forEach(key => {
+    if (reminderTimers.has(key)) {
+      clearTimeout(reminderTimers.get(key));
+      reminderTimers.delete(key);
+    }
+  });
+
+  // Clear from reminderSent map
+  reminderSent.delete(`${sessionId}_5min`);
+  reminderSent.delete(`${sessionId}_2min`);
+  reminderSent.delete(`${sessionId}_1min`);
+
+  console.log(`[CALL] Cleared all reminders for session: ${sessionId}`);
+};
+
 
 const clearCallTimer = (id, type = 'request') => {
   const timerKey = `${type}_${id}`;
@@ -1375,7 +1303,68 @@ const clearCallTimer = (id, type = 'request') => {
 };
 
 
+const handleSessionAutoEnd = async (sessionId, chatId, reservationId) => {
+  const mongoSession = await mongoose.startSession();
+  try {
+    await mongoSession.withTransaction(async () => {
+      const session = await ChatSession.findOne({ sessionId }).session(mongoSession);
 
+      if (!session || session.status === "COMPLETED") return;
+
+      // Update session status
+      session.status = "COMPLETED";
+      session.endedAt = new Date();
+      await session.save({ session: mongoSession });
+
+      // Process final billing
+      if (reservationId) {
+        const billedMinutes = Math.ceil(session.billedDuration / 60);
+        const finalCost = session.ratePerMinute * billedMinutes;
+
+        await WalletService.processSessionPayment(reservationId, {
+          actualCost: finalCost,
+          actualMinutes: billedMinutes,
+          totalDurationSec: session.billedDuration
+        });
+      }
+
+      // Notify both parties
+      emitSocketEventGlobal(chatId, ChatEventsEnum.SESSION_AUTO_ENDED, {
+        sessionId,
+        message: "Session auto-ended due to time limit",
+        endedAt: new Date()
+      });
+
+      console.log(`Auto-ended session: ${sessionId}`);
+    });
+  } catch (error) {
+    console.error(`Failed to auto-end session ${sessionId}:`, error);
+  } finally {
+    mongoSession.endSession();
+    stopBillingTimer(sessionId);
+  }
+};
+
+const setupSessionReminders = (sessionId, chatId, estimatedMinutes) => {
+  // Clear any existing reminders first
+  clearReminders(sessionId);
+
+  // Set reminders at 5, 2, and 1 minute marks
+  const reminderTimes = [5, 2, 1];
+
+  reminderTimes.forEach((minutes) => {
+    if (estimatedMinutes > minutes) {
+      const reminderTimeMs = (estimatedMinutes - minutes) * 60 * 1000;
+      const timer = setTimeout(() => {
+        sendSessionReminder(sessionId, chatId, minutes);
+      }, reminderTimeMs);
+
+      reminderTimers.set(`${sessionId}_${minutes}min`, timer);
+    }
+  });
+
+  console.log(`[CALL] Set up reminders for session: ${sessionId}`);
+};
 
 const sendNotification = async ({
   userId,
