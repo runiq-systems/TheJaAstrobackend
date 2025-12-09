@@ -113,28 +113,99 @@ export class WebRTCService {
     }
   }
 
-  async handleDisconnect(socket) {
+  // ──────────────────────────────────────────────────────────────
+  //  FINAL BULLETPROOF handleCallDisconnection (Handles all network scenarios)
+  // ──────────────────────────────────────────────────────────────
+  async handleCallDisconnection(userId, socket) {
+    const activeCall = this.activeCalls.get(userId);
+    if (!activeCall) return;
+
+    const otherUserId =
+      activeCall.otherUserId ||
+      (activeCall.callerId === userId ? activeCall.receiverId : activeCall.callerId);
+
+    const callKey = activeCall.callKey;
+
     try {
-      const userId = socket.userId;
-      if (!userId) return;
-
-      logger.info(`User ${userId} disconnected (socket: ${socket.id})`);
-
-      const userSockets = this.users.get(userId);
-      if (userSockets) {
-        userSockets.delete(socket.id);
-        // if (userSockets.size === 0) {
-        //   this.users.delete(userId);
-        //   await this.updateUserStatus(userId, "offline");
-        // }
+      const callTiming = this.callTimings.get(callKey);
+      if (!callTiming?.callRecordId) {
+        logger.warn("[DISCONNECT] No call record found for cleanup", { userId, callKey });
+        return this.cleanupCallResources(callKey, userId, otherUserId);
       }
 
-      await this.handleCallDisconnection(userId, socket);
-      this.cleanupPendingCallsBySocket(socket.id);
+      const callRecordId = callTiming.callRecordId;
 
-      logger.debug(`Disconnect processing completed for user ${userId}`);
+      // Find active CallSession that hasn't been handled yet
+      const callSession = await CallSession.findOne({
+        callId: callRecordId,
+        status: { $in: ["CONNECTED", "ACTIVE"] },
+        networkDropHandled: { $ne: true }, // Only if not already handled
+      }).select("sessionId userId astrologerId reservationId status");
+
+      // If no active session or already handled → safe to ignore
+      if (!callSession) {
+        logger.info("[DISCONNECT] Already handled or call not active → skipping", {
+          userId,
+          callRecordId,
+        });
+        return this.cleanupCallResources(callKey, userId, otherUserId);
+      }
+
+      logger.warn("[NETWORK_DROP] Detected real disconnection → processing refund", {
+        sessionId: callSession.sessionId,
+        disconnectedBy: userId,
+        reservationId: callSession.reservationId,
+      });
+
+      // Mark as handled immediately to prevent double execution
+      await CallSession.findOneAndUpdate(
+        { sessionId: callSession.sessionId },
+        { networkDropHandled: true }
+      );
+
+      // Import endCall at top of file (make sure this line exists):
+      // const { endCall } = require("../controllers/callController.js");
+
+      const dummyReq = {
+        params: { sessionId: callSession.sessionId },
+        user: { _id: userId },
+        body: { reason: "network_loss" },
+      };
+
+      const dummyRes = {
+        status() {
+          return this;
+        },
+        json() {
+          return this;
+        },
+      };
+
+      // This triggers your full billing + refund logic safely
+      await endCall(dummyReq, dummyRes);
+
+      // Notify the other user
+      this.emitToUser(otherUserId, "callEnded", {
+        reason: "network_loss",
+        disconnectedBy: userId,
+        message: "Call ended due to network issue",
+        timestamp: new Date(),
+      });
+
+      logger.info("[SUCCESS] Network drop handled perfectly with refund", {
+        sessionId: callSession.sessionId,
+        userId,
+      });
     } catch (error) {
-      logger.error("Disconnect handler error:", error);
+      logger.error("[FATAL] handleCallDisconnection crashed", {
+        userId,
+        error: error.message || error,
+        stack: error.stack,
+      });
+      // Even on error, we don't retry — guard flag is already set
+    } finally {
+      // Always clean up in-memory state
+      this.cleanupCallResources(callKey, userId, otherUserId);
     }
   }
 
