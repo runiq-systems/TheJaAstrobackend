@@ -216,6 +216,8 @@ export class WalletService {
         try {
             if (ownSession) session.startTransaction();
 
+            console.log(`[WALLET] RESERVE starting: User ${userId}, Amount ₹${amount}, Reservation ${reservationId}`);
+
             if (amount <= 0) throw new ApiError(400, "Reservation amount must be positive");
 
             const wallet = await Wallet.findOne({ userId }).session(session);
@@ -224,8 +226,10 @@ export class WalletService {
             const currencyBalance = wallet.balances.find((b) => b.currency === currency);
             if (!currencyBalance) throw new ApiError(400, `No balance found for currency: ${currency}`);
 
+            console.log(`[WALLET] Before reserve - Available: ₹${currencyBalance.available}, Locked: ₹${currencyBalance.locked}`);
+
             if (currencyBalance.available < amount) {
-                throw new ApiError(400, "Insufficient available balance for reservation");
+                throw new ApiError(400, `Insufficient available balance. Available: ₹${currencyBalance.available}, Required: ₹${amount}`);
             }
 
             const availableBefore = currencyBalance.available;
@@ -234,6 +238,9 @@ export class WalletService {
             currencyBalance.available = availableBefore - amount;
             currencyBalance.locked = lockedBefore + amount;
 
+            console.log(`[WALLET] After reserve - Available: ₹${currencyBalance.available}, Locked: ₹${currencyBalance.locked}`);
+            console.log(`[WALLET] Change - Available: -₹${amount}, Locked: +₹${amount}`);
+
             const transaction = await Transaction.create(
                 [
                     {
@@ -241,7 +248,7 @@ export class WalletService {
                         userId,
                         entityType: "USER",
                         entityId: userId,
-                        type: "DEBIT",
+                        type: "DEBIT", // This should be DEBIT because we're moving from available
                         category: "RESERVE",
                         amount,
                         currency,
@@ -265,7 +272,10 @@ export class WalletService {
             wallet.lastBalanceUpdate = new Date();
             await wallet.save({ session });
 
-            if (ownSession) await session.commitTransaction();
+            if (ownSession) {
+                await session.commitTransaction();
+                console.log(`[WALLET] RESERVE committed successfully for user ${userId}`);
+            }
 
             return {
                 transaction: transaction[0],
@@ -276,7 +286,10 @@ export class WalletService {
                 lockedAfter: currencyBalance.locked,
             };
         } catch (error) {
-            if (ownSession) await session.abortTransaction();
+            if (ownSession) {
+                await session.abortTransaction();
+                console.error(`[WALLET] RESERVE failed for user ${userId}:`, error.message);
+            }
             throw error;
         } finally {
             if (ownSession) session.endSession();
@@ -286,6 +299,88 @@ export class WalletService {
     /**
      * RELEASE AMOUNT - move locked -> available. Accepts optional session
      */
+    // static async releaseAmount({
+    //     userId,
+    //     amount,
+    //     currency = "INR",
+    //     reservationId,
+    //     description = "Session reservation release",
+    //     session: externalSession = null,
+    // }) {
+    //     const ownSession = !externalSession;
+    //     const session = externalSession || (await mongoose.startSession());
+
+    //     try {
+    //         if (ownSession) session.startTransaction();
+
+    //         const wallet = await Wallet.findOne({ userId }).session(session);
+    //         if (!wallet) throw new ApiError(404, "Wallet not found");
+
+    //         const currencyBalance = wallet.balances.find((b) => b.currency === currency);
+    //         if (!currencyBalance) throw new ApiError(400, `No balance found for currency: ${currency}`);
+
+    //         if (currencyBalance.locked < amount) throw new ApiError(400, "Insufficient locked balance for release");
+
+    //         const availableBefore = currencyBalance.available;
+    //         const lockedBefore = currencyBalance.locked;
+
+    //         currencyBalance.locked = lockedBefore - amount;
+    //         currencyBalance.available = availableBefore + amount;
+
+    //         const transaction = await Transaction.create(
+    //             [
+    //                 {
+    //                     txId: generateTxId("UNRESERVE"),
+    //                     userId,
+    //                     entityType: "USER",
+    //                     entityId: userId,
+    //                     type: "CREDIT",
+    //                     category: "UNRESERVE",
+    //                     amount,
+    //                     currency,
+    //                     balanceBefore: availableBefore,
+    //                     balanceAfter: currencyBalance.available,
+    //                     status: "SUCCESS",
+    //                     description,
+    //                     reservationId,
+    //                     processedAt: new Date(),
+    //                     completedAt: new Date(),
+    //                     meta: {
+    //                         reservationId,
+    //                         releasedAmount: amount,
+    //                         remainingLocked: currencyBalance.locked,
+    //                     },
+    //                 },
+    //             ],
+    //             { session }
+    //         );
+
+    //         wallet.lastBalanceUpdate = new Date();
+    //         await wallet.save({ session });
+
+    //         if (ownSession) await session.commitTransaction();
+
+    //         return {
+    //             success: true,
+    //             transaction: transaction[0],
+    //             wallet,
+    //             availableBefore,
+    //             availableAfter: currencyBalance.available,
+    //             lockedBefore,
+    //             lockedAfter: currencyBalance.locked,
+    //         };
+    //     } catch (error) {
+    //         if (ownSession) await session.abortTransaction();
+    //         throw error;
+    //     } finally {
+    //         if (ownSession) session.endSession();
+    //     }
+    // }
+
+    // In WalletService class, ensure releaseAmount works:
+
+
+    // In WalletService class, ensure releaseAmount works:
     static async releaseAmount({
         userId,
         amount,
@@ -300,13 +395,20 @@ export class WalletService {
         try {
             if (ownSession) session.startTransaction();
 
+            console.log(`[WALLET] RELEASE starting: User ${userId}, Amount ₹${amount}, Currency ${currency}`);
+
             const wallet = await Wallet.findOne({ userId }).session(session);
             if (!wallet) throw new ApiError(404, "Wallet not found");
 
             const currencyBalance = wallet.balances.find((b) => b.currency === currency);
             if (!currencyBalance) throw new ApiError(400, `No balance found for currency: ${currency}`);
 
-            if (currencyBalance.locked < amount) throw new ApiError(400, "Insufficient locked balance for release");
+            console.log(`[WALLET] Before release - Available: ₹${currencyBalance.available}, Locked: ₹${currencyBalance.locked}`);
+
+            if (currencyBalance.locked < amount) {
+                console.warn(`[WALLET WARNING] Attempting to release ₹${amount} but only ₹${currencyBalance.locked} is locked. Releasing all locked.`);
+                amount = currencyBalance.locked; // Release whatever is locked
+            }
 
             const availableBefore = currencyBalance.available;
             const lockedBefore = currencyBalance.locked;
@@ -314,15 +416,20 @@ export class WalletService {
             currencyBalance.locked = lockedBefore - amount;
             currencyBalance.available = availableBefore + amount;
 
+            console.log(`[WALLET] After release - Available: ₹${currencyBalance.available}, Locked: ₹${currencyBalance.locked}`);
+            console.log(`[WALLET] Change - Available: +₹${amount}, Locked: -₹${amount}`);
+
+            // FIX: This should be type: "CREDIT" because we're moving money from locked to available
+            // But category should be "UNRESERVE" not "CREDIT" category
             const transaction = await Transaction.create(
                 [
                     {
-                        txId: generateTxId("UNRESERVE"),
+                        txId: generateTxId("UNLOCK"),
                         userId,
                         entityType: "USER",
                         entityId: userId,
-                        type: "CREDIT",
-                        category: "UNRESERVE",
+                        type: "CREDIT", // FIX: This should be CREDIT for wallet operations
+                        category: "UNRESERVE", // FIX: Category should be UNRESERVE
                         amount,
                         currency,
                         balanceBefore: availableBefore,
@@ -336,6 +443,7 @@ export class WalletService {
                             reservationId,
                             releasedAmount: amount,
                             remainingLocked: currencyBalance.locked,
+                            operation: "release_locked_to_available"
                         },
                     },
                 ],
@@ -345,7 +453,10 @@ export class WalletService {
             wallet.lastBalanceUpdate = new Date();
             await wallet.save({ session });
 
-            if (ownSession) await session.commitTransaction();
+            if (ownSession) {
+                await session.commitTransaction();
+                console.log(`[WALLET] RELEASE committed successfully for user ${userId}`);
+            }
 
             return {
                 success: true,
@@ -357,7 +468,10 @@ export class WalletService {
                 lockedAfter: currencyBalance.locked,
             };
         } catch (error) {
-            if (ownSession) await session.abortTransaction();
+            if (ownSession) {
+                await session.abortTransaction();
+                console.error(`[WALLET] RELEASE failed for user ${userId}:`, error.message);
+            }
             throw error;
         } finally {
             if (ownSession) session.endSession();
@@ -495,7 +609,7 @@ export class WalletService {
         throw new ApiError(500, "Settlement failed after multiple attempts due to concurrent updates");
     }
 
-        static async processSessionPayment(reservationId) {
+    static async processSessionPayment(reservationId) {
         if (!reservationId || !mongoose.Types.ObjectId.isValid(reservationId)) {
             throw new ApiError(400, "Invalid reservation ID");
         }

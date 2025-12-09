@@ -508,9 +508,7 @@ export const endCall = asyncHandler(async (req, res) => {
     const totalSeconds = Math.floor((now - connectedAt) / 1000);
     const billedMinutes = Math.ceil(totalSeconds / 60);
     const ratePerMinute = callSession.ratePerMinute;
-
-    // FIXED: Remove minimum charge override, bill only for actual minutes
-    const finalCost = billedMinutes * ratePerMinute; // Only this line changed
+    const finalCost = billedMinutes * ratePerMinute;
 
     console.log(`[BILLING CALCULATION] Session: ${sessionId}`);
     console.log(`  - Duration: ${totalSeconds}s (${(totalSeconds / 60).toFixed(2)} min)`);
@@ -540,7 +538,7 @@ export const endCall = asyncHandler(async (req, res) => {
       await call.save({ session });
     }
 
-    // FINAL SETTLEMENT
+    // FINAL SETTLEMENT WITH PROPER REFUND
     let refundedAmount = 0;
     let astrologerEarnings = 0;
     let platformEarnings = 0;
@@ -566,17 +564,19 @@ export const endCall = asyncHandler(async (req, res) => {
         console.log(`  - Astrologer: ₹${astrologerEarnings}`);
 
         // 1. RELEASE ALL LOCKED AMOUNT BACK TO AVAILABLE
+        console.log(`[WALLET] Step 1: Releasing ₹${reservedAmount} from locked to available`);
         await WalletService.releaseAmount({
           userId,
           amount: reservedAmount,
           currency: "INR",
           reservationId: reservation._id,
-          description: "Release locked amount for final settlement",
+          description: `Release reserved amount ₹${reservedAmount} back to available balance`,
           session
         });
 
         // 2. DEBIT ONLY THE USED AMOUNT FROM USER
         if (usedAmount > 0) {
+          console.log(`[WALLET] Step 2: Debiting ₹${usedAmount} for actual usage`);
           await WalletService.debit({
             userId,
             amount: usedAmount,
@@ -598,6 +598,7 @@ export const endCall = asyncHandler(async (req, res) => {
 
         // 3. CREDIT ASTROLOGER EARNINGS
         if (astrologerEarnings > 0) {
+          console.log(`[WALLET] Step 3: Crediting astrologer ₹${astrologerEarnings}`);
           await WalletService.credit({
             userId: callSession.astrologerId,
             amount: astrologerEarnings,
@@ -635,6 +636,13 @@ export const endCall = asyncHandler(async (req, res) => {
         callSession.astrologerEarnings = astrologerEarnings;
         callSession.paymentStatus = "PAID";
         await callSession.save({ session });
+
+        // 4. VERIFY USER'S FINAL BALANCE
+        const finalBalance = await WalletService.getBalance(userId, "INR");
+        console.log(`[WALLET] Final balance for user ${userId}:`);
+        console.log(`  - Available: ₹${finalBalance.available}`);
+        console.log(`  - Locked: ₹${finalBalance.locked}`);
+        console.log(`  - Total: ₹${finalBalance.total}`);
       }
     }
 
@@ -673,7 +681,6 @@ export const endCall = asyncHandler(async (req, res) => {
     session.endSession();
   }
 });
-
 // Updated rejectCall (full refund)
 export const rejectCall = asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
