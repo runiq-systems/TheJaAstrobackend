@@ -25,6 +25,7 @@ import sessionRoutes from './routes/Walllet/sessionRoutes.js';
 import payoutRoutes from './routes/Walllet/payoutRoutes.js ';
 import commissionRoutes from './routes/Walllet/commissionRoutes.js';
 import Topastrologer from './routes/getAstrologer/TopAstrologer.js'
+import review from './routes/review.routes.js'
 const app = express();
 dotenv.config({
     path: "./.env",
@@ -101,6 +102,7 @@ app.use('/api/v1/coupon', couponRoutes);
 app.use('/api/v1/session', sessionRoutes);
 app.use('/api/v1/payout', payoutRoutes);
 app.use('/api/v1/commission', commissionRoutes);
+app.use('/api/v1/review', review);
 
 app.use(errorHandler)
 export default httpserver;
