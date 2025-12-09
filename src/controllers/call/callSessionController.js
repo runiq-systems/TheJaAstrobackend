@@ -157,7 +157,7 @@ export const requestCallSession = asyncHandler(async (req, res) => {
       status: "REQUESTED",
       requestedAt: new Date(),
       expiresAt: new Date(Date.now() + 3 * 60 * 1000), // 3 minutes to accept
-      minimumCharge: Math.max(50, ratePerMinute),
+      minimumCharge: ratePerMinute,
       meta: {
         callerName: userName,
         callerImage: userAvatar,
@@ -492,7 +492,6 @@ export const endCall = asyncHandler(async (req, res) => {
     const { sessionId } = req.params;
     const userId = req.user._id;
 
-    // Fetch session for either user or astrologer
     const callSession = await CallSession.findOne({
       sessionId,
       $or: [{ userId }, { astrologerId: userId }],
@@ -509,7 +508,15 @@ export const endCall = asyncHandler(async (req, res) => {
     const totalSeconds = Math.floor((now - connectedAt) / 1000);
     const billedMinutes = Math.ceil(totalSeconds / 60);
     const ratePerMinute = callSession.ratePerMinute;
-    const finalCost = Math.max(callSession.minimumCharge || 0, billedMinutes * ratePerMinute);
+
+    // FIXED: Remove minimum charge override, bill only for actual minutes
+    const finalCost = billedMinutes * ratePerMinute; // Only this line changed
+
+    console.log(`[BILLING CALCULATION] Session: ${sessionId}`);
+    console.log(`  - Duration: ${totalSeconds}s (${(totalSeconds / 60).toFixed(2)} min)`);
+    console.log(`  - Billed minutes: ${billedMinutes} min`);
+    console.log(`  - Rate: ₹${ratePerMinute}/min`);
+    console.log(`  - Final cost: ₹${finalCost}`);
 
     // Stop billing timer
     stopBillingTimer(sessionId);
@@ -533,7 +540,7 @@ export const endCall = asyncHandler(async (req, res) => {
       await call.save({ session });
     }
 
-    // FINAL SETTLEMENT WITH PROPER CREDIT/DEBIT
+    // FINAL SETTLEMENT
     let refundedAmount = 0;
     let astrologerEarnings = 0;
     let platformEarnings = 0;
@@ -553,7 +560,7 @@ export const endCall = asyncHandler(async (req, res) => {
 
         console.log(`[SETTLEMENT] Session: ${sessionId}`);
         console.log(`  - Reserved: ₹${reservedAmount}`);
-        console.log(`  - Used: ₹${usedAmount}`);
+        console.log(`  - Used: ₹${usedAmount} (${billedMinutes} min × ₹${ratePerMinute}/min)`);
         console.log(`  - Refund: ₹${refundedAmount}`);
         console.log(`  - Platform: ₹${platformEarnings}`);
         console.log(`  - Astrologer: ₹${astrologerEarnings}`);
@@ -582,7 +589,8 @@ export const endCall = asyncHandler(async (req, res) => {
               sessionId,
               billedMinutes,
               duration: totalSeconds,
-              astrologerId: callSession.astrologerId
+              astrologerId: callSession.astrologerId,
+              ratePerMinute
             },
             session
           });
@@ -596,12 +604,13 @@ export const endCall = asyncHandler(async (req, res) => {
             currency: "INR",
             category: "EARNINGS",
             subcategory: "CALL_SESSION",
-            description: `Earnings from ${billedMinutes} min call`,
+            description: `Earnings from ${billedMinutes} min call (₹${ratePerMinute}/min)`,
             meta: {
               sessionId,
               callSessionId: callSession._id,
               billedMinutes,
               duration: totalSeconds,
+              ratePerMinute,
               commissionPercent: 20
             },
             session
@@ -640,9 +649,16 @@ export const endCall = asyncHandler(async (req, res) => {
       refundedAmount,
       durationSeconds: totalSeconds,
       billedMinutes,
+      ratePerMinute,
       endedAt: now,
       astrologerEarnings,
-      platformEarnings
+      platformEarnings,
+      calculation: {
+        actualMinutes: (totalSeconds / 60).toFixed(2),
+        roundedMinutes: billedMinutes,
+        rate: ratePerMinute,
+        total: finalCost
+      }
     };
 
     emitSocketEvent(req, callSession.userId.toString(), ChatEventsEnum.CALL_ENDED_EVENT, payload);
