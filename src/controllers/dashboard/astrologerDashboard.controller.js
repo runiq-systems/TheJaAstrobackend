@@ -154,33 +154,42 @@ export const getAstrologerDashboard = async (req, res) => {
             // 7. Ongoing Consultation (Call or Chat)
             CallSession.findOne({
                 astrologerId: new ObjectId(astrologerId),
-                status: { $in: ["CONNECTED", "ACTIVE"] }
+                status: { $in: ["CONNECTED", "ACTIVE"] } // VALID BASED ON YOUR SCHEMA
             })
-                .populate("userId", "name avatar zodiacSign")
+                .populate("userId", "fullName avatar zodiacSign")
                 .select("userId callType connectedAt")
                 .lean()
-                .then(session => session || ChatSession.findOne({
-                    astrologerId: new ObjectId(astrologerId),
-                    status: "ACTIVE"
-                })
-                    .populate("userId", "name avatar zodiacSign")
-                    .select("userId startedAt")
-                    .lean()),
+                .then(session =>
+                    session ||
+                    ChatSession.findOne({
+                        astrologerId: new ObjectId(astrologerId),
+                        status: "ACTIVE"
+                    })
+                        .populate("userId", "fullName avatar zodiacSign")
+                        .select("userId startedAt")
+                        .lean()
+                ),
 
             // 8. Recent Completed Session
-            CallSession.findOne({ astrologerId: new ObjectId(astrologerId), status: "COMPLETED" })
+            CallSession.findOne({
+                astrologerId: new ObjectId(astrologerId),
+                status: "COMPLETED"
+            })
                 .sort({ endedAt: -1 })
-                .populate("userId", "name avatar zodiacSign")
+                .populate("userId", "fullName avatar zodiacSign")
                 .select("userId totalDuration endedAt")
                 .lean()
-                .then(session => session || ChatSession.findOne({
-                    astrologerId: new ObjectId(astrologerId),
-                    status: "COMPLETED"
-                })
-                    .sort({ endedAt: -1 })
-                    .populate("userId", "name avatar zodiacSign")
-                    .select("userId activeDuration endedAt")
-                    .lean())
+                .then(session =>
+                    session ||
+                    ChatSession.findOne({
+                        astrologerId: new ObjectId(astrologerId),
+                        status: "COMPLETED"
+                    })
+                        .sort({ endedAt: -1 })
+                        .populate("userId", "fullName avatar zodiacSign")
+                        .select("userId activeDuration endedAt")
+                        .lean()
+                ),
         ]);
 
         // Calculate Rating
