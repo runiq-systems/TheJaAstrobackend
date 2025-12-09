@@ -5,6 +5,7 @@ import admin from "../utils/firabse.js";
 import { CallNotificationService } from "./notification.js";
 import { Call } from "../models/calllogs/call.js";
 import { CallSession } from "../models/calllogs/callSession.js";
+import { endCall } from "../controllers/call/callSessionController.js";
 export class WebRTCService {
   constructor(io) {
     this.io = io;
