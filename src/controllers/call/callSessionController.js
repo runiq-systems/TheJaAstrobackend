@@ -816,9 +816,6 @@ export const cancelCallRequest = asyncHandler(async (req, res) => {
   }
 });
 
-
-
-
 export const getAstrologerCallSessions = async (req, res) => {
   try {
     const astrologerId = req.user.id;
@@ -839,7 +836,7 @@ export const getAstrologerCallSessions = async (req, res) => {
 
     // Status filter
     if (status && status !== "ALL") {
-      if (status === "ACTIVE_CALLS") {
+      if (status === "ACTIVE") {
         filter.status = { $in: ["INITIATED", "RINGING", "CONNECTED"] };
       } else if (status === "COMPLETED_CALLS") {
         filter.status = "COMPLETED";
@@ -881,26 +878,33 @@ export const getAstrologerCallSessions = async (req, res) => {
     // Format response exactly like chat sessions
     const formattedCalls = callSession.map((call) => ({
       _id: call._id,
-      callId: call._id,
+      callId: call.callId || call._id,
       requestId: call.requestId,
-      sessionId: call.sessionId, // AUDIO or VIDEO
-      callType: call.callType, // AUDIO or VIDEO
+      sessionId: call.sessionId,
+      callType: call.callType,
       direction: call.direction,
       status: call.status,
+
       user: call.userId,
-      ratePerMinute: call.chargesPerMinute,
-      totalAmount: call.totalAmount || 0,
-      duration: call.duration || 0, // seconds
-      connectTime: call.connectTime,
-      startTime: call.startTime,
-      endTime: call.endTime,
-      userRating: call.rating,
-      userFeedback: call.feedback,
-      recordingUrl: call.recordingUrl,
+
+      ratePerMinute: call.ratePerMinute,
+      totalAmount: call.totalCost || 0,
+      duration: call.totalDuration || 0,
+      billedDuration: call.billedDuration || 0,
+
+      connectTime: call.connectedAt,
+      startTime: call.requestedAt,
+      endTime: call.endedAt,
+
+      userRating: call.userRating?.stars,
+      userFeedback: call.userRating?.review,
+      
       paymentStatus: call.paymentStatus || "PENDING",
+
       createdAt: call.createdAt,
       updatedAt: call.updatedAt,
     }));
+
 
     return res.status(200).json({
       success: true,

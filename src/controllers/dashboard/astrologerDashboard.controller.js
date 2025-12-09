@@ -152,11 +152,11 @@ export const getAstrologerDashboard = async (req, res) => {
             ]),
 
             // 7. Ongoing Consultation (Call or Chat)
-            CallSession.findOne({
+            CallSession.find({
                 astrologerId: new ObjectId(astrologerId),
                 status: { $in: ["CONNECTED", "ACTIVE"] } // VALID BASED ON YOUR SCHEMA
             })
-                .populate("userId", "fullName avatar zodiacSign")
+                .populate("userId", "fullName phone gender")
                 .select("userId callType connectedAt")
                 .lean()
                 .then(session =>
@@ -165,18 +165,18 @@ export const getAstrologerDashboard = async (req, res) => {
                         astrologerId: new ObjectId(astrologerId),
                         status: "ACTIVE"
                     })
-                        .populate("userId", "fullName avatar zodiacSign")
+                        .populate("userId", "fullName phone gender")
                         .select("userId startedAt")
                         .lean()
                 ),
 
             // 8. Recent Completed Session
-            CallSession.findOne({
+            CallSession.find({
                 astrologerId: new ObjectId(astrologerId),
                 status: "COMPLETED"
             })
                 .sort({ endedAt: -1 })
-                .populate("userId", "fullName avatar zodiacSign")
+                .populate("userId", "fullName phone gender")
                 .select("userId totalDuration endedAt")
                 .lean()
                 .then(session =>
@@ -186,7 +186,7 @@ export const getAstrologerDashboard = async (req, res) => {
                         status: "COMPLETED"
                     })
                         .sort({ endedAt: -1 })
-                        .populate("userId", "fullName avatar zodiacSign")
+                        .populate("userId", "fullName phone gender")
                         .select("userId activeDuration endedAt")
                         .lean()
                 ),
