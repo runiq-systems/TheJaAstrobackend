@@ -72,8 +72,9 @@ function generateTxId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-// Updated requestCallSession (with upfront reservation)
+
 // === requestCallSession === REMOVE ALL RESERVATION & WALLET CODE ===
+
 export const requestCallSession = asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
   let hasCommitted = false;
@@ -494,6 +495,7 @@ export const startCallSession = asyncHandler(async (req, res) => {
   }
 });
 // Updated endCall (deduct actual, refund excess)
+// Updated endCall (deduct actual, including partial last minute, then refund excess)
 export const endCall = asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
   let hasCommitted = false;
@@ -543,13 +545,51 @@ export const endCall = asyncHandler(async (req, res) => {
       await call.save({ session });
     }
 
-    // FINAL REFUND OF UNUSED RESERVED AMOUNT
+    // FINAL SETTLEMENT OF UNUSED RESERVED AMOUNT
     if (callSession.reservationId) {
       const reservation = await Reservation.findById(callSession.reservationId).session(session);
       if (reservation) {
+        const ratePerMinute = callSession.ratePerMinute;
+        const currentCost = reservation.totalCost || 0;
+        const additionalCost = finalCost - currentCost;
+
+        // FIX: Deduct additional cost for partial last minute or minimum charge
+        if (additionalCost > 0) {
+          // Release the additional from locked to available
+          await WalletService.releaseAmount({
+            userId,
+            amount: additionalCost,
+            currency: "INR",
+            reservationId: reservation._id,
+            description: "Final billing for partial minute or minimum charge",
+            session
+          });
+
+          // Immediately debit the additional (actual deduction)
+          await WalletService.debit({
+            userId,
+            amount: additionalCost,
+            currency: "INR",
+            category: "CALL_SESSION",
+            subcategory: callSession.callType,
+            description: "Final partial minute or minimum charge billing",
+            reservationId: reservation._id,
+            session
+          });
+
+          // Update reservation with the final totals
+          reservation.totalCost = finalCost;
+          reservation.billedMinutes = billedMinutes;
+          reservation.totalDurationSec = totalSeconds;
+          await reservation.save({ session });
+
+          console.log(`[BILLING] Deducted additional ₹${additionalCost} for partial minute/min charge | Session: ${sessionId}`);
+        }
+
+        // Now calculate and release the unused (refund to available balance)
         const reservedAmount = reservation.lockedAmount || 0;
-        const usedAmount = reservation.totalCost || finalCost;
-        const refundAmount = reservedAmount - usedAmount;
+        const usedAmount = reservation.totalCost;  // Now includes additional
+        const refundAmount = Math.max(0, reservedAmount - usedAmount);
 
         if (refundAmount > 0) {
           await WalletService.releaseAmount({
@@ -567,7 +607,7 @@ export const endCall = asyncHandler(async (req, res) => {
         // Mark as settled
         reservation.status = "SETTLED";
         reservation.settledAt = now;
-        reservation.refundedAmount = refundAmount;
+        reservation.refundedAmount = (reservation.refundedAmount || 0) + refundAmount;
         await reservation.save({ session });
       }
     }
@@ -886,6 +926,11 @@ const setupSessionReminders = (sessionId, chatId, estimatedMinutes) => {
 
 
 // ─────────────────────── FINAL CALL BILLING TIMER (100% CORRECT) ───────────────────────
+// Add this inside your call controller file (near other timers)
+
+const MAX_RESERVED_MINUTES = 10;
+
+// Modified startBillingTimer – now auto-ends exactly after 10 minutes billed
 const startBillingTimer = async (
   sessionId,
   callId,
@@ -900,14 +945,13 @@ const startBillingTimer = async (
     return;
   }
 
-  console.log(`[BILLING] Starting REAL-TIME billing for ${sessionId} | ₹${ratePerMinute}/min`);
+  console.log(`[BILLING] Starting billing for ${sessionId} | Max ${MAX_RESERVED_MINUTES} mins reserved`);
 
-  stopBillingTimer(sessionId); // cleanup
+  stopBillingTimer(sessionId); // cleanup old
 
   let billedMinutes = 0;
   const startTime = Date.now();
 
-  // PER-MINUTE REAL DEDUCTION + UPDATE
   const interval = setInterval(async () => {
     const session = await mongoose.startSession();
     try {
@@ -918,7 +962,6 @@ const startBillingTimer = async (
         }).session(session);
 
         if (!callSession) {
-          console.log(`[BILLING] Call ended. Stopping timer.`);
           stopBillingTimer(sessionId);
           return;
         }
@@ -927,96 +970,98 @@ const startBillingTimer = async (
         const totalSeconds = billedMinutes * 60;
         const currentCost = Math.max(callSession.minimumCharge || ratePerMinute, billedMinutes * ratePerMinute);
 
-        // 1. Update CallSession
-        await CallSession.updateOne(
-          { _id: callSession._id },
-          {
-            $set: {
-              status: "ACTIVE",
-              billedDuration: totalSeconds,
-              totalCost: currentCost,
-              lastActivityAt: new Date()
-            }
-          }
-        ).session(session);
+        // Update session
+        callSession.status = "ACTIVE";
+        callSession.billedDuration = totalSeconds;
+        callSession.totalCost = currentCost;
+        callSession.lastActivityAt = new Date();
+        await callSession.save({ session });
 
-        // 2. CRITICAL: Deduct from RESERVED → USED (release + debit)
+        // Deduct this minute (release + debit)
         if (reservationId) {
           const reservation = await Reservation.findById(reservationId).session(session);
-          if (!reservation) throw new Error("Reservation not found");
+          if (reservation) {
+            const thisMinuteCost = ratePerMinute;
 
-          const alreadyUsed = reservation.totalCost || 0;
-          const thisMinuteCost = ratePerMinute;
-          const newTotalCost = alreadyUsed + thisMinuteCost;
+            // Release from locked → available
+            await WalletService.releaseAmount({
+              userId,
+              amount: thisMinuteCost,
+              currency: "INR",
+              reservationId: reservation._id,
+              description: `Call minute ${billedMinutes}`,
+              session
+            });
 
-          // Release from locked → available
-          await WalletService.releaseAmount({
-            userId,
-            amount: thisMinuteCost,
-            currency: "INR",
-            reservationId: reservation._id,
-            description: `Call minute ${billedMinutes} - ₹${ratePerMinute}`,
-            session
-          });
+            // Real deduction
+            await WalletService.debit({
+              userId,
+              amount: thisMinuteCost,
+              currency: "INR",
+              category: "CALL_SESSION",
+              subcategory: callType,
+              description: `Call minute ${billedMinutes}`,
+              reservationId: reservation._id,
+              session
+            });
 
-          // Immediately debit from available (real deduction)
-          await WalletService.debit({
-            userId,
-            amount: thisMinuteCost,
-            currency: "INR",
-            category: "CALL_SESSION",
-            subcategory: callType,
-            description: `Call with astrologer - minute ${billedMinutes}`,
-            reservationId: reservation._id,
-            session
-          });
-
-          // Update reservation
-          await Reservation.findByIdAndUpdate(reservationId, {
-            $set: {
-              totalCost: newTotalCost,
-              billedMinutes,
-              totalDurationSec: totalSeconds,
-              status: "ONGOING"
-            }
-          }, { session });
+            reservation.totalCost = reservation.totalCost || 0 + thisMinuteCost;
+            reservation.billedMinutes = billedMinutes;
+            reservation.totalDurationSec = totalSeconds;
+            await reservation.save({ session });
+          }
         }
 
-        // 3. Emit real-time update
-        const remainingMins = Math.max(0, 10 - billedMinutes); // assuming 10 min reserve
+        // Emit update
         emitSocketEventGlobal(callId.toString(), ChatEventsEnum.BILLING_UPDATE_EVENT, {
           sessionId,
           billedMinutes,
           currentCost,
           ratePerMinute,
-          minutesRemaining: remainingMins > 0 ? remainingMins : 0,
-          message: remainingMins <= 2 ? `Only ${remainingMins} min left!` : undefined
+          minutesRemaining: MAX_RESERVED_MINUTES - billedMinutes,
         });
 
-        // 4. Low balance warning (check live balance)
-        const balance = await WalletService.getBalance(userId);
-        if ((balance.available + balance.bonus) < ratePerMinute * 2) {
-          emitSocketEventGlobal(callId.toString(), ChatEventsEnum.LOW_BALANCE_WARNING, {
-            sessionId,
-            message: "Low balance! Call will end soon.",
-            remainingBalance: balance.available + balance.bonus
+        // CRITICAL: Auto-end exactly after 10 minutes billed
+        if (billedMinutes >= MAX_RESERVED_MINUTES) {
+          console.log(`[AUTO-END] 10 minutes completed for ${sessionId}. Ending call...`);
+
+          // Stop timer immediately
+          stopBillingTimer(sessionId);
+
+          // Trigger endCall end (same as user ending)
+          // We use setImmediate to run after transaction commits
+          setImmediate(async () => {
+            try {
+              const dummyReq = {
+                params: { sessionId },
+                user: { _id: userId },
+                // Add other needed fields if your endCall checks them
+                app: req.app,
+                // Pass socket info if needed
+              };
+              const dummyRes = {
+                status: () => ({ json: () => { } }),
+                json: () => { }
+              };
+              await endCall(dummyReq, dummyRes);
+            } catch (err) {
+              console.error("[AUTO-END FAILED]", err);
+            }
           });
 
-          // Auto-end in 60 seconds
-          setTimeout(() => handleCallAutoEnd(sessionId, callId, reservationId), 60000);
+          return; // exit interval
         }
 
-      }); // end transaction
+      });
     } catch (err) {
-      console.error(`[BILLING ERROR] Minute ${billedMinutes} failed:`, err.message);
-      // Do NOT stop timer — keep trying next minute
+      console.error(`[BILLING ERROR] Minute ${billedMinutes}:`, err.message);
     } finally {
       session.endSession();
     }
   }, 60_000);
 
   // Store timer
-  billingTimers.set(sessionId, { interval, startTime: Date.now() });
+  billingTimers.set(sessionId, { interval, startTime });
 
   // Initial emit
   emitSocketEventGlobal(callId.toString(), ChatEventsEnum.BILLING_UPDATE_EVENT, {
@@ -1024,10 +1069,9 @@ const startBillingTimer = async (
     billedMinutes: 0,
     currentCost: 0,
     ratePerMinute,
-    minutesRemaining: 10,
+    minutesRemaining: MAX_RESERVED_MINUTES,
+    message: `Call will auto-end after ${MAX_RESERVED_MINUTES} minutes`
   });
-
-  console.log(`[BILLING] Timer started for ${sessionId}`);
 };
 
 // ─────────────────────── STOP BILLING SAFELY ───────────────────────
