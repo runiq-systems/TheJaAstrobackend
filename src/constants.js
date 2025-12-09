@@ -143,7 +143,9 @@ export const ChatEventsEnum = Object.freeze({
   CALL_ENDED_BY_SYSTEM: "callEndedBySystem",               // Timeout, crash, network
   CALL_DROPPED: "callDropped",                             // Due to network
   CALL_FAILED: "callFailed",                               // Technical failure
-  CALL_MISSED: "callMissed",                               // Astrologer didn't pick up
+  CALL_MISSED: "callMissed",
+  CALL_REMINDER_EVENT: "callReminder", // For auto-end reminders
+  // Astrologer didn't pick up
 
   // Post-call
   CALL_RATING_REQUEST: "callRatingRequest",                // Ask user to rate
