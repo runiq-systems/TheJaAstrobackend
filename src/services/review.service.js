@@ -1,4 +1,5 @@
 import { Review } from "../models/review.model.js";
+import mongoose from 'mongoose';
 
 class ReviewService {
     // ⭐ Create review
@@ -20,9 +21,14 @@ class ReviewService {
     }
 
     // ⭐ Get average rating
+
+    // In your ReviewService
     async getAverageRating(astrologerId) {
+        // ← Convert string → ObjectId
+        const objectId = new mongoose.Types.ObjectId(astrologerId);
+
         const result = await Review.aggregate([
-            { $match: { astrologerId } },
+            { $match: { astrologerId: objectId } }, // ← Use ObjectId
             {
                 $group: {
                     _id: "$astrologerId",
@@ -44,7 +50,8 @@ class ReviewService {
 
     // ⭐ Get all reviews for profile page
     async getReviews(astrologerId, limit = 30) {
-        return Review.find({ astrologerId })
+        const objectId = new mongoose.Types.ObjectId(astrologerId);
+        return Review.find({ astrologerId: objectId })
             .sort({ createdAt: -1 })
             .limit(limit)
             .populate("userId", "name avatar");
