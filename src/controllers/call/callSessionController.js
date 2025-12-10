@@ -1320,6 +1320,10 @@ const clearCallTimer = (id, type = 'request') => {
   }
 };
 
+
+
+
+
 const handleCallAutoEnd = async (sessionId, callId, reservationId) => {
   const mongoSession = await mongoose.startSession();
 
@@ -1335,12 +1339,21 @@ const handleCallAutoEnd = async (sessionId, callId, reservationId) => {
 
       const now = new Date();
       const connectedAt = callSession.connectedAt || callSession.startedAt || now;
+
+      // Calculate total duration in seconds
       const totalSeconds = Math.floor((now - connectedAt) / 1000);
-      const billedMinutes = Math.ceil(totalSeconds / 60);
+
+      // Don't bill the last 0.5 seconds - subtract half a second from billed duration
+      const billedSeconds = Math.max(0, totalSeconds - 0.5);
+
+      // Calculate billed minutes (rounded up, but starting from adjusted seconds)
+      const billedMinutes = Math.ceil(billedSeconds / 60);
       const finalCost = billedMinutes * callSession.ratePerMinute;
 
       console.log(`[CALL AUTO-END] Final calculation for ${sessionId}:`);
-      console.log(`  - Duration: ${totalSeconds}s (${billedMinutes} min)`);
+      console.log(`  - Total Duration: ${totalSeconds}s`);
+      console.log(`  - Billed Duration: ${billedSeconds}s (after removing last 0.5s)`);
+      console.log(`  - Billed Minutes: ${billedMinutes} min`);
       console.log(`  - Rate: ₹${callSession.ratePerMinute}/min`);
       console.log(`  - Final cost: ₹${finalCost}`);
 
@@ -1348,7 +1361,7 @@ const handleCallAutoEnd = async (sessionId, callId, reservationId) => {
       callSession.status = "COMPLETED";
       callSession.endedAt = now;
       callSession.totalDuration = totalSeconds;
-      callSession.billedDuration = billedMinutes * 60;
+      callSession.billedDuration = billedMinutes * 60; // Store in seconds
       callSession.totalCost = finalCost;
       await callSession.save({ session: mongoSession });
 
@@ -1403,7 +1416,8 @@ const handleCallAutoEnd = async (sessionId, callId, reservationId) => {
               meta: {
                 sessionId,
                 billedMinutes,
-                duration: totalSeconds,
+                totalDuration: totalSeconds,
+                billedDuration: billedSeconds,
                 astrologerId: callSession.astrologerId,
                 ratePerMinute: callSession.ratePerMinute,
                 autoEnded: true
@@ -1424,7 +1438,8 @@ const handleCallAutoEnd = async (sessionId, callId, reservationId) => {
               meta: {
                 sessionId,
                 billedMinutes,
-                duration: totalSeconds,
+                totalDuration: totalSeconds,
+                billedDuration: billedSeconds,
                 ratePerMinute: callSession.ratePerMinute,
                 autoEnded: true
               },
@@ -1437,6 +1452,7 @@ const handleCallAutoEnd = async (sessionId, callId, reservationId) => {
           reservation.totalCost = usedAmount;
           reservation.billedMinutes = billedMinutes;
           reservation.totalDurationSec = totalSeconds;
+          reservation.billedDurationSec = billedSeconds;
           reservation.platformEarnings = platformEarnings;
           reservation.astrologerEarnings = astrologerEarnings;
           reservation.refundedAmount = refundedAmount;
@@ -1477,6 +1493,9 @@ const handleCallAutoEnd = async (sessionId, callId, reservationId) => {
     stopBillingTimer(sessionId);
   }
 };
+
+
+
 
 const setupCallReminders = (sessionId, estimatedMinutes) => {
   clearReminders(sessionId);
