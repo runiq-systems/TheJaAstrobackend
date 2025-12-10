@@ -20,8 +20,6 @@ class ReviewService {
         });
     }
 
-    // ⭐ Get average rating
-
     // In your ReviewService
     async getAverageRating(astrologerId) {
         // ← Convert string → ObjectId
