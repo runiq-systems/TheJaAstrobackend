@@ -22,7 +22,7 @@ import walletRoutes from './routes/Walllet/walletRoutes.js';
 import rechargeRoutes from './routes/Walllet/rechargeRoutes.js';
 import couponRoutes from './routes/Walllet/couponRoutes.js';
 import sessionRoutes from './routes/Walllet/sessionRoutes.js';
-import payoutRoutes from './routes/Walllet/payoutRoutes.js ';
+import payoutRoute from './routes/Walllet/payoutRoutes.js'
 import commissionRoutes from './routes/Walllet/commissionRoutes.js';
 import Topastrologer from './routes/getAstrologer/TopAstrologer.js'
 import review from './routes/review.routes.js'
@@ -100,7 +100,7 @@ app.use('/api/v1/wallet', walletRoutes);
 app.use('/api/v1/recharge', rechargeRoutes);
 app.use('/api/v1/coupon', couponRoutes);
 app.use('/api/v1/session', sessionRoutes);
-app.use('/api/v1/payout', payoutRoutes);
+app.use('/api/v1/payout', payoutRoute);
 app.use('/api/v1/commission', commissionRoutes);
 app.use('/api/v1/review', review);
 

@@ -4,21 +4,31 @@ import express from 'express';
 
 import {
     getPayoutAccounts,
-    addPayoutAccount,
+    addBankAccount,
+    removeBankAccount,
+    setPrimaryBankAccount,
     requestPayout,
     getPayoutHistory,
-    processPayout
+    getPayoutDetails,
+    cancelPayoutRequest,
+    getPayoutStatistics
 } from '../../controllers/Wallet/payoutController.js';
-import { authMiddleware,adminMiddleware } from '../../middleware/authmiddleware.js';
+import { authMiddleware, adminMiddleware } from '../../middleware/authmiddleware.js';
 const router = express.Router();
 
-// Astrologer routes
-router.get('/accounts', authMiddleware, getPayoutAccounts);
-router.post('/accounts', authMiddleware, addPayoutAccount);
-router.post('/request', authMiddleware, requestPayout);
-router.get('/history', authMiddleware, getPayoutHistory);
 
-// Admin routes
-router.post('/admin/process/:payoutId', adminMiddleware, processPayout);
+
+router.get('/accounts', getPayoutAccounts);
+router.post('/accounts', addBankAccount);
+router.delete('/accounts/:accountId', removeBankAccount);
+router.patch('/accounts/:accountId/primary', setPrimaryBankAccount);
+
+// Payout management
+router.post('/request', requestPayout);
+router.get('/history', getPayoutHistory);
+router.get('/:payoutId', getPayoutDetails);
+router.delete('/:payoutId/cancel', cancelPayoutRequest);
+router.get('/statistics/summary', getPayoutStatistics);
+
 
 export default router;

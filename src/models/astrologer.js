@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 import { kycSchema } from "./astrologerkyc.js";
 
-const bankDetailsSchema = new mongoose.Schema({
+export const bankDetailsSchema = new mongoose.Schema({
   bankName: {
     type: String,
     required: true,
@@ -19,6 +19,14 @@ const bankDetailsSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  isPrimary: {
+    type: Boolean,
+    default: false,
+  },
+  isActive: {
+    type: Boolean,
+    default: true,
+  }
 });
 
 const astrologerSchema = new mongoose.Schema(
@@ -39,7 +47,7 @@ const astrologerSchema = new mongoose.Schema(
         type: String,
       },
     ],
-    
+
     yearOfExpertise: {
       type: String,
     },

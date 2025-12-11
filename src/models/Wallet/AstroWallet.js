@@ -197,7 +197,7 @@ const CommissionBatchUpdateSchema = new Schema(
         { type: String, enum: ["BASIC", "SILVER", "GOLD", "PLATINUM"] },
       ],
       sessionTypes: [{ type: String, enum: ["CALL", "CHAT", "LIVE"] }],
-      specificAstrologers: [{ type: Schema.Types.ObjectId, ref:'User' }],
+      specificAstrologers: [{ type: Schema.Types.ObjectId, ref: 'User' }],
       minRating: { type: Number, default: 0 },
       minSessions: { type: Number, default: 0 },
     },
@@ -225,7 +225,7 @@ const CommissionBatchUpdateSchema = new Schema(
     failedCount: { type: Number, default: 0 },
     errors: [
       {
-        astrologerId: { type: Schema.Types.ObjectId, ref:'User' },
+        astrologerId: { type: Schema.Types.ObjectId, ref: 'User' },
         error: { type: String, required: true },
       },
     ],
@@ -370,7 +370,7 @@ const SessionRateConfigSchema = new Schema(
   {
     astrologerId: {
       type: Schema.Types.ObjectId,
-      ref:'User',
+      ref: 'User',
       required: true,
     },
     sessionType: {
@@ -399,7 +399,7 @@ const ReservationSchema = new Schema(
     },
     astrologerId: {
       type: Schema.Types.ObjectId,
-      ref:'User',
+      ref: 'User',
       required: true,
       index: true,
     },
@@ -632,7 +632,7 @@ const PayoutSchema = new Schema(
   {
     astrologerId: {
       type: Schema.Types.ObjectId,
-      ref:'User',
+      ref: 'User',
       required: true,
       index: true,
     },
@@ -641,16 +641,13 @@ const PayoutSchema = new Schema(
     fee: { type: Number, default: 0 },
     tax: { type: Number, default: 0 },
     netAmount: { type: Number, required: true },
+    
     method: {
       type: String,
       enum: ["BANK_TRANSFER", "UPI", "PAYTM", "PAYPAL", "CARD"],
       required: true,
     },
-    payoutAccount: {
-      type: Schema.Types.ObjectId,
-      ref: "PayoutAccount",
-      required: true,
-    },
+      
     status: {
       type: String,
       enum: [
@@ -675,31 +672,7 @@ const PayoutSchema = new Schema(
   { timestamps: true }
 );
 
-const PayoutAccountSchema = new Schema(
-  {
-    astrologerId: {
-      type: Schema.Types.ObjectId,
-      ref:'User',
-      required: true,
-      index: true,
-    },
-    accountType: {
-      type: String,
-      enum: ["BANK", "UPI", "PAYTM", "PAYPAL"],
-      required: true,
-    },
-    isPrimary: { type: Boolean, default: false },
-    bankName: { type: String, default: null },
-    accountNumber: { type: String, default: null },
-    ifscCode: { type: String, default: null },
-    accountHolder: { type: String, default: null },
-    upiId: { type: String, default: null },
-    isVerified: { type: Boolean, default: false },
-    verifiedAt: { type: Date, default: null },
-    meta: { type: Schema.Types.Mixed, default: {} },
-  },
-  { timestamps: true }
-);
+
 
 // ==================== AUDIT & REPORTING SCHEMAS ====================
 
@@ -907,7 +880,6 @@ export const RechargeHistory = getModel(
   RechargeHistorySchema
 );
 export const Payout = getModel("Payout", PayoutSchema);
-export const PayoutAccount = getModel("PayoutAccount", PayoutAccountSchema);
 
 // Audit & Reporting Models
 export const WalletAudit = getModel("WalletAudit", WalletAuditSchema);
@@ -1029,7 +1001,6 @@ export default {
   // Payment & Settlement
   RechargeHistory,
   Payout,
-  PayoutAccount,
 
   // Audit & Reporting
   WalletAudit,
