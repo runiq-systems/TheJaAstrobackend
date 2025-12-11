@@ -95,7 +95,7 @@ app.use("/api/v1/chat", chatmessageRoute)
 app.use("/api/v1", chatSession)
 app.use("/api/v1/call", callSession)
 app.use("/api/v1/Topastrologer", Topastrologer)
-app.use("/api/v1", userRoute)
+app.use("/api/v1/users", userRoute)
 
 app.use('/api/v1/wallet', walletRoutes);
 app.use('/api/v1/recharge', rechargeRoutes);
