@@ -844,11 +844,29 @@ export const getAstrologerCallSessions = async (req, res) => {
     // Status filter
     if (status && status !== "ALL") {
       if (status === "ACTIVE") {
-        filter.status = { $in: ["INITIATED", "RINGING", "CONNECTED"] };
+        // Map to frontend's CONNECTED/ACTIVE status
+        filter.status = { $in: ["CONNECTED", "ACTIVE"] };
       } else if (status === "COMPLETED_CALLS") {
         filter.status = "COMPLETED";
       } else {
-        filter.status = status;
+        // Ensure we use frontend-compatible statuses
+        const statusMapping = {
+          'REQUESTED': 'REQUESTED',
+          'ACCEPTED': 'ACCEPTED', 
+          'RINGING': 'RINGING',
+          'CONNECTED': 'CONNECTED',
+          'ACTIVE': 'ACTIVE',
+          'ON_HOLD': 'ON_HOLD',
+          'COMPLETED': 'COMPLETED',
+          'REJECTED': 'REJECTED',
+          'MISSED': 'MISSED',
+          'CANCELLED': 'CANCELLED',
+          'FAILED': 'FAILED',
+          'EXPIRED': 'EXPIRED',
+          'AUTO_ENDED': 'AUTO_ENDED'
+        };
+        
+        filter.status = statusMapping[status] || status;
       }
     }
 
@@ -1178,10 +1196,6 @@ const startRingingTimer = (sessionId, callId, reservationId) => {
 
   activeCallTimers.set(`ringing_${sessionId}`, timer);
 };
-
-
-
-
 
 // Send session reminder
 const sendSessionReminder = async (sessionId, chatId, minutesRemaining) => {

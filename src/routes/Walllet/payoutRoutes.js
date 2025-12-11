@@ -13,10 +13,10 @@ import {
     cancelPayoutRequest,
     getPayoutStatistics
 } from '../../controllers/Wallet/payoutController.js';
-import { authMiddleware, adminMiddleware } from '../../middleware/authmiddleware.js';
+import { authMiddleware } from '../../middleware/authmiddleware.js';
 const router = express.Router();
 
-
+router.use(authMiddleware);
 
 router.get('/accounts', getPayoutAccounts);
 router.post('/accounts', addBankAccount);
