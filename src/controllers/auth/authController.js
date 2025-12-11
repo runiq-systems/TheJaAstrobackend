@@ -309,7 +309,7 @@ export const UpdateProfileCompleteController = async (req, res) => {
   }
 };
 
-export const GetAstrologersController = async (req, res) => {
+export const GetProfileController = async (req, res) => {
   try {
     // Pagination parameters
     const page = parseInt(req.query.page) || 1;
