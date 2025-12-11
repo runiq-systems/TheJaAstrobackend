@@ -26,6 +26,8 @@ import payoutRoutes from './routes/Walllet/payoutRoutes.js ';
 import commissionRoutes from './routes/Walllet/commissionRoutes.js';
 import Topastrologer from './routes/getAstrologer/TopAstrologer.js'
 import review from './routes/review.routes.js'
+import userRoute from "./routes/users/users.routes.js"
+
 const app = express();
 dotenv.config({
     path: "./.env",
@@ -93,8 +95,7 @@ app.use("/api/v1/chat", chatmessageRoute)
 app.use("/api/v1", chatSession)
 app.use("/api/v1/call", callSession)
 app.use("/api/v1/Topastrologer", Topastrologer)
-
-
+app.use("/api/v1", userRoute)
 
 app.use('/api/v1/wallet', walletRoutes);
 app.use('/api/v1/recharge', rechargeRoutes);
