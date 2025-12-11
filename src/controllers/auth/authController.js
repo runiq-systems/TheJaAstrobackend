@@ -311,44 +311,42 @@ export const UpdateProfileCompleteController = async (req, res) => {
 
 export const GetProfileController = async (req, res) => {
   try {
-    // Pagination parameters
-    const page = parseInt(req.query.page) || 1;
-    const limit = 8; // 8 astrologers per page
-    const skip = (page - 1) * limit;
+    const userId = req.user._id || req.user.id;
+    // Fetch user profile with selected fields
+    const user = await User.findById(userId).select(
+      "fullName gender dateOfBirth timeOfBirth isAccurate placeOfBirth phone role isOnline userStatus isVerified lastSeen"
+    );
+    console.log(user.role["astrologer"]);
 
-    // Optional: Add search or filters later (e.g., by specialization, language, etc.)
-    // For now, fetch all astrologers
-
-    const astrologers = await User.find({ "role.astrologer": true })
-      .select(
-        "fullName gender photo specialization languages yearOfExperience charges isOnline isVerified averageRating totalReviews"
-      )
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .lean(); // Improves performance
-
-    const totalAstrologers = await User.countDocuments({ "role.astrologer": true });
-
-    const totalPages = Math.ceil(totalAstrologers / limit);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
 
     return res.status(200).json({
       success: true,
-      message: "Astrologers fetched successfully",
+      message: "Profile retrieved successfully",
       data: {
-        astrologers,
-        pagination: {
-          currentPage: page,
-          totalPages,
-          totalAstrologers,
-          hasNextPage: page < totalPages,
-          hasPrevPage: page > 1,
-          perPage: limit,
-        },
+        fullName: user.fullName || "",
+        gender: user.gender || "",
+        phone: user.phone || "", // Now phone will be availablephone: user.phone || "", // Now phone will be available
+        dateOfBirth: user.dateOfBirth
+          ? user.dateOfBirth.toISOString().split("T")[0]
+          : "",
+        timeOfBirth: user.timeOfBirth || "",
+        isAccurate: user.isAccurate || false,
+        placeOfBirth: user.placeOfBirth || "",
+        isOnline: user.isOnline || false,
+        userStatus: user.userStatus || "Inactive",
+        isVerified: user.isVerified || false,
+        lastSeen: user.lastSeen || null,
+        role: user.role || "",
       },
     });
   } catch (error) {
-    logger.error(`Error in GetAstrologersController: ${error.message}`);
+    logger.error(`Error in GetProfileController: ${error.message}`);
     return res.status(500).json({
       success: false,
       message: "Internal Server Error",
