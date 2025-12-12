@@ -1,6 +1,8 @@
 // controllers/payoutController.js
 import { Payout, PayoutAccount, Transaction, Wallet, generateTxId,Reservation } from '../../models/Wallet/AstroWallet.js';
 import mongoose from 'mongoose';
+import { WalletService } from './walletIntegrationController.js';
+
 export const getPayoutAccounts = async (req, res) => {
     try {
         const astrologerId = req.user.id;
@@ -80,115 +82,99 @@ export const addPayoutAccount = async (req, res) => {
     }
 };
 
+
+/**
+ * Request payout directly from wallet (no deductions)
+ */
 export const requestPayout = async (req, res) => {
-    try {
-        const astrologerId = req.user.id;
-        const { amount, payoutAccountId } = req.body;
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-        // Get payout account
-        const payoutAccount = await PayoutAccount.findOne({
-            _id: payoutAccountId,
-            astrologerId
-        });
+  try {
+    const astrologerId = req.user.id;
+    const { amount, payoutAccountId } = req.body;
 
-        if (!payoutAccount) {
-            return res.status(404).json({
-                success: false,
-                message: 'Payout account not found'
-            });
-        }
-
-        if (!payoutAccount.isVerified) {
-            return res.status(400).json({
-                success: false,
-                message: 'Payout account not verified'
-            });
-        }
-
-        // Calculate available earnings from successful sessions
-        const completedSessions = await Reservation.aggregate([
-            {
-                $match: {
-                    astrologerId:new mongoose.Types.ObjectId(astrologerId),
-                    status: 'SETTLED',
-                    settledAt: { $exists: true }
-                }
-            },
-            {
-                $group: {
-                    _id: null,
-                    totalEarnings: { $sum: '$astrologerEarnings' }
-                }
-            }
-        ]);
-
-        const totalEarnings = completedSessions.length > 0 ? completedSessions[0].totalEarnings : 0;
-
-        // Get already requested payouts
-        const requestedPayouts = await Payout.aggregate([
-            {
-                $match: {
-                    astrologerId: new mongoose.Types.ObjectId(astrologerId),
-                    status: { $in: ['REQUESTED', 'APPROVED', 'PROCESSING'] }
-                }
-            },
-            {
-                $group: {
-                    _id: null,
-                    totalRequested: { $sum: '$amount' }
-                }
-            }
-        ]);
-
-        const totalRequested = requestedPayouts.length > 0 ? requestedPayouts[0].totalRequested : 0;
-        const availableForPayout = totalEarnings - totalRequested;
-
-        if (amount > availableForPayout) {
-            return res.status(400).json({
-                success: false,
-                message: `Insufficient earnings. Available: ${availableForPayout}`
-            });
-        }
-
-        // Calculate fees (example: 2% processing fee)
-        const fee = amount * 0.02;
-        const tax = 0; // Could be calculated based on tax rules
-        const netAmount = amount - fee - tax;
-
-        const payout = new Payout({
-            astrologerId,
-            amount,
-            currency: 'INR',
-            fee,
-            tax,
-            netAmount,
-            method: payoutAccount.accountType === 'UPI' ? 'UPI' : 'BANK_TRANSFER',
-            payoutAccount: payoutAccountId,
-            status: 'REQUESTED',
-            meta: { ipAddress: req.ip }
-        });
-
-        await payout.save();
-
-        res.json({
-            success: true,
-            message: 'Payout request submitted successfully',
-            data: {
-                payoutId: payout._id,
-                amount,
-                fee,
-                netAmount,
-                estimatedProcessing: '3-5 business days'
-            }
-        });
-    } catch (error) {
-        console.error('Request payout error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Internal server error'
-        });
+    if (!amount || amount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid payout amount",
+      });
     }
+
+    // 🔹 Validate payout account
+    const payoutAccount = await PayoutAccount.findOne({
+      _id: payoutAccountId,
+      astrologerId,
+    }).session(session);
+
+    if (!payoutAccount) {
+      return res.status(404).json({
+        success: false,
+        message: "Payout account not found",
+      });
+    }
+
+    if (!payoutAccount.isVerified) {
+      return res.status(400).json({
+        success: false,
+        message: "Payout account not verified",
+      });
+    }
+
+    // ✅ Step 1: Debit from astrologer’s wallet (via WalletService)
+    const { transaction } = await WalletService.debit({
+      userId: astrologerId,
+      amount,
+      currency: "INR",
+      category: "PAYOUT",
+      description: `Withdrawal request of ₹${amount} initiated`,
+      session,
+    });
+
+    // ✅ Step 2: Create payout record
+    const payout = new Payout({
+      astrologerId,
+      amount,
+      currency: "INR",
+      fee: 0,
+      tax: 0,
+      netAmount: amount,
+      method: payoutAccount.accountType === "UPI" ? "UPI" : "BANK_TRANSFER",
+      payoutAccount: payoutAccount._id,
+      status: "REQUESTED",
+      transactionIds: [transaction.txId],
+      meta: { ipAddress: req.ip },
+    });
+
+    await payout.save({ session });
+
+    // ✅ Step 3: Commit transaction
+    await session.commitTransaction();
+    session.endSession();
+
+    return res.json({
+      success: true,
+      message: "Withdrawal request submitted successfully",
+      data: {
+        payoutId: payout._id,
+        transactionId: transaction.txId,
+        amount,
+        netAmount: amount,
+        estimatedProcessing: "3-5 business days",
+      },
+    });
+  } catch (error) {
+    console.error("Withdrawal request error:", error);
+    await session.abortTransaction();
+    session.endSession();
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error during withdrawal",
+      error: error.message,
+    });
+  }
 };
+
 
 export const getPayoutHistory = async (req, res) => {
     try {
