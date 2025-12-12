@@ -2,7 +2,6 @@
 import { Payout, PayoutAccount, Transaction, Wallet, generateTxId,Reservation } from '../../models/Wallet/AstroWallet.js';
 import mongoose from 'mongoose';
 import { WalletService } from './walletIntegrationController.js';
-import { generateTxId } from '../../models/Wallet/AstroWallet.js';
 import mongoose from "mongoose";
 
 export const getPayoutAccounts = async (req, res) => {
