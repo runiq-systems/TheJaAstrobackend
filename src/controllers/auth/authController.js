@@ -1,15 +1,12 @@
 import logger from "../../utils/logger.js";
 import { User } from "../../models/user.js";
-import { generateOtp } from "../../utils/generateOtp.js";
+import { generateOtp, sendOtpMSG91 } from "../../utils/generateOtp.js";
 import { Astrologer } from "../../models/astrologer.js";
 
 export async function registerController(req, res) {
   try {
     const { phone, role } = req.body;
 
-    // -----------------------------
-    // Validate Phone
-    //------------------------------
     if (!phone) {
       logger.warn("Phone number missing in request");
       return res.status(400).json({
@@ -27,9 +24,6 @@ export async function registerController(req, res) {
       });
     }
 
-    // -----------------------------
-    // Validate Role
-    //------------------------------
     const allowedRoles = ["user", "astrologer"];
     let finalRole = "user"; // default
 
@@ -44,9 +38,6 @@ export async function registerController(req, res) {
       finalRole = role;
     }
 
-    // -----------------------------
-    // Existing User
-    //------------------------------
     let currentUser = await User.findOne({ phone });
     // if (currentUser && currentUser.role !== finalRole) {
     //   logger.warn(`Role mismatch for phone ${phone}: existing role ${currentUser.role}, attempted role ${finalRole}`);
@@ -60,16 +51,12 @@ export async function registerController(req, res) {
     const otpExpires = new Date(Date.now() + 15 * 60 * 1000);
 
     if (currentUser) {
-      // update OTP only
       currentUser.otp = otp;
       currentUser.otpExpires = otpExpires;
       await currentUser.save();
 
       logger.info(`OTP resent to existing user: ${phone}`);
     } else {
-      // -----------------------------
-      // Register New User
-      //------------------------------
       currentUser = new User({
         phone,
         role: finalRole,
@@ -86,6 +73,17 @@ export async function registerController(req, res) {
       // -----------------------------
       // If Role = Astrologer → Create Astrologer Profile
       //------------------------------
+
+    //       const otpSent = await sendOtpMSG91(phone, otp);
+
+    // if (!otpSent) {
+    //   return res.status(500).json({
+    //     success: false,
+    //     message: "Failed to send OTP. Try again.",
+    //   });
+    // }
+
+
       if (finalRole === "astrologer") {
         const alreadyAstrologer = await Astrologer.findOne({
           userId: currentUser._id,
