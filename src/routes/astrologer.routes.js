@@ -10,8 +10,9 @@ import {
   getStep2Data,
   getStep3Data,
   getAstrologersOnlineStatus,
+
 } from "../controllers/AstrologerProfile.js";
-import { getAstrologerDashboard } from "../controllers/dashboard/astrologerDashboard.controller.js";
+import { getAstrologerDashboard,getDashboardStats } from "../controllers/dashboard/astrologerDashboard.controller.js";
 const router = express.Router();
 
 // Multer memory storage for Cloudinary
@@ -26,6 +27,7 @@ const upload = multer({ storage });
 // STEP 1 — Basic Information
 // ---------------------------
 router.get("/getAstrologerDashboard", authMiddleware, getAstrologerDashboard);
+router.get("/getDashboardStats", authMiddleware, getDashboardStats);
 router.put("/step1", authMiddleware, updateAstrologerStep1);
 
 // ---------------------------
