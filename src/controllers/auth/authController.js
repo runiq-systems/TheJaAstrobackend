@@ -74,14 +74,14 @@ export async function registerController(req, res) {
       // If Role = Astrologer → Create Astrologer Profile
       //------------------------------
 
-    //       const otpSent = await sendOtpMSG91(phone, otp);
+      const otpSent = await sendOtpMSG91(phone, otp);
 
-    // if (!otpSent) {
-    //   return res.status(500).json({
-    //     success: false,
-    //     message: "Failed to send OTP. Try again.",
-    //   });
-    // }
+      if (!otpSent) {
+        return res.status(500).json({
+          success: false,
+          message: "Failed to send OTP. Try again.",
+        });
+      }
 
 
       if (finalRole === "astrologer") {
