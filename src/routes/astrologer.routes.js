@@ -28,12 +28,12 @@ const upload = multer({ storage });
 // ---------------------------
 router.get("/getAstrologerDashboard", authMiddleware, getAstrologerDashboard);
 
-router.put("/step1", authMiddleware, updateAstrologerStep1);
+router.patch("/step1", authMiddleware, updateAstrologerStep1);
 
 // ---------------------------
 // STEP 2 — Experience + Lang + Profile Photo
 // ---------------------------
-router.put(
+router.patch(
   "/step2",
   authMiddleware,
   upload.single("photo"), // profile image
@@ -43,7 +43,7 @@ router.put(
 // ---------------------------
 // STEP 3 — Full KYC + Bank Details
 // ---------------------------
-router.put(
+router.patch(
   "/step3",
   authMiddleware,
   upload.fields([
