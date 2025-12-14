@@ -1,5 +1,6 @@
 import axios from "axios";
 import NodeGeocoder from "node-geocoder";
+import logger from "../../utils/logger";
 
 const geocoder = NodeGeocoder({ provider: "openstreetmap" });
 
@@ -32,8 +33,9 @@ export const getCoordinates = async (place) => {
 export const getDailyHoroscope = async (req, res) => {
     try {
         const { sign } = req.query;
+        logger.info("sing", sign);
         const token = await getAccessToken();
-
+        logger.info("token", token);
         const response = await axios.get(
             `https://api.prokerala.com/v2/horoscope/daily/advanced`,
             {
@@ -41,10 +43,11 @@ export const getDailyHoroscope = async (req, res) => {
                 headers: { Authorization: `Bearer ${token}` },
             }
         );
-        console.log(response)
+        logger.info("respons",response)
 
         res.json(response.data);
     } catch (error) {
+        logger.info("error",error);
         res.status(500).json({ error: error.message });
     }
 };
