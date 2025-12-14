@@ -189,32 +189,77 @@ export const getKundaliMatching = async (req, res) => {
     }
 };
 
-// 🧘 3️⃣ Kundali Report
+// 🧘 Kundali Report (Fixed)
 export const getKundaliReport = async (req, res) => {
-    try {
-        const { name, dob, tob, place } = req.body;
-        const { latitude, longitude } = await getCoordinates(place);
-        const token = await getAccessToken();
+  try {
+    const { name, dob, tob, place } = req.body;
 
-        const response = await axios.get(
-            `https://api.prokerala.com/v2/astrology/kundli/advanced`,
-            {
-                params: {
-                    name,
-                    day: new Date(dob).getDate(),
-                    month: new Date(dob).getMonth() + 1,
-                    year: new Date(dob).getFullYear(),
-                    hour: parseInt(tob.split(":")[0]),
-                    min: parseInt(tob.split(":")[1]),
-                    lat: latitude,
-                    lng: longitude,
-                },
-                headers: { Authorization: `Bearer ${token}` },
-            }
-        );
-
-        res.json(response.data);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+    if (!dob || !tob || !place) {
+      return res.status(400).json({
+        error: "Missing required fields (dob, tob, place)",
+      });
     }
+
+    // 🗓 Parse date of birth (supports DD/MM/YYYY or YYYY-MM-DD)
+    let [day, month, year] = [0, 0, 0];
+    if (dob.includes("/")) {
+      const parts = dob.split("/");
+      day = parseInt(parts[0]);
+      month = parseInt(parts[1]);
+      year = parseInt(parts[2]);
+    } else {
+      const d = new Date(dob);
+      day = d.getDate();
+      month = d.getMonth() + 1;
+      year = d.getFullYear();
+    }
+
+    // 🕒 Parse time of birth (supports "hh:mm am/pm" or "HH:mm")
+    let hour = 0,
+      min = 0;
+    if (tob.toLowerCase().includes("am") || tob.toLowerCase().includes("pm")) {
+      const cleanTime = tob.toLowerCase().replace("am", "").replace("pm", "").trim();
+      const [h, m] = cleanTime.split(":").map(Number);
+      hour = h;
+      min = m || 0;
+      if (tob.toLowerCase().includes("pm") && hour < 12) hour += 12;
+      if (tob.toLowerCase().includes("am") && hour === 12) hour = 0;
+    } else {
+      const [h, m] = tob.split(":").map(Number);
+      hour = h;
+      min = m || 0;
+    }
+
+    // 🌍 Convert place to coordinates
+    const { latitude, longitude } = await getCoordinates(place);
+
+    // 🔐 Get token
+    const token = await getAccessToken();
+
+    // 🚀 Call Prokerala
+    const response = await axios.get(
+      "https://api.prokerala.com/v2/astrology/kundli/advanced",
+      {
+        params: {
+          name,
+          day,
+          month,
+          year,
+          hour,
+          min,
+          lat: latitude,
+          lng: longitude,
+        },
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+
+    return res.json(response.data);
+  } catch (error) {
+    logger.error("❌ Kundali Report Error:", error.response?.data || error.message);
+    res.status(500).json({
+      error: error.response?.data || error.message,
+    });
+  }
 };
+
