@@ -39,13 +39,6 @@ export async function registerController(req, res) {
     }
 
     let currentUser = await User.findOne({ phone });
-    // if (currentUser && currentUser.role !== finalRole) {
-    //   logger.warn(`Role mismatch for phone ${phone}: existing role ${currentUser.role}, attempted role ${finalRole}`);
-    //   return res.status(400).json({
-    //     success: false,
-    //     message: `User already registered as ${currentUser.role}.`,
-    //   });
-    // }
 
     const otp = generateOtp();
     const otpExpires = new Date(Date.now() + 15 * 60 * 1000);
@@ -57,32 +50,17 @@ export async function registerController(req, res) {
 
       logger.info(`OTP resent to existing user: ${phone}`);
     } else {
-      currentUser = new User({
-        phone,
-        role: finalRole,
-        otp,
-        otpExpires,
-        isVerified: false,
-        userStatus: "InActive",
-      });
-
+    currentUser = await User.create({
+      phone,
+      role: finalRole,
+      otp: otp,
+      otpExpires,
+      isVerified: false,
+      userStatus: "InActive",
+    });
       await currentUser.save();
 
       logger.info(`New user registered with role: ${finalRole}`);
-
-      // -----------------------------
-      // If Role = Astrologer → Create Astrologer Profile
-      //------------------------------
-
-      const otpSent = await sendOtpMSG91(phone, otp);
-
-      if (!otpSent) {
-        return res.status(500).json({
-          success: false,
-          message: "Failed to send OTP. Try again.",
-        });
-      }
-
 
       if (finalRole === "astrologer") {
         const alreadyAstrologer = await Astrologer.findOne({
@@ -100,6 +78,16 @@ export async function registerController(req, res) {
         }
       }
     }
+
+    
+      const otpSent = await sendOtpMSG91(phone, otp);
+
+      if (!otpSent) {
+        return res.status(500).json({
+          success: false,
+          message: "Failed to send OTP. Try again.",
+        });
+      }
 
     return res.status(200).json({
       success: true,
