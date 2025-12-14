@@ -35,7 +35,7 @@ export const getDailyHoroscope = async (req, res) => {
         const token = await getAccessToken();
 
         const response = await axios.get(
-            `https://api.prokerala.com/v2/astrology/daily-horoscope`,
+            `https://api.prokerala.com/v2/horoscope/daily/advanced`,
             {
                 params: { sign, timezone: "Asia/Kolkata" },
                 headers: { Authorization: `Bearer ${token}` },
@@ -68,7 +68,7 @@ export const getKundaliMatching = async (req, res) => {
         const token = await getAccessToken();
 
         const response = await axios.get(
-            `https://api.prokerala.com/v2/astrology/match-making`,
+            `https://api.prokerala.com/v2/astrology/kundli-matching/advanced`,
             {
                 params: {
                     m_day: new Date(boy_dob).getDate(),
@@ -105,7 +105,7 @@ export const getKundaliReport = async (req, res) => {
         const token = await getAccessToken();
 
         const response = await axios.get(
-            `https://api.prokerala.com/v2/astrology/birth-details`,
+            `https://api.prokerala.com/v2/astrology/kundli/advanced`,
             {
                 params: {
                     name,
