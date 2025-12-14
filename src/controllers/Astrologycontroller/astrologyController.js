@@ -1,6 +1,6 @@
 import axios from "axios";
 import NodeGeocoder from "node-geocoder";
-import logger from "../../utils/logger";
+import logger from "../../utils/logger.js";
 
 const geocoder = NodeGeocoder({ provider: "openstreetmap" });
 
