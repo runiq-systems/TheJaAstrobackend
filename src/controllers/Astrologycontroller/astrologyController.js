@@ -1,56 +1,71 @@
 import axios from "axios";
-import NodeGeocoder from "node-geocoder";
 import logger from "../../utils/logger.js";
 
-const geocoder = NodeGeocoder({ provider: "openstreetmap" });
+// 🔐 Your Prokerala credentials
+const PROKERALA_CLIENT_ID = "4efb8861-0d81-4a2c-83ad-313ce201c93e";
+const PROKERALA_CLIENT_SECRET = "QIKLC96km3XzRYX3l3117LjJJlTjI8RfUy1hvOvP";
 
 let accessToken = null;
+let tokenExpiry = 0;
 
-// 🔐 Fetch Access Token
+// 🔐 Generate or Refresh Token
 const getAccessToken = async () => {
-    if (!accessToken) {
-        const res = await axios.post(
-            "https://api.prokerala.com/token",
-            new URLSearchParams({
-                grant_type: "client_credentials",
-                client_id: process.env.PROKERALA_CLIENT_ID,
-                client_secret: process.env.PROKERALA_CLIENT_SECRET,
-            })
-        );
-        accessToken = res.data.access_token;
-    }
+    const now = Math.floor(Date.now() / 1000);
+    if (accessToken && now < tokenExpiry) return accessToken;
+
+    const res = await axios.post(
+        "https://api.prokerala.com/token",
+        new URLSearchParams({
+            grant_type: "client_credentials",
+            client_id: PROKERALA_CLIENT_ID,
+            client_secret: PROKERALA_CLIENT_SECRET,
+        }),
+        { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+    );
+
+    accessToken = res.data.access_token;
+    tokenExpiry = now + res.data.expires_in - 60;
+    logger.info("✅ Access token refreshed");
     return accessToken;
 };
 
-// 🌍 Convert location name to coordinates
-export const getCoordinates = async (place) => {
-    const res = await geocoder.geocode(place);
-    if (res.length === 0) throw new Error("Invalid location");
-    return { latitude: res[0].latitude, longitude: res[0].longitude };
-};
-
-// 🔮 1️⃣ Daily Horoscope
+// 🔮 Daily Horoscope Controller
 export const getDailyHoroscope = async (req, res) => {
     try {
         const { sign } = req.query;
-        logger.info("sing", sign);
+        if (!sign) return res.status(400).json({ error: "Missing zodiac sign" });
+
+        logger.info("♈ Requested sign:", sign);
         const token = await getAccessToken();
-        logger.info("token", token);
+
+        const today = new Date().toISOString(); // e.g. 2025-12-14T15:35:00Z
+
         const response = await axios.get(
-            `https://api.prokerala.com/v2/horoscope/daily/advanced`,
+            "https://api.prokerala.com/v2/horoscope/daily/advanced",
             {
-                params: { sign, timezone: "Asia/Kolkata" },
-                headers: { Authorization: `Bearer ${token}` },
+                params: {
+                    sign,
+                    datetime: today,
+                    timezone: "Asia/Kolkata",
+                    type: "all", // 👈 ADD THIS PARAMETER (fixes your error)
+
+                },
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                },
             }
         );
-        logger.info("respons",response)
 
+        logger.info("✅ Horoscope data received");
         res.json(response.data);
     } catch (error) {
-        logger.info("error",error);
-        res.status(500).json({ error: error.message });
+        logger.error("❌ Horoscope API Error:", error.response?.data || error.message);
+        res.status(500).json({
+            error: error.response?.data || error.message,
+        });
     }
 };
+
 
 // 💑 2️⃣ Kundali Matching
 export const getKundaliMatching = async (req, res) => {
