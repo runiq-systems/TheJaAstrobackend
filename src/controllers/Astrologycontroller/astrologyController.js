@@ -116,87 +116,96 @@ export const getDailyHoroscope = async (req, res) => {
 // 💑 Kundali Matching
 // 💑 Detailed Kundli Matching (v2 format)
 export const getKundaliMatching = async (req, res) => {
-    try {
-        const {
-            boy_name,
-            boy_dob, // e.g. "12/02/2000" or "2000-02-12"
-            boy_tob, // e.g. "3:15 PM" or "15:15"
-            boy_place,
-            girl_name,
-            girl_dob,
-            girl_tob,
-            girl_place,
-            ayanamsa = 1, // default: Lahiri
-            la = "en",    // default: English
-        } = req.body;
+  try {
+    const {
+      boy_name,
+      boy_dob, // e.g. "12/02/2000" or "2000-02-12"
+      boy_tob, // e.g. "3:15 PM" or "15:15"
+      boy_place,
+      girl_name,
+      girl_dob,
+      girl_tob,
+      girl_place,
+      ayanamsa = 1, // default: Lahiri
+      la = "en", // default: English
+    } = req.body;
 
-        // 🧭 Convert places to coordinates
-        const boyCoords = await getCoordinates(boy_place);
-        const girlCoords = await getCoordinates(girl_place);
+    // 🧭 Convert places to coordinates
+    const boyCoords = await getCoordinates(boy_place);
+    const girlCoords = await getCoordinates(girl_place);
 
-        // 🕓 Convert DOB + TOB → ISO datetime
-        const parseDateTime = (dob, tob) => {
-            const parseDate = () => {
-                if (dob.includes("/")) {
-                    const [day, month, year] = dob.split("/").map((x) => x.padStart(2, "0"));
-                    return `${year}-${month}-${day}`;
-                } else {
-                    const d = new Date(dob);
-                    return d.toISOString().split("T")[0];
-                }
-            };
+    // 🕓 Convert DOB + TOB → ISO datetime
+    const parseDateTime = (dob, tob, isSandbox) => {
+      const parseDate = () => {
+        if (isSandbox) {
+          // 🧪 Sandbox restriction — use January 1
+          return "2000-01-01";
+        }
 
-            const parseTime = () => {
-                let [h, m] = [0, 0];
-                if (tob.toLowerCase().includes("am") || tob.toLowerCase().includes("pm")) {
-                    const isPM = tob.toLowerCase().includes("pm");
-                    const clean = tob.toLowerCase().replace("am", "").replace("pm", "").trim();
-                    [h, m] = clean.split(":").map(Number);
-                    if (isPM && h < 12) h += 12;
-                    if (!isPM && h === 12) h = 0;
-                } else {
-                    [h, m] = tob.split(":").map(Number);
-                }
-                return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:00`;
-            };
+        if (dob.includes("/")) {
+          const [day, month, year] = dob.split("/").map((x) => x.padStart(2, "0"));
+          return `${year}-${month}-${day}`;
+        } else {
+          const d = new Date(dob);
+          return d.toISOString().split("T")[0];
+        }
+      };
 
-            return `${parseDate()}T${parseTime()}+05:30`;
-        };
+      const parseTime = () => {
+        let [h, m] = [0, 0];
+        if (tob.toLowerCase().includes("am") || tob.toLowerCase().includes("pm")) {
+          const isPM = tob.toLowerCase().includes("pm");
+          const clean = tob.toLowerCase().replace("am", "").replace("pm", "").trim();
+          [h, m] = clean.split(":").map(Number);
+          if (isPM && h < 12) h += 12;
+          if (!isPM && h === 12) h = 0;
+        } else {
+          [h, m] = tob.split(":").map(Number);
+        }
+        return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:00`;
+      };
 
-        const boy_dob_iso = parseDateTime(boy_dob, boy_tob);
-        const girl_dob_iso = parseDateTime(girl_dob, girl_tob);
-        const boy_coordinates = `${boyCoords.latitude.toFixed(6)},${boyCoords.longitude.toFixed(6)}`;
-        const girl_coordinates = `${girlCoords.latitude.toFixed(6)},${girlCoords.longitude.toFixed(6)}`;
+      return `${parseDate()}T${parseTime()}+05:30`;
+    };
 
-        // 🪙 Get API Token
-        const token = await getAccessToken();
+    // 🧪 Toggle sandboxMode here
+    const sandboxMode = true; // set false when using live credentials
 
-        // 🚀 Call the Detailed Kundli Matching endpoint
-        const response = await axios.get(
-            "https://api.prokerala.com/v2/astrology/kundli-matching/detailed",
-            {
-                params: {
-                    boy_dob: boy_dob_iso,
-                    boy_coordinates,
-                    girl_dob: girl_dob_iso,
-                    girl_coordinates,
-                    ayanamsa,
-                    la,
-                },
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                },
-            }
-        );
+    const boy_dob_iso = parseDateTime(boy_dob, boy_tob, sandboxMode);
+    const girl_dob_iso = parseDateTime(girl_dob, girl_tob, sandboxMode);
 
-        logger.info("✅ Detailed Kundli Matching Success");
-        return res.json(response.data);
-    } catch (error) {
-        logger.error("❌ Kundali Matching Error:", error.response?.data || error.message);
-        res.status(500).json({
-            error: error.response?.data || error.message,
-        });
-    }
+    const boy_coordinates = `${boyCoords.latitude.toFixed(6)},${boyCoords.longitude.toFixed(6)}`;
+    const girl_coordinates = `${girlCoords.latitude.toFixed(6)},${girlCoords.longitude.toFixed(6)}`;
+
+    // 🪙 Get API Token
+    const token = await getAccessToken();
+
+    // 🚀 Call the Detailed Kundli Matching endpoint
+    const response = await axios.get(
+      "https://api.prokerala.com/v2/astrology/kundli-matching/detailed",
+      {
+        params: {
+          boy_dob: boy_dob_iso,
+          boy_coordinates,
+          girl_dob: girl_dob_iso,
+          girl_coordinates,
+          ayanamsa,
+          la,
+        },
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+
+    logger.info("✅ Detailed Kundli Matching Success");
+    return res.json(response.data);
+  } catch (error) {
+    logger.error("❌ Kundali Matching Error:", error.response?.data || error.message);
+    res.status(500).json({
+      error: error.response?.data || error.message,
+    });
+  }
 };
 
 
