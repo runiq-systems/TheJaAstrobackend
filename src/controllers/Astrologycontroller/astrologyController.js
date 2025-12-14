@@ -41,6 +41,7 @@ export const getDailyHoroscope = async (req, res) => {
                 headers: { Authorization: `Bearer ${token}` },
             }
         );
+        console.log(response)
 
         res.json(response.data);
     } catch (error) {
