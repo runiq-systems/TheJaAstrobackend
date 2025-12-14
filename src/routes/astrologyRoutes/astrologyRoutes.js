@@ -1,5 +1,5 @@
 import express from "express";
-import { getDailyHoroscope,getKundaliMatching,getKundaliReport } from "../../controllers/Astrologycontroller/astrologyController";
+import { getDailyHoroscope,getKundaliMatching,getKundaliReport } from "../../controllers/Astrologycontroller/astrologyController.js";
 
 const router = express.Router();
 
