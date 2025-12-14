@@ -24,26 +24,104 @@ export const updateAstrologerStep1 = async (req, res) => {
         const userId = req.user._id;
         const { fullName, gender, specialization, expertise } = req.body;
 
-        if (!fullName || !gender) {
-            return res.status(400).json({ message: "Full name & gender required" });
+        const astrologer = await ensureAstrologer(userId);
+        
+        // Track updates
+        let updatesMade = false;
+        const updatedFields = [];
+        const userUpdates = {};
+        const astrologerUpdates = {};
+
+        // === CHECK FOR FIRST-TIME SUBMISSION ===
+        const user = await User.findById(userId);
+        const isInitialSubmission = !user?.fullName || !user?.gender;
+
+        // === VALIDATION FOR FIRST-TIME ===
+        if (isInitialSubmission) {
+            // For first-time, require fullName and gender
+            if (!fullName || !gender) {
+                return res.status(400).json({ 
+                    success: false,
+                    message: "For initial profile setup, full name and gender are required" 
+                });
+            }
         }
 
-        await User.findByIdAndUpdate(userId, { fullName, gender });
+        // === PARTIAL UPDATES FOR USER DOCUMENT ===
+        if (fullName !== undefined && fullName !== null) {
+            userUpdates.fullName = fullName;
+            updatesMade = true;
+            updatedFields.push('fullName');
+        }
+        
+        if (gender !== undefined && gender !== null) {
+            userUpdates.gender = gender;
+            updatesMade = true;
+            updatedFields.push('gender');
+        }
 
-        const astrologer = await ensureAstrologer(userId);
+        // === PARTIAL UPDATES FOR ASTROLOGER DOCUMENT ===
+        if (specialization !== undefined && specialization !== null) {
+            astrologerUpdates.specialization = specialization;
+            updatesMade = true;
+            updatedFields.push('specialization');
+        }
+        
+        if (expertise !== undefined && expertise !== null) {
+            astrologerUpdates.yearOfExpertise = expertise; // Note: field name difference
+            updatesMade = true;
+            updatedFields.push('expertise');
+        }
 
-        astrologer.specialization = specialization || astrologer.specialization;
-        astrologer.yearOfExpertise = expertise || astrologer.yearOfExpertise;
+        // === APPLY UPDATES ===
+        if (Object.keys(userUpdates).length > 0) {
+            await User.findByIdAndUpdate(userId, userUpdates, { new: true });
+        }
 
-        await astrologer.save();
+        if (Object.keys(astrologerUpdates).length > 0) {
+            Object.assign(astrologer, astrologerUpdates);
+            await astrologer.save();
+        }
 
-        res.json({
-            message: "Step 1 completed successfully",
-            astrologer,
-        });
+        // === RESPONSE ===
+        if (updatesMade) {
+            // Fetch updated astrologer with populated user data
+            const updatedAstrologer = await ensureAstrologer(userId);
+            
+            return res.status(200).json({
+                success: true,
+                message: isInitialSubmission ? "Profile created successfully" : "Profile updated successfully",
+                updatedFields: updatedFields,
+                data: {
+                    user: {
+                        fullName: userUpdates.fullName || user?.fullName,
+                        gender: userUpdates.gender || user?.gender
+                    },
+                    astrologer: updatedAstrologer
+                }
+            });
+        } else {
+            // No fields were provided for update
+            return res.status(200).json({
+                success: true,
+                message: "No changes made",
+                data: {
+                    user: {
+                        fullName: user?.fullName,
+                        gender: user?.gender
+                    },
+                    astrologer: astrologer
+                }
+            });
+        }
+
     } catch (err) {
-        console.log(err);
-        res.status(500).json({ message: "Server error" });
+        console.error("STEP 1 update error:", err);
+        return res.status(500).json({ 
+            success: false,
+            message: "Server error",
+            error: err.message 
+        });
     }
 };
 
@@ -56,36 +134,79 @@ export const updateAstrologerStep2 = async (req, res) => {
         const userId = req.user._id;
         const { yearOfExperience, languages } = req.body;
 
-        if (!yearOfExperience || !languages) {
-            return res.status(400).json({ message: "Experience & languages required" });
-        }
-
         const astrologer = await ensureAstrologer(userId);
 
-        let cloudPhoto = null;
+        // Track if any updates were made
+        let updatesMade = false;
+        const updatedFields = [];
 
-        // Single profile image upload
-        if (req.file) {
-            cloudPhoto = await uploadToCloudinary(req.file.buffer, "astrologers/profile");
+        // === PARTIAL UPDATE LOGIC ===
+        
+        // Update yearOfExperience if provided
+        if (yearOfExperience !== undefined && yearOfExperience !== null) {
+            astrologer.yearOfExperience = yearOfExperience;
+            updatesMade = true;
+            updatedFields.push('yearOfExperience');
+        }
+        
+        // Update languages if provided
+        if (languages !== undefined && languages !== null) {
+            // Handle both string and array input
+            astrologer.languages = Array.isArray(languages) ? languages : [languages];
+            updatesMade = true;
+            updatedFields.push('languages');
         }
 
-        astrologer.yearOfExperience = yearOfExperience;
-        astrologer.languages = Array.isArray(languages) ? languages : [languages];
-        if (cloudPhoto) astrologer.photo = cloudPhoto.secure_url;
+        // Handle profile photo upload if provided
+        let cloudPhoto = null;
+        if (req.file) {
+            cloudPhoto = await uploadToCloudinary(req.file.buffer, "astrologers/profile");
+            astrologer.photo = cloudPhoto.secure_url;
+            updatesMade = true;
+            updatedFields.push('photo');
+        }
 
-        await astrologer.save();
+        // === VALIDATION FOR FIRST-TIME SUBMISSION ===
+        // Check if this is initial submission (profile missing required fields)
+        const isInitialSubmission = !astrologer.yearOfExperience || !astrologer.languages || astrologer.languages.length === 0;
+        
+        if (isInitialSubmission) {
+            // For first-time submission, require both fields
+            if (!yearOfExperience || !languages) {
+                return res.status(400).json({ 
+                    message: "For initial profile setup, both experience and languages are required" 
+                });
+            }
+        }
 
-        res.json({
-            message: "Step 2 completed successfully",
-            astrologer,
-        });
+        // === SAVE ONLY IF UPDATES WERE MADE ===
+        if (updatesMade) {
+            await astrologer.save();
+            
+            return res.status(200).json({
+                success: true,
+                message: isInitialSubmission ? "Profile created successfully" : "Profile updated successfully",
+                updatedFields: updatedFields,
+                astrologer,
+            });
+        } else {
+            // No fields were provided for update
+            return res.status(200).json({
+                success: true,
+                message: "No changes made",
+                astrologer,
+            });
+        }
 
     } catch (err) {
-        console.error("STEP 2 upload error:", err);
-        res.status(500).json({ message: "Server error" });
+        console.error("STEP 2 update error:", err);
+        return res.status(500).json({ 
+            success: false,
+            message: "Server error",
+            error: err.message 
+        });
     }
 };
-
 
 /* ============================================================
    STEP 3 — FULL KYC (Cloudinary Uploads)
@@ -97,90 +218,166 @@ export const updateAstrologerStep3 = async (req, res) => {
         const {
             panNumber,
             aadhaarNumber,
-            bankDetails,        // ← this will be parsed below
+            bankDetails,        // ← optional for partial updates
         } = req.body;
 
-        // === VALIDATE REQUIRED FIELDS ===
-        if (!panNumber || !aadhaarNumber || !bankDetails) {
-            return res.status(400).json({ message: "PAN, Aadhaar & Bank details are required" });
-        }
-
-        // === PARSE bankDetails SAFELY (it may come as string from FormData) ===
-        let parsedBankDetails;
-        try {
-            // If frontend sent JSON.stringify(), it comes as string
-            if (typeof bankDetails === "string") {
-                parsedBankDetails = JSON.parse(bankDetails);
-            } else {
-                parsedBankDetails = bankDetails; // already an object
-            }
-        } catch (parseErr) {
-            return res.status(400).json({ message: "Invalid bankDetails format" });
-        }
-
-        // Validate required bank fields
-        const { accountNumber, ifscCode, bankName, accountHolderName } = parsedBankDetails;
-        if (!accountNumber || !ifscCode || !bankName || !accountHolderName) {
-            return res.status(400).json({ message: "All bank fields are required" });
-        }
-
+        // === FIND ASTROLOGER ===
         const astrologer = await ensureAstrologer(userId);
+        
+        // Check if KYC already exists
+        const hasExistingKyc = astrologer.kyc && Object.keys(astrologer.kyc).length > 0;
+        
+        // === VALIDATION LOGIC FOR PARTIAL UPDATES ===
+        // For FIRST-TIME KYC submission: all fields required
+        if (!hasExistingKyc) {
+            if (!panNumber || !aadhaarNumber || !bankDetails) {
+                return res.status(400).json({ 
+                    message: "For initial KYC submission, PAN, Aadhaar & Bank details are required" 
+                });
+            }
+        }
+        
+        // For UPDATES: fields are optional (partial updates allowed)
+        // Only validate what's being provided
 
-        // === HANDLE FILE UPLOADS ===
+        // === PARSE bankDetails IF PROVIDED ===
+        let parsedBankDetails = null;
+        if (bankDetails) {
+            try {
+                // If frontend sent JSON.stringify(), it comes as string
+                if (typeof bankDetails === "string") {
+                    parsedBankDetails = JSON.parse(bankDetails);
+                } else {
+                    parsedBankDetails = bankDetails; // already an object
+                }
+            } catch (parseErr) {
+                return res.status(400).json({ message: "Invalid bankDetails format" });
+            }
+            
+            // Validate bank fields ONLY if bankDetails is provided
+            const { accountNumber, ifscCode, bankName, accountHolderName } = parsedBankDetails;
+            if (!accountNumber || !ifscCode || !bankName || !accountHolderName) {
+                return res.status(400).json({ 
+                    message: "All bank fields (accountNumber, ifscCode, bankName, accountHolderName) are required when updating bank details" 
+                });
+            }
+        }
+
+        // === UPDATE KYC LOGIC ===
+        // Initialize kyc if it doesn't exist
+        if (!astrologer.kyc) {
+            astrologer.kyc = {};
+        }
+
+        // Update only provided fields
+        if (panNumber) {
+            astrologer.kyc.panNumber = panNumber.trim();
+        }
+        
+        if (aadhaarNumber) {
+            // Validate Aadhaar length if being updated
+            if (aadhaarNumber.trim().length !== 12) {
+                return res.status(400).json({ 
+                    message: "Aadhaar number must be 12 digits" 
+                });
+            }
+            astrologer.kyc.aadhaarNumber = aadhaarNumber.trim();
+        }
+
+        // === HANDLE FILE UPLOADS (Only upload if provided) ===
         const files = req.files || {};
 
-        const uploadImage = async (fileBuffer) => {
-            if (!fileBuffer) return null;
-            const result = await uploadToCloudinary(fileBuffer, "astrologers/kyc");
-            return result.secure_url;
+        const uploadImage = async (fileBuffer, existingUrl) => {
+            // If new file provided, upload it
+            if (fileBuffer) {
+                const result = await uploadToCloudinary(fileBuffer, "astrologers/kyc");
+                return result.secure_url;
+            }
+            // If no new file but this is initial KYC, require the image
+            if (!hasExistingKyc && !existingUrl) {
+                throw new Error(`Image required for initial KYC submission`);
+            }
+            // Otherwise keep existing URL
+            return existingUrl;
         };
 
-        const panCardImage = await uploadImage(files.panCardImage?.[0]?.buffer);
-        const aadhaarFrontImage = await uploadImage(files.aadhaarFrontImage?.[0]?.buffer);
-        const aadhaarBackImage = await uploadImage(files.aadhaarBackImage?.[0]?.buffer);
-        const passbookImage = await uploadImage(files.passbookImage?.[0]?.buffer);
-        const qualificationImage = await uploadImage(files.qualificationImage?.[0]?.buffer);
+        try {
+            // Upload only provided images, keep existing ones otherwise
+            astrologer.kyc.panCardImage = await uploadImage(
+                files.panCardImage?.[0]?.buffer, 
+                astrologer.kyc.panCardImage
+            );
+            
+            astrologer.kyc.aadhaarFrontImage = await uploadImage(
+                files.aadhaarFrontImage?.[0]?.buffer, 
+                astrologer.kyc.aadhaarFrontImage
+            );
+            
+            astrologer.kyc.aadhaarBackImage = await uploadImage(
+                files.aadhaarBackImage?.[0]?.buffer, 
+                astrologer.kyc.aadhaarBackImage
+            );
+            
+            astrologer.kyc.passbookImage = await uploadImage(
+                files.passbookImage?.[0]?.buffer, 
+                astrologer.kyc.passbookImage
+            );
+            
+            astrologer.kyc.qualificationImage = await uploadImage(
+                files.qualificationImage?.[0]?.buffer, 
+                astrologer.kyc.qualificationImage
+            );
+        } catch (uploadError) {
+            return res.status(400).json({ 
+                message: uploadError.message 
+            });
+        }
 
-        // === UPDATE KYC SUB-DOCUMENT ===
-        astrologer.kyc = {
-            panNumber: panNumber.trim(),
-            aadhaarNumber: aadhaarNumber.trim(),
-            kycVerified: false,
-            kycStatus: "pending",
-            bankDetails: {
+        // Update bank details if provided
+        if (parsedBankDetails) {
+            const { accountNumber, ifscCode, bankName, accountHolderName } = parsedBankDetails;
+            
+            astrologer.kyc.bankDetails = {
                 bankName: bankName.trim(),
                 accountNumber: accountNumber.trim(),
                 ifscCode: ifscCode.trim(),
                 accountHolderName: accountHolderName.trim(),
-            },
-            panCardImage,
-            aadhaarFrontImage,
-            aadhaarBackImage,
-            passbookImage,
-            qualificationImage,
-        };
+            };
 
-        // === UPDATE TOP-LEVEL bankDetails ARRAY (as per your schema) ===
-        // Remove old bank entry if exists, then push new one
-        astrologer.bankDetails = astrologer.bankDetails.filter(
-            (b) => b.accountNumber !== accountNumber.trim()
-        );
+            // === UPDATE TOP-LEVEL bankDetails ARRAY ===
+            // Remove old bank entry if exists, then push new one
+            astrologer.bankDetails = astrologer.bankDetails.filter(
+                (b) => b.accountNumber !== accountNumber.trim()
+            );
 
-        astrologer.bankDetails.push({
-            bankName: bankName.trim(),
-            accountNumber: accountNumber.trim(),
-            ifscCode: ifscCode.trim(),
-            accountHolderName: accountHolderName.trim(),
-        });
+            astrologer.bankDetails.push({
+                bankName: bankName.trim(),
+                accountNumber: accountNumber.trim(),
+                ifscCode: ifscCode.trim(),
+                accountHolderName: accountHolderName.trim(),
+            });
+        }
+
+        // Set KYC status to pending if any KYC field was updated
+        const kycFieldsUpdated = panNumber || aadhaarNumber || bankDetails || 
+                               Object.keys(files).length > 0;
+        
+        if (kycFieldsUpdated) {
+            astrologer.kyc.kycVerified = false;
+            astrologer.kyc.kycStatus = "pending";
+            // Clear any previous rejection reason
+            astrologer.kyc.rejectionReason = "";
+        }
 
         astrologer.isProfilecomplet = true;
-        astrologer.accountStatus = "pending"; // or keep existing logic
+        astrologer.accountStatus = "pending";
 
         await astrologer.save();
 
         return res.status(200).json({
             success: true,
-            message: "KYC submitted successfully! Awaiting admin approval.",
+            message: hasExistingKyc ? "KYC updated successfully!" : "KYC submitted successfully!",
+            note: hasExistingKyc ? "Awaiting admin re-verification." : "Awaiting admin approval.",
             astrologer,
         });
     } catch (err) {
@@ -192,7 +389,6 @@ export const updateAstrologerStep3 = async (req, res) => {
         });
     }
 };
-
 
 
 
