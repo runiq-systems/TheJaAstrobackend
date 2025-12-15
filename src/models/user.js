@@ -1,9 +1,10 @@
 import mongoose, { Schema } from "mongoose";
+import { type } from "os";
 const userSchema = new mongoose.Schema(
   {
     fullName: {
       type: String,
-    }, 
+    },
     phone: {
       type: String,
       required: true,
@@ -14,9 +15,12 @@ const userSchema = new mongoose.Schema(
       type: String,
       lowercase: true,
     },
+    photo: {
+      type: String
+    },
     role: {
       type: String,
-      enum: ['user', 'astrologer','admin'],
+      enum: ['user', 'astrologer', 'admin'],
       default: 'astrologer',
       require: true
     },
