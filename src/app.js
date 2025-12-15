@@ -27,7 +27,7 @@ import commissionRoutes from './routes/Walllet/commissionRoutes.js';
 import Topastrologer from './routes/getAstrologer/TopAstrologer.js'
 import review from './routes/review.routes.js'
 import userRoute from "./routes/users/users.routes.js"
-
+import astro from './routes/astrologyRoutes/astrologyRoutes.js'
 const app = express();
 dotenv.config({
     path: "./.env",
@@ -104,6 +104,7 @@ app.use('/api/v1/session', sessionRoutes);
 app.use('/api/v1/payout', payoutRoute);
 app.use('/api/v1/commission', commissionRoutes);
 app.use('/api/v1/review', review);
+app.use('/api/v1/astro', astro);
 
 app.use(errorHandler)
 export default httpserver;
