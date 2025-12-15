@@ -18,7 +18,19 @@ router.patch("/profile/step/:step", authMiddleware, UpdateProfileStepController)
 
 // Complete profile update
 // In your backend
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    // Accept images only
+    if (!file.originalname.match(/\.(jpg|jpeg|png|gif)$/)) {
+      return cb(new Error('Only image files are allowed!'), false);
+    }
+    cb(null, true);
+  }
+});
 
 router.patch('/profile', upload.single('file'), UpdateProfileCompleteController);
 router.get("/GetProfileController", authMiddleware, GetProfileController);
