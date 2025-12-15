@@ -10,6 +10,7 @@ import {
   getStep2Data,
   getStep3Data,
   getAstrologersOnlineStatus,
+  updateAstrologerProfile,
 
 } from "../controllers/AstrologerProfile.js";
 import { getAstrologerDashboard } from "../controllers/dashboard/astrologerDashboard.controller.js";
@@ -60,6 +61,7 @@ router.get("/astro/profile", authMiddleware, getAstrologerProfile);
 router.get("/astro/step1", authMiddleware, getStep1Data);
 router.get("/astro/step2", authMiddleware, getStep2Data);
 router.get("/astro/step3", authMiddleware, getStep3Data);
+router.patch("/astrologer/profile", authMiddleware,   upload.single('photo'), updateAstrologerProfile)
 
 router.get(
   "/astrologers/online-status",

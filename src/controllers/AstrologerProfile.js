@@ -15,7 +15,6 @@ const ensureAstrologer = async (userId) => {
     return profile;
 };
 
-
 /* ============================================================
    STEP 1 — BASIC DETAILS
 ============================================================ */
@@ -124,7 +123,6 @@ export const updateAstrologerStep1 = async (req, res) => {
         });
     }
 };
-
 
 /* ============================================================
    STEP 2 — EXPERIENCE + LANGUAGES + PHOTO (Cloudinary Upload)
@@ -390,8 +388,6 @@ export const updateAstrologerStep3 = async (req, res) => {
     }
 };
 
-
-
 /* ============================================================
    GET ASTROLOGER PROFILE — ALL 3 STEPS DATA
 ============================================================ */
@@ -560,3 +556,155 @@ export const getAstrologersOnlineStatus = asyncHandler(async (req, res) => {
     throw new ApiError(500, "Failed to fetch online status");
   }
 });
+
+// Allowed fields that can be updated
+const ALLOWED_UPDATE_FIELDS = [
+    'fullName',
+  'photo',
+  'specialization',
+  'yearOfExpertise',
+  'yearOfExperience',
+  'bio',
+  'description',
+  'ratepermin',
+  'languages',
+  'qualification'
+];
+/* ============================================================
+   UPDATE ASTROLOGER PROFILE (General updates after registration)
+============================================================ */
+export const updateAstrologerProfile = async (req, res) => {
+  try {
+    const userId = req.user._id; // This is User ID from token
+
+    // Filter out disallowed fields
+    const updateData = {};
+    Object.keys(req.body).forEach(key => {
+      if (ALLOWED_UPDATE_FIELDS.includes(key)) {
+        updateData[key] = req.body[key];
+      }
+    });
+
+    // Handle photo upload if provided
+    if (req.file) {
+      const result = await uploadToCloudinary(req.file);
+      updateData.photo = result.secure_url;
+    }
+
+    // If no valid fields to update
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No valid fields provided for update'
+      });
+    }
+    
+
+    // Validate specific fields if they exist in updateData
+    if (updateData.bio && updateData.bio.length > 300) {
+      return res.status(400).json({
+        success: false,
+        message: 'Bio cannot exceed 300 characters'
+      });
+    }
+
+    if (updateData.description && updateData.description.length > 2000) {
+      return res.status(400).json({
+        success: false,
+        message: 'Description cannot exceed 2000 characters'
+      });
+    }
+
+    // Add this validation for fullName
+    if (updateData.fullName && updateData.fullName.trim().length < 2) {
+    return res.status(400).json({
+        success: false,
+        message: 'Full name must be at least 2 characters long'
+    });
+    }
+
+    if (updateData.ratepermin && (updateData.ratepermin < 1 || updateData.ratepermin > 100)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Rate per minute must be between 1 and 100'
+      });
+    }
+
+    // Handle languages array - make sure it's always an array
+    if (updateData.languages !== undefined) {
+      updateData.languages = Array.isArray(updateData.languages) 
+        ? updateData.languages 
+        : [updateData.languages];
+    }
+
+    if (updateData.specialization !== undefined) {
+      updateData.specialization = Array.isArray(updateData.specialization)
+        ? updateData.specialization
+        : [updateData.specialization];
+    }
+
+    if (updateData.fullName) {
+      await User.findByIdAndUpdate(
+        userId,
+        { $set: { fullName: updateData.fullName.trim() } },
+        { new: true, runValidators: true }
+      );
+      
+      delete updateData.fullName;
+    }
+
+    const updatedAstrologer = await Astrologer.findOneAndUpdate(
+      { userId: userId }, 
+      { $set: updateData },
+      { 
+        new: true, // Return the updated document
+        runValidators: true, // Run schema validators
+        select: '-bankDetails -kyc -__v -createdAt -updatedAt' // Exclude sensitive fields
+      }
+    );
+
+    if (!updatedAstrologer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Astrologer profile not found'
+      });
+    }
+    const updatedUser = await User.findById(userId).select('fullName');
+    const responseData = updatedAstrologer.toObject ? updatedAstrologer.toObject() : updatedAstrologer;
+
+    // Add fullName to response if it was updated
+    if (updatedUser && updateData.fullName) {
+    responseData.fullName = updatedUser.fullName;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Profile updated successfully',
+      data: responseData
+    });
+
+  } catch (error) {
+    console.error('Update profile error:', error);
+    
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: Object.values(error.errors).map(err => err.message)
+      });
+    }
+
+    if (error.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: 'Duplicate field value entered'
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
