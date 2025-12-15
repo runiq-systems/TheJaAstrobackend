@@ -16,7 +16,11 @@ router.post(
 router.patch("/profile/step/:step", authMiddleware, UpdateProfileStepController);
 
 // Complete profile update
-router.patch("/profile", authMiddleware, UpdateProfileCompleteController);
+// In your backend
+const multer = require('multer');
+const upload = multer({ storage: multer.memoryStorage() });
+
+router.patch('/profile', upload.single('file'), UpdateProfileCompleteController);
 router.get("/GetProfileController", authMiddleware, GetProfileController);
 
 
