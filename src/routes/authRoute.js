@@ -32,7 +32,7 @@ const upload = multer({
   }
 });
 
-router.patch('/profile', upload.single('file'), UpdateProfileCompleteController);
+router.patch('/profile',authMiddleware, upload.single('file'), UpdateProfileCompleteController);
 router.get("/GetProfileController", authMiddleware, GetProfileController);
 
 
