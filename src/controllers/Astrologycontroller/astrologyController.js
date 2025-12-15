@@ -182,7 +182,7 @@ export const getKundaliMatching = async (req, res) => {
 
     // 🚀 Call the Detailed Kundli Matching endpoint
     const response = await axios.get(
-      "https://api.prokerala.com/v2/astrology/kundli-matching/detailed",
+      "https://api.prokerala.com/v2/astrology/kundli-matching",
       {
         params: {
           boy_dob: boy_dob_iso,
