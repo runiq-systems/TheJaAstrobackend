@@ -56,16 +56,17 @@ export const notifyAstrologerAboutCallRequest = async (req, astrologerId, payloa
     body: `${payload.callerName} is calling you (₹${payload.ratePerMinute}/min)`,
     type: "incoming_call",
     data: {
-      screen: "IncomingCall", // Critical: Opens IncomingCall screen
       requestId: payload.requestId,
       sessionId: payload.sessionId,
       callType: payload.callType,
       callerId: payload.callerId,
       callerName: payload.callerName,
       callerImage: payload.callerImage,
-      ratePerMinute: payload.ratePerMinute.toString(),
+      ratePerMinute: payload.ratePerMinute,
+      expiresAt: payload.expiresAt,
     },
   });
+
 };
 
 function generateTxId(prefix) {
@@ -1052,7 +1053,7 @@ export const getAstrologerCallSessions = async (req, res) => {
         // Ensure we use frontend-compatible statuses
         const statusMapping = {
           'REQUESTED': 'REQUESTED',
-          'ACCEPTED': 'ACCEPTED', 
+          'ACCEPTED': 'ACCEPTED',
           'RINGING': 'RINGING',
           'CONNECTED': 'CONNECTED',
           'ACTIVE': 'ACTIVE',
@@ -1065,7 +1066,7 @@ export const getAstrologerCallSessions = async (req, res) => {
           'EXPIRED': 'EXPIRED',
           'AUTO_ENDED': 'AUTO_ENDED'
         };
-        
+
         filter.status = statusMapping[status] || status;
       }
     }
@@ -1123,7 +1124,7 @@ export const getAstrologerCallSessions = async (req, res) => {
 
       userRating: call.userRating?.stars,
       userFeedback: call.userRating?.review,
-      
+
       paymentStatus: call.paymentStatus || "PENDING",
 
       createdAt: call.createdAt,
@@ -1749,45 +1750,54 @@ const sendNotification = async ({
   userId,
   title,
   body,
-  type = "call",
+  type = "incoming_call",
   data = {},
 }) => {
   try {
     const user = await User.findById(userId).select("deviceToken fullName");
-    if (!user || !user.deviceToken) {
-      console.log(`No device token for user ${userId}`);
+    if (!user?.deviceToken) {
+      console.log(`❌ No device token for user ${userId}`);
       return;
     }
 
-    const defaultData = {
-      screen: type === "incoming_call" ? "IncomingCall" : "OngoingCall",
+    const payloadData = {
       type,
+      screen: "Call", // ✅ MATCHES Tab.Screen name
+      title: title || "",
+      body: body || "",
       ...data,
     };
 
+    // FCM requires string values
+    Object.keys(payloadData).forEach(key => {
+      payloadData[key] = String(payloadData[key]);
+    });
+
     const message = {
       token: user.deviceToken,
-      notification: {
-        title,
-        body,
-      },
-      data: Object.keys(defaultData).reduce((acc, key) => {
-        acc[key] = String(defaultData[key]);
-        return acc;
-      }, {}),
+
+      // 🔥 DATA-ONLY
+      data: payloadData,
+
       android: {
         priority: "high",
+        ttl: 0,
+        data: payloadData,
         notification: {
-          channelId: "call_notifications", // Must match Android channel
-          sound: "default",
-          vibrate: true,
-          priority: "high",
+          channelId: "call_notifications",
+          sound: "ringtone",
+          priority: "max",
           visibility: "public",
+          category: "call",
+          fullScreenIntent: true,
         },
       },
+
       apns: {
+        headers: { "apns-priority": "10" },
         payload: {
           aps: {
+            alert: { title, body },
             sound: "default",
             "content-available": 1,
           },
@@ -1795,11 +1805,10 @@ const sendNotification = async ({
       },
     };
 
-    const response = await admin.messaging().send(message);
-    logger.info(`Push sent to ${user.fullName || userId}: ${response}`);
-    console.log("Notification sent:", response);
-  } catch (error) {
-    logger.error("FCM Notification failed:", error.message);
-    console.error("Push notification error:", error);
+    await admin.messaging().send(message);
+    console.log("✅ CallRequest notification sent");
+
+  } catch (err) {
+    console.error("❌ FCM error:", err);
   }
 };

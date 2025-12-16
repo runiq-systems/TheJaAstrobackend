@@ -2,6 +2,7 @@ import logger from "../../utils/logger.js";
 import { User } from "../../models/user.js";
 import { generateOtp, sendOtpMSG91 } from "../../utils/generateOtp.js";
 import { Astrologer } from "../../models/astrologer.js";
+import { uploadToCloudinary } from "../../utils/uplodeimage.js";
 
 export async function registerController(req, res) {
   try {
@@ -50,14 +51,14 @@ export async function registerController(req, res) {
 
       logger.info(`OTP resent to existing user: ${phone}`);
     } else {
-    currentUser = await User.create({
-      phone,
-      role: finalRole,
-      otp: otp,
-      otpExpires,
-      isVerified: false,
-      userStatus: "InActive",
-    });
+      currentUser = await User.create({
+        phone,
+        role: finalRole,
+        otp: otp,
+        otpExpires,
+        isVerified: false,
+        userStatus: "InActive",
+      });
       await currentUser.save();
 
       logger.info(`New user registered with role: ${finalRole}`);
@@ -79,15 +80,15 @@ export async function registerController(req, res) {
       }
     }
 
-    
-      // const otpSent = await sendOtpMSG91(phone, otp);
 
-      // if (!otpSent) {
-      //   return res.status(500).json({
-      //     success: false,
-      //     message: "Failed to send OTP. Try again.",
-      //   });
-      // }
+    // const otpSent = await sendOtpMSG91(phone, otp);
+
+    // if (!otpSent) {
+    //   return res.status(500).json({
+    //     success: false,
+    //     message: "Failed to send OTP. Try again.",
+    //   });
+    // }
 
     return res.status(200).json({
       success: true,
@@ -242,23 +243,19 @@ export const UpdateProfileCompleteController = async (req, res) => {
       placeOfBirth,
     } = req.body;
 
-    // Validate all required fields
-    if (
-      !fullName ||
-      !gender ||
-      !timeOfBirth ||
-      isAccurate === undefined ||
-      !dateOfBirth ||
-      !placeOfBirth
-    ) {
+    if (!fullName || !gender || !timeOfBirth || isAccurate === undefined || !dateOfBirth || !placeOfBirth) {
       return res.status(400).json({
         success: false,
-        message:
-          "All fields (fullName, gender, timeOfBirth, isAccurate, dateOfBirth, placeOfBirth) are required",
+        message: "All required fields must be provided",
       });
     }
 
-    // Update user in the database
+    let photoUrl;
+    if (req.file) {
+      const result = await uploadToCloudinary(req.file.buffer, "profiles");
+      photoUrl = result.secure_url;
+    }
+
     const updatedUser = await User.findByIdAndUpdate(
       userId,
       {
@@ -269,10 +266,11 @@ export const UpdateProfileCompleteController = async (req, res) => {
           isAccurate,
           dateOfBirth: new Date(dateOfBirth),
           placeOfBirth,
+          ...(photoUrl && { photo: photoUrl }),
         },
       },
       { new: true, runValidators: true }
-    ).select("fullName gender timeOfBirth isAccurate dateOfBirth placeOfBirth");
+    ).select("fullName gender timeOfBirth isAccurate dateOfBirth placeOfBirth photo");
 
     if (!updatedUser) {
       return res.status(404).json({
@@ -300,7 +298,7 @@ export const GetProfileController = async (req, res) => {
     const userId = req.user._id || req.user.id;
     // Fetch user profile with selected fields
     const user = await User.findById(userId).select(
-      "fullName gender dateOfBirth timeOfBirth isAccurate placeOfBirth phone role isOnline userStatus isVerified lastSeen"
+      "fullName gender dateOfBirth timeOfBirth isAccurate placeOfBirth phone role isOnline userStatus isVerified lastSeen photo"
     );
     console.log(user.role["astrologer"]);
 
@@ -316,6 +314,7 @@ export const GetProfileController = async (req, res) => {
       message: "Profile retrieved successfully",
       data: {
         fullName: user.fullName || "",
+        photo: user.photo || "",
         gender: user.gender || "",
         phone: user.phone || "", // Now phone will be availablephone: user.phone || "", // Now phone will be available
         dateOfBirth: user.dateOfBirth
