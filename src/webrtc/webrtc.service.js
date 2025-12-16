@@ -347,16 +347,16 @@ async handleCallDisconnection(userId) {
       const caller = await User.findById(callerId);
 
       // ✅ Send incoming call notification
-      await NotificationService.sendCallEvent({
-        toUserId: receiverId,
-        event: "incoming",
-        callerId,
-        receiverId,
-        callRecordId: callRecord._id,
-        callerName: caller.fullName,
-        callerAvatar: caller.profilePicture || "",
-        callType,
-      });
+      // await NotificationService.sendCallEvent({
+      //   toUserId: receiverId,
+      //   event: "incoming",
+      //   callerId,
+      //   receiverId,
+      //   callRecordId: callRecord._id,
+      //   callerName: caller.fullName,
+      //   callerAvatar: caller.profilePicture || "",
+      //   callType,
+      // });
 
       // ✅ Emit socket event for real-time UI
       this.emitToUser(receiverId, "incomingCall", {
@@ -733,18 +733,18 @@ async handleCallDisconnection(userId) {
         const caller = await User.findById(callerId);
 
         // ✅ Send missed call notification
-        await CallNotificationService.sendCallNotification({
-          targetUserId: receiverId,
-          title: "Missed Call",
-          message: `You missed a call from ${caller?.name || "Unknown Caller"}`,
-          type: "missed",
-          fromUserId: callerId,
-          fromName: caller?.name,
-          fromAvatar: caller?.profilePicture,
-          fromEmail: caller?.email,
-          screen: "CallHistory",
-          callRecordId: callRecord._id.toString(),
-        });
+        // await CallNotificationService.sendCallNotification({
+        //   targetUserId: receiverId,
+        //   title: "Missed Call",
+        //   message: `You missed a call from ${caller?.name || "Unknown Caller"}`,
+        //   type: "missed",
+        //   fromUserId: callerId,
+        //   fromName: caller?.name,
+        //   fromAvatar: caller?.profilePicture,
+        //   fromEmail: caller?.email,
+        //   screen: "CallHistory",
+        //   callRecordId: callRecord._id.toString(),
+        // });
 
         // Notify both parties
         this.emitToUser(callerId, "callMissed", { receiverId, callRecordId });
