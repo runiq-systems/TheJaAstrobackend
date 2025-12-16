@@ -1773,7 +1773,7 @@ export async function sendCallNotification({
 
       // 📦 DATA (for navigation & actions)
       data: {
-        type: "incoming_call",
+        type: "call",
         screen: "call",
         requestId: String(requestId),
         sessionId: String(sessionId),
