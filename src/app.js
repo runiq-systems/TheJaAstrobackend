@@ -28,6 +28,7 @@ import Topastrologer from './routes/getAstrologer/TopAstrologer.js'
 import review from './routes/review.routes.js'
 import userRoute from "./routes/users/users.routes.js"
 import astro from './routes/astrologyRoutes/astrologyRoutes.js'
+import sendnotification from './routes/notification.routes.js'
 const app = express();
 dotenv.config({
     path: "./.env",
@@ -91,6 +92,7 @@ app.use("/api/v1", indexRoute)
 app.use("/api/v1", astrorout)
 app.use("/api/v1", authRoute)
 app.use("/api/v1/chat", chatmessageRoute)
+app.use("/api/notifications", sendnotification);
 
 app.use("/api/v1", chatSession)
 app.use("/api/v1/call", callSession)

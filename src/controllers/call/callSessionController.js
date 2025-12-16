@@ -1747,7 +1747,7 @@ export async function sendCallNotification({
   userId,
   requestId,
   sessionId,
-  callType = "audio",
+  callType = "AUDIO",
   callerId,
   callerName,
   callerAvatar = "",
@@ -1758,16 +1758,35 @@ export async function sendCallNotification({
     const user = await User.findById(userId).select("deviceToken");
 
     if (!user || !user.deviceToken) {
-      logger.warn(`⚠️ No device token for user: ${userId}`);
+      console.warn(`⚠️ No device token for user: ${userId}`);
       return;
     }
-
-    const timestamp = Date.now().toString();
 
     const message = {
       token: user.deviceToken,
 
-      // 🔔 Android
+      // ✅ THIS MAKES IT WORK (AUTO DISPLAY)
+      notification: {
+        title: `Incoming ${callType} Call`,
+        body: `${callerName} is calling you`,
+      },
+
+      // 📦 DATA (for navigation & actions)
+      data: {
+        type: "incoming_call",
+        screen: "IncomingCall",
+        requestId: String(requestId),
+        sessionId: String(sessionId),
+        callType,
+        callerId: String(callerId),
+        callerName,
+        callerAvatar:
+          callerAvatar ||
+          "https://investogram.ukvalley.com/avatars/default.png",
+        ratePerMinute: String(ratePerMinute),
+        expiresAt: String(expiresAt),
+      },
+
       android: {
         priority: "high",
         notification: {
@@ -1777,47 +1796,22 @@ export async function sendCallNotification({
         },
       },
 
-      // 🍎 iOS
       apns: {
-        headers: {
-          "apns-push-type": "voip",
-          "apns-priority": "10",
-        },
         payload: {
           aps: {
             sound: "default",
             badge: 1,
-            contentAvailable: true,
           },
         },
-      },
-
-      // 📦 DATA PAYLOAD (MOST IMPORTANT)
-      data: {
-        type: "incoming_call",
-        screen: "IncomingCall",
-
-        requestId: String(requestId),
-        sessionId: String(sessionId),
-        callType,
-        callerId: String(callerId),
-        callerName,
-        callerAvatar:
-          callerAvatar ||
-          "https://investogram.ukvalley.com/avatars/default.png",
-
-        ratePerMinute: String(ratePerMinute),
-        expiresAt: String(expiresAt),
-        timestamp,
       },
     };
 
     const response = await admin.messaging().send(message);
 
-    logger.info(
-      `✅ Incoming call notification sent to ${userId} → ${response}`
+    console.log(
+      `✅ Call notification sent to ${userId}: ${response}`
     );
   } catch (error) {
-    logger.error("❌ Call notification error:", error);
+    console.error("❌ sendCallNotification error:", error);
   }
 }
