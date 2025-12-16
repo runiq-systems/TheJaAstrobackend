@@ -52,17 +52,7 @@ export const notifyAstrologerAboutCallRequest = async (
   );
 
   // 2️⃣ PUSH (background / killed app)
-  await sendCallNotification({
-    userId: astrologerId,
-    requestId: payload.requestId,
-    sessionId: payload.sessionId,
-    callType: payload.callType,
-    callerId: payload.callerId,
-    callerName: payload.callerName,
-    callerAvatar: payload.callerImage,
-    ratePerMinute: payload.ratePerMinute,
-    expiresAt: payload.expiresAt,
-  });
+
 };
 
 
@@ -210,6 +200,18 @@ export const requestCallSession = asyncHandler(async (req, res) => {
       message: userMessage || `${userName} wants to connect via ${callType.toLowerCase()} call`
     });
 
+
+    await sendCallNotification({
+      userId: astrologerId,
+      requestId,
+      sessionId,
+      callType,
+      callerId,
+      callerName,
+      callerAvatar,
+      ratePerMinute,
+      expiresAt,
+    });
     // === SET EXPIRY TIMER (auto-cancel after 3 mins if not accepted) ===
     setCallRequestTimer(requestId, sessionId, astrologerObjectId, userId);
 
@@ -1758,7 +1760,7 @@ export async function sendCallNotification({
     const user = await User.findById(userId).select("deviceToken");
 
     if (!user || !user.deviceToken) {
-     logger.warn(`⚠️ No device token for user: ${userId}`);
+      logger.warn(`⚠️ No device token for user: ${userId}`);
       return;
     }
 
