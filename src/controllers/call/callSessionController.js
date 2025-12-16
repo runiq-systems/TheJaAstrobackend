@@ -1857,65 +1857,9 @@ export async function sendCallNotification({
         }
       },
 
-      // APNs config (iOS)
-      apns: {
-        headers: {
-          "apns-priority": "10",
-          "apns-push-type": "alert"
-        },
-        payload: {
-          aps: {
-            alert: {
-              title: `Incoming ${callType} Call`,
-              body: `${callerName} is calling you (₹${ratePerMinute}/min)`,
-            },
-            sound: "default",
-            badge: 1,
-            "content-available": 1,
-            "mutable-content": 1
-          },
-          // Custom data for iOS
-          callData: JSON.stringify({
-            requestId,
-            sessionId,
-            callType,
-            callerId,
-            callerName,
-            callerAvatar,
-            ratePerMinute
-          })
-        }
-      },
+     
 
-      // Web push config
-      webpush: {
-        headers: {
-          Urgency: "high"
-        },
-        notification: {
-          title: `Incoming ${callType} Call`,
-          body: `${callerName} is calling you (₹${ratePerMinute}/min)`,
-          icon: callerAvatar || "/default-avatar.png",
-          badge: "/badge-icon.png",
-          vibrate: [200, 100, 200],
-          requireInteraction: true,
-          actions: [
-            {
-              action: "accept",
-              title: "Accept",
-              icon: "/accept-icon.png"
-            },
-            {
-              action: "reject",
-              title: "Reject",
-              icon: "/reject-icon.png"
-            }
-          ],
-          data: {
-            url: `/call/${requestId}`
-          }
-        }
-      }
+      
     };
 
     // 3. Send notification
