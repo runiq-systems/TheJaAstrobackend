@@ -1760,41 +1760,34 @@ const sendNotification = async ({
       return;
     }
 
+    // 🔹 DATA payload (ALL values must be strings)
     const payloadData = {
       type,
-      screen: "Call", // ✅ MATCHES Tab.Screen name
+      screen: "Call",
       title: title || "",
       body: body || "",
       ...data,
     };
 
-    // FCM requires string values
-    Object.keys(payloadData).forEach(key => {
-      payloadData[key] = String(payloadData[key]);
-    });
+    Object.keys(payloadData).forEach(
+      key => (payloadData[key] = String(payloadData[key]))
+    );
 
     const message = {
       token: user.deviceToken,
 
-      // 🔥 DATA-ONLY
+      // ✅ DATA-ONLY MESSAGE (BEST for calls)
       data: payloadData,
 
       android: {
         priority: "high",
         ttl: 0,
-        data: payloadData,
-        notification: {
-          channelId: "call_notifications",
-          sound: "ringtone",
-          priority: "max",
-          visibility: "public",
-          category: "call",
-          fullScreenIntent: true,
-        },
       },
 
       apns: {
-        headers: { "apns-priority": "10" },
+        headers: {
+          "apns-priority": "10",
+        },
         payload: {
           aps: {
             alert: { title, body },
@@ -1806,9 +1799,10 @@ const sendNotification = async ({
     };
 
     await admin.messaging().send(message);
-    console.log("✅ CallRequest notification sent");
+    console.log("✅ Incoming call FCM sent");
 
   } catch (err) {
     console.error("❌ FCM error:", err);
   }
 };
+
