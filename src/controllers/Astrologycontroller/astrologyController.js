@@ -13,8 +13,8 @@ export const getCoordinates = async (place) => {
 };
 
 // 🔐 Prokerala credentials (replace with .env in production)
-const PROKERALA_CLIENT_ID = "6f767885-1fb9-4bf8-8b35-39ae16296b8a";
-const PROKERALA_CLIENT_SECRET = "XuCZXeXOm5grEOIXfcjvIbsvfJaOJywYZxp4N38X";
+const PROKERALA_CLIENT_ID = process.env.PROKERALA_CLIENT_ID
+const PROKERALA_CLIENT_SECRET = process.env.PROKERALA_CLIENT_SECRET
 
 // 🔁 Token cache
 let accessToken = null;
@@ -64,55 +64,74 @@ const getDateTimeFromTimeQuery = (time = "today") => {
     // This format is crucial for the API to return predictions[citation:9]
     return `${year}-${month}-${day}T00:00:00+05:30`;
 };
+export const getDailyHoroscope = async (req, res) => {
+  const { sign, time = "today" } = req.query;
 
- export const getDailyHoroscope = async (req, res) => {
-    const { sign, time = "today" } = req.query;
+  if (!sign) {
+    return res.status(400).json({
+      status: "error",
+      message: "Missing zodiac sign",
+    });
+  }
 
-    if (!sign) {
-        return res.status(400).json({
-            status: "error",
-            message: "Missing zodiac sign (sign=aries|taurus|...)",
-        });
+  let datetime;
+  try {
+    datetime = getDateTimeFromTimeQuery(time); // MUST return RFC3339
+  } catch (e) {
+    return res.status(400).json({
+      status: "error",
+      message: "Invalid time parameter",
+    });
+  }
+
+  try {
+    const token = await getAccessToken(); // PRODUCTION token only
+
+    const response = await axios.get(
+      "https://api.prokerala.com/v2/horoscope/daily/advanced",
+      {
+        params: {
+          sign,
+          datetime,
+          timezone: "Asia/Kolkata",
+          type: "general,health,love",
+        },
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        timeout: 8000,
+      }
+    );
+
+    const core = response.data?.data;
+    if (!core) {
+      throw new Error("Empty horoscope payload");
     }
 
-    // This will now always return a recent, valid date
-    const datetime = getDateTimeFromTimeQuery(time); 
-    console.log("Sending date to API:", datetime); // For debugging
+    return res.json({
+      status: "ok",
+      data: core,
+      meta: {
+        sign,
+        date: datetime.split("T")[0],
+        source: "prokerala-premium",
+      },
+    });
 
-    try {
-        const token = await getAccessToken();
-        logger.info("♈ Fetching horoscope:", { sign, time, datetime });
+  } catch (err) {
+    const status = err.response?.status || 500;
 
-        const response = await axios.get(
-            "https://api.prokerala.com/v2/horoscope/daily/advanced",
-            {
-                params: {
-                    sign,
-                    datetime,
-                    timezone: "Asia/Kolkata",
-                    // ✅ CHANGE THIS LINE BACK to one of the valid options:
-                    type: "general,health,love", // This is the correct format
-                },
-                headers: { Authorization: `Bearer ${token}` },
-            }
-        );
-        logger.info("✅ Horoscope success");
-        const core = response.data.data || response.data;
-        console.log(core)
+    logger.error("Prokerala API failure", {
+      status,
+      error: err.response?.data || err.message,
+    });
 
-        return res.json({
-            status: "ok",
-            data: core
-        });
-    } catch (err) {
-        logger.error("❌ Prokerala API error:", err);
-        return res.status(err.response?.status || 500).json({
-            status: "error",
-            message: err.response?.data || err.message,
-        });
-    }
+    return res.status(status).json({
+      status: "error",
+      message: "Failed to fetch horoscope",
+    });
+  }
 };
-
  
 // 🧘 Kundali Report
 export const getKundaliReport = async (req, res) => {
@@ -266,447 +285,137 @@ export const getBirthDetails = async (req, res) => {
     }
 };
 
+function toRFC3339(dob, tob) {
+  if (!dob || !tob) throw new Error("DOB and TOB required");
+
+  let datePart;
+  if (dob.includes("/")) {
+    const [dd, mm, yyyy] = dob.split("/").map(x => x.padStart(2, "0"));
+    datePart = `${yyyy}-${mm}-${dd}`;
+  } else {
+    const d = new Date(dob);
+    if (isNaN(d)) throw new Error("Invalid DOB format");
+    datePart = d.toISOString().split("T")[0];
+  }
+
+  let h = 0, m = 0, s = 0;
+  const t = tob.toLowerCase().trim();
+
+  if (t.includes("am") || t.includes("pm")) {
+    const isPM = t.includes("pm");
+    const clean = t.replace(/am|pm/g, "").trim();
+    [h, m, s = 0] = clean.split(":").map(Number);
+    if (isPM && h < 12) h += 12;
+    if (!isPM && h === 12) h = 0;
+  } else {
+    [h, m, s = 0] = t.split(":").map(Number);
+  }
+
+  return `${datePart}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}+05:30`;
+}
 
 // 🌟 Advanced Kundali Report (Filtered - Nakshatra & Mangal Dosha Only)
 export const getAdvancedKundaliReport = async (req, res) => {
   try {
-    const {
-      name,
-      dob,
-      tob,
-      place,
-      ayanamsa = 1,
-      la = "en",
-      year_length = 1
-    } = req.body;
+    const { dob, tob, place, ayanamsa = 1, la = "en", year_length = 1 } = req.body;
 
     if (!dob || !tob || !place) {
-      return res.status(400).json({
-        status: "error",
-        message: "Missing required fields: dob, tob, and place are required."
-      });
+      return res.status(400).json({ status: "error", message: "Missing required fields" });
     }
 
-    const sandboxMode = true;
+    const datetime = toRFC3339(dob, tob);
+    const geo = await getCoordinates(place);
 
-    // 🕓 Convert DOB + TOB → ISO datetime
-    const parseDateTime = (dob, tob, isSandbox) => {
-      const parseDate = () => {
-        if (isSandbox) {
-          return "2000-01-01";
-        }
-        if (dob.includes("/")) {
-          const [day, month, year] = dob.split("/").map((x) => x.padStart(2, "0"));
-          return `${year}-${month}-${day}`;
-        } else {
-          const d = new Date(dob);
-          return d.toISOString().split("T")[0];
-        }
-      };
+    if (!geo) {
+      return res.status(400).json({ status: "error", message: "Invalid place" });
+    }
 
-      const parseTime = () => {
-        let [h, m] = [0, 0];
-        if (tob.toLowerCase().includes("am") || tob.toLowerCase().includes("pm")) {
-          const isPM = tob.toLowerCase().includes("pm");
-          const clean = tob.toLowerCase().replace("am", "").replace("pm", "").trim();
-          [h, m] = clean.split(":").map(Number);
-          if (isPM && h < 12) h += 12;
-          if (!isPM && h === 12) h = 0;
-        } else {
-          [h, m] = tob.split(":").map(Number);
-        }
-        return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:00`;
-      };
-
-      return `${parseDate()}T${parseTime()}+05:30`;
-    };
-
-    const datetime = parseDateTime(dob, tob, sandboxMode);
-
-    // 🧭 Convert place to coordinates
-    const { latitude, longitude } = await getCoordinates(place);
-    const coordinates = `${latitude.toFixed(6)},${longitude.toFixed(6)}`;
-
-    // 🪙 Get API Token
     const token = await getAccessToken();
 
-    // 🚀 Call Advanced Kundali endpoint
     const response = await axios.get(
       "https://api.prokerala.com/v2/astrology/kundli/advanced",
       {
         params: {
           datetime,
-          coordinates,
+          coordinates: `${geo.latitude},${geo.longitude}`,
           ayanamsa,
           la,
           year_length
         },
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 8000
       }
     );
 
-    // 📊 EXTRACT ONLY REQUIRED DATA
-    const apiData = response.data.data;
-    
-    // Filter to get only nakshatra and mangal dosha
-    const filteredData = {
-      nakshatra_details: {
-        nakshatra: {
-          id: apiData.nakshatra_details?.nakshatra?.id,
-          name: apiData.nakshatra_details?.nakshatra?.name,
-          lord: {
-            id: apiData.nakshatra_details?.nakshatra?.lord?.id,
-            name: apiData.nakshatra_details?.nakshatra?.lord?.name,
-            vedic_name: apiData.nakshatra_details?.nakshatra?.lord?.vedic_name
-          },
-          pada: apiData.nakshatra_details?.nakshatra?.pada
-        },
-        chandra_rasi: {
-          id: apiData.nakshatra_details?.chandra_rasi?.id,
-          name: apiData.nakshatra_details?.chandra_rasi?.name,
-          lord: {
-            id: apiData.nakshatra_details?.chandra_rasi?.lord?.id,
-            name: apiData.nakshatra_details?.chandra_rasi?.lord?.name,
-            vedic_name: apiData.nakshatra_details?.chandra_rasi?.lord?.vedic_name
-          }
-        },
-        soorya_rasi: {
-          id: apiData.nakshatra_details?.soorya_rasi?.id,
-          name: apiData.nakshatra_details?.soorya_rasi?.name,
-          lord: {
-            id: apiData.nakshatra_details?.soorya_rasi?.lord?.id,
-            name: apiData.nakshatra_details?.soorya_rasi?.lord?.name,
-            vedic_name: apiData.nakshatra_details?.soorya_rasi?.lord?.vedic_name
-          }
-        }
-      },
-      mangal_dosha: {
-        has_dosha: apiData.mangal_dosha?.has_dosha,
-        type: apiData.mangal_dosha?.type,
-        has_exception: apiData.mangal_dosha?.has_exception,
-        exceptions: apiData.mangal_dosha?.exceptions || []
-      }
-    };
-
-    // Remove remedies if they exist in mangal_dosha
-    if (filteredData.mangal_dosha.remedies) {
-      delete filteredData.mangal_dosha.remedies;
-    }
-
-    logger.info("✅ Filtered Advanced Kundali Report Success");
-    
-    return res.status(200).json({
-      status: "success",
-      data: {
-        status: "ok",
-        data: filteredData
-      }
+    return res.json({
+      status: "ok",
+      data: response.data.data
     });
 
-  } catch (error) {
-    console.error("❌ Advanced Kundali Error:", error.message);
-
-    logger.error("❌ Advanced Kundali Error:", error);
-
-    return res.status(error.response?.status || 500).json({
+  } catch (err) {
+    return res.status(err.response?.status || 500).json({
       status: "error",
-      message: error.message,
-      details: error.response?.data || "Unknown error",
-      timestamp: new Date().toISOString()
+      message: "Advanced kundali failed",
+      details: err.response?.data || err.message
     });
   }
 };
 
 // 🌟 Kundali Compatibility Report (Two People)
-export const getKundaliCompatibilityTest = async (req, res) => {
+export const getKundaliCompatibility = async (req, res) => {
   try {
     const {
       name1, dob1, tob1, place1,
       name2, dob2, tob2, place2,
-      ayanamsa = 1, la = "en"
+      ayanamsa = 1,
+      la = "en"
     } = req.body;
 
-    // Validate required fields
-    const missingFields = [];
-    if (!dob1) missingFields.push("dob1");
-    if (!tob1) missingFields.push("tob1");
-    if (!place1) missingFields.push("place1");
-    if (!dob2) missingFields.push("dob2");
-    if (!tob2) missingFields.push("tob2");
-    if (!place2) missingFields.push("place2");
-    
-    if (missingFields.length > 0) {
-      return res.status(400).json({
-        status: "error",
-        message: `Missing required fields: ${missingFields.join(", ")}`
-      });
+    if (![dob1, tob1, place1, dob2, tob2, place2].every(Boolean)) {
+      return res.status(400).json({ status: "error", message: "Missing required fields" });
     }
 
-    // 🎯 SANDBOX MODE DETECTION & HANDLING
-    const isSandboxMode = true; // Set to false for production
-    const SANDBOX_DATE = "2000-01-01"; // Prokerala sandbox only allows Jan 1
+    const girlDOB = toRFC3339(dob1, tob1);
+    const boyDOB = toRFC3339(dob2, tob2);
 
-    // 🕓 Parse time (sandbox uses Jan 1 for all dates, keeps original time)
-    const parseTimeOnly = (tob) => {
-      let [h, m, s = "00"] = [0, 0, 0];
-      const timeStr = tob.toString().trim().toLowerCase();
-      
-      if (timeStr.includes("am") || timeStr.includes("pm")) {
-        const isPM = timeStr.includes("pm");
-        const clean = timeStr.replace(/[ap]m/gi, "").trim();
-        const parts = clean.split(/[:\.]/);
-        h = parseInt(parts[0] || 0);
-        m = parseInt(parts[1] || 0);
-        s = parts[2] ? parseInt(parts[2]) : 0;
-        
-        if (isPM && h < 12) h += 12;
-        if (!isPM && h === 12) h = 0;
-      } else {
-        const parts = timeStr.split(/[:\.]/);
-        h = parseInt(parts[0] || 0);
-        m = parseInt(parts[1] || 0);
-        s = parts[2] ? parseInt(parts[2]) : 0;
-      }
-      
-      return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-    };
+    const girlGeo = await getCoordinates(place1);
+    const boyGeo = await getCoordinates(place2);
 
-    // 🕓 Create ISO 8601 datetime string
-    const createISO8601DateTime = (dob, tob, isSandbox) => {
-      let datePart;
-      
-      if (isSandbox) {
-        // In sandbox: Always use Jan 1, 2000 (or current year Jan 1)
-        datePart = SANDBOX_DATE;
-      } else {
-        // In production: Use actual date
-        if (dob.includes("/")) {
-          const [day, month, year] = dob.split("/").map(part => part.padStart(2, '0'));
-          datePart = `${year}-${month}-${day}`;
-        } else if (dob.includes("-")) {
-          const dateObj = new Date(dob);
-          if (isNaN(dateObj.getTime())) {
-            throw new Error(`Invalid date format: ${dob}`);
-          }
-          datePart = dateObj.toISOString().split('T')[0];
-        } else {
-          throw new Error(`Invalid date format: ${dob}`);
-        }
-      }
-      
-      const timePart = parseTimeOnly(tob);
-      return `${datePart}T${timePart}+05:30`;
-    };
+    if (!girlGeo || !boyGeo) {
+      return res.status(400).json({ status: "error", message: "Invalid place coordinates" });
+    }
 
-    // Generate dates for API
-    const girlDOB = createISO8601DateTime(dob1, tob1, isSandboxMode);
-    const boyDOB = createISO8601DateTime(dob2, tob2, isSandboxMode);
-
-    // 🧭 Get coordinates (with fallback for sandbox)
-    const getCoordinatesForSandbox = async (place, personName) => {
-      if (isSandboxMode) {
-        // For sandbox, use fixed coordinates to ensure consistent results
-        const sandboxCoords = {
-          "Mumbai, India": { lat: 19.0760, lon: 72.8777 },
-          "Delhi, India": { lat: 28.6139, lon: 77.2090 },
-          "default": { lat: 28.6139, lon: 77.2090 }
-        };
-        
-        const key = Object.keys(sandboxCoords).find(k => 
-          place.toLowerCase().includes(k.toLowerCase().split(",")[0])
-        );
-        
-        return sandboxCoords[key] || sandboxCoords.default;
-      }
-      
-      try {
-        const coords = await getCoordinates(place);
-        return {
-          lat: parseFloat(coords.latitude.toFixed(6)),
-          lon: parseFloat(coords.longitude.toFixed(6))
-        };
-      } catch (error) {
-        console.warn(`Geocoding failed for ${place}:`, error.message);
-        return { lat: 28.6139, lon: 77.2090 }; // Delhi fallback
-      }
-    };
-
-    const girlCoords = await getCoordinatesForSandbox(place1, name1 || "Girl");
-    const boyCoords = await getCoordinatesForSandbox(place2, name2 || "Boy");
-    
-    const girlCoordinates = `${girlCoords.lat},${girlCoords.lon}`;
-    const boyCoordinates = `${boyCoords.lat},${boyCoords.lon}`;
-
-    // 🪙 Get API Token
     const token = await getAccessToken();
-
-    // 🚀 Call Prokerala API
-    console.log("📡 Calling Prokerala API with:", {
-      girl_dob: girlDOB,
-      girl_coords: girlCoordinates,
-      boy_dob: boyDOB,
-      boy_coords: boyCoordinates,
-      sandbox_mode: isSandboxMode
-    });
 
     const response = await axios.get(
       "https://api.prokerala.com/v2/astrology/kundli-matching",
       {
         params: {
           girl_dob: girlDOB,
-          girl_coordinates: girlCoordinates,
+          girl_coordinates: `${girlGeo.latitude},${girlGeo.longitude}`,
           boy_dob: boyDOB,
-          boy_coordinates: boyCoordinates,
-          ayanamsa: ayanamsa,
-          la: la
+          boy_coordinates: `${boyGeo.latitude},${boyGeo.longitude}`,
+          ayanamsa,
+          la
         },
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 8000
       }
     );
 
-    const apiData = response.data.data;
-
-    // 📊 Process response for sandbox (mock data enhancement)
-    const processSandboxResponse = (apiData, originalDates) => {
-      // In sandbox, response will be based on Jan 1 dates
-      // We can enhance it with mock variations based on original dates
-      
-      const girlOriginalDate = new Date(originalDates.dob1);
-      const boyOriginalDate = new Date(originalDates.dob2);
-      
-      // Create variations based on actual birth dates
-      const dateDiff = Math.abs(girlOriginalDate - boyOriginalDate);
-      const daysDiff = Math.floor(dateDiff / (1000 * 60 * 60 * 24));
-      
-      // Modify response slightly based on actual dates
-      let totalPoints = apiData.guna_milan?.total_points || 28;
-      let message = apiData.message?.description || "";
-      
-      // Adjust points based on date difference (mock logic)
-      if (daysDiff < 30) {
-        totalPoints = Math.min(36, totalPoints + 3); // Close birthdays = better match
-        message = "Good astrological alignment based on birth dates.";
-      } else if (daysDiff > 180) {
-        totalPoints = Math.max(18, totalPoints - 2); // Distant birthdays = less match
-      }
-      
-      return {
-        ...apiData,
-        guna_milan: {
-          total_points: totalPoints,
-          maximum_points: 36,
-          percentage: Math.round((totalPoints / 36) * 100)
-        },
-        metadata: {
-          sandbox_mode: true,
-          original_dates_used: originalDates,
-          note: "Results enhanced based on actual birth dates in sandbox mode"
-        }
-      };
-    };
-
-    // Use enhanced data in sandbox mode
-    const enhancedData = isSandboxMode 
-      ? processSandboxResponse(apiData, { dob1, dob2 })
-      : apiData;
-
-    // 🎨 Format final response
-    const filteredData = {
-      persons: {
-        girl: {
-          name: name1 || "Girl",
-          original_dob: dob1,
-          original_tob: tob1,
-          nakshatra: enhancedData.girl_info?.nakshatra?.name || "Uttara Bhadrapada",
-          pada: enhancedData.girl_info?.nakshatra?.pada || 3,
-          rasi: enhancedData.girl_info?.rasi?.name || "Meena",
-          koot: enhancedData.girl_info?.koot || {}
-        },
-        boy: {
-          name: name2 || "Boy",
-          original_dob: dob2,
-          original_tob: tob2,
-          nakshatra: enhancedData.boy_info?.nakshatra?.name || "Uttara Bhadrapada",
-          pada: enhancedData.boy_info?.nakshatra?.pada || 3,
-          rasi: enhancedData.boy_info?.rasi?.name || "Meena",
-          koot: enhancedData.boy_info?.koot || {}
-        }
-      },
-      compatibility: {
-        total_points: enhancedData.guna_milan?.total_points || 28,
-        maximum_points: enhancedData.guna_milan?.maximum_points || 36,
-        percentage: enhancedData.guna_milan?.percentage || 
-          Math.round(((enhancedData.guna_milan?.total_points || 28) / 36) * 100),
-        verdict: getCompatibilityVerdict(
-          enhancedData.guna_milan?.total_points || 28,
-          enhancedData.guna_milan?.maximum_points || 36
-        ),
-        message: enhancedData.message?.description || 
-          "Based on astrological calculations using Ashtakoota system.",
-        message_type: enhancedData.message?.type || "neutral"
-      },
-      koota_details: [
-        { name: "Varna", girl: enhancedData.girl_info?.koot?.varna, boy: enhancedData.boy_info?.koot?.varna, weight: 1 },
-        { name: "Vashya", girl: enhancedData.girl_info?.koot?.vasya, boy: enhancedData.boy_info?.koot?.vasya, weight: 2 },
-        { name: "Tara", girl: enhancedData.girl_info?.koot?.tara, boy: enhancedData.boy_info?.koot?.tara, weight: 3 },
-        { name: "Yoni", girl: enhancedData.girl_info?.koot?.yoni, boy: enhancedData.boy_info?.koot?.yoni, weight: 4 },
-        { name: "Graha Maitri", girl: enhancedData.girl_info?.koot?.graha_maitri, boy: enhancedData.boy_info?.koot?.graha_maitri, weight: 5 },
-        { name: "Gana", girl: enhancedData.girl_info?.koot?.gana, boy: enhancedData.boy_info?.koot?.gana, weight: 6 },
-        { name: "Bhakoot", girl: enhancedData.girl_info?.koot?.bhakoot, boy: enhancedData.boy_info?.koot?.bhakoot, weight: 7 },
-        { name: "Nadi", girl: enhancedData.girl_info?.koot?.nadi, boy: enhancedData.boy_info?.koot?.nadi, weight: 8 }
-      ]
-    };
-
-    // Helper function
-    function getCompatibilityVerdict(points, max) {
-      const percentage = (points / max) * 100;
-      if (percentage >= 75) return { level: "Excellent", emoji: "🌟", color: "#10B981" };
-      if (percentage >= 60) return { level: "Good", emoji: "✅", color: "#34D399" };
-      if (percentage >= 45) return { level: "Average", emoji: "⚠️", color: "#FBBF24" };
-      if (percentage >= 30) return { level: "Below Average", emoji: "😐", color: "#F59E0B" };
-      return { level: "Poor", emoji: "❌", color: "#EF4444" };
-    }
-
-    logger.info(`✅ Kundali Compatibility Generated (Sandbox: ${isSandboxMode})`);
-    
-    return res.status(200).json({
-      status: "success",
-      data: {
-        status: "ok",
-        data: filteredData,
-        metadata: {
-          sandbox_mode: isSandboxMode,
-          note: isSandboxMode 
-            ? "Using sandbox mode with January 1st dates. Upgrade to paid for accurate calculations with real dates."
-            : "Real calculation with actual birth dates",
-          calculation_time: new Date().toISOString(),
-          ayanamsa: ayanamsa === 1 ? "Lahiri" : "Other"
-        }
-      }
+    return res.json({
+      status: "ok",
+      data: response.data.data
     });
 
-  } catch (error) {
-    console.error("❌ Kundali Compatibility Error Details:", {
-      message: error.message,
-      response: error.response?.data,
-      config: {
-        url: error.config?.url,
-        params: error.config?.params
-      }
-    });
-
-
-    return res.status(statusCode).json({
+  } catch (err) {
+    return res.status(err.response?.status || 500).json({
       status: "error",
-      message: userMessage,
-      details: error.response?.data || null,
-      timestamp: new Date().toISOString()
+      message: "Kundali compatibility failed",
+      details: err.response?.data || err.message
     });
   }
 };
+
 
  
