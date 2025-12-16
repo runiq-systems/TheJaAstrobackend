@@ -200,7 +200,17 @@ export const requestCallSession = asyncHandler(async (req, res) => {
       message: userMessage || `${userName} wants to connect via ${callType.toLowerCase()} call`
     });
 
-
+    logger.info("Send notification with data", {
+      userId: astrologerId,
+      requestId,
+      sessionId,
+      callType,
+      callerId,
+      callerName,
+      callerAvatar,
+      ratePerMinute,
+      expiresAt,
+    })
     await sendCallNotification({
       userId: astrologerId,
       requestId,
@@ -1756,6 +1766,7 @@ export async function sendCallNotification({
   ratePerMinute,
   expiresAt,
 }) {
+  logger.info("Calling function from reqest .... call send notification");
   try {
     const user = await User.findById(userId).select("deviceToken");
 
