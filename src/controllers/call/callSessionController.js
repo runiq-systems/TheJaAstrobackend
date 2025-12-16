@@ -25,13 +25,17 @@ const activeCallTimers = new Map();
 
 // utils/notification.utils.js or wherever you keep it
 
-
-export const notifyAstrologerAboutCallRequest = async (req, astrologerId, payload) => {
-  try {
-    const astrologer = await User.findById(astrologerId).select("fullName deviceToken");
-
-    // Prepare the notification payload
-    const notificationPayload = {
+export const notifyAstrologerAboutCallRequest = async (
+  req,
+  astrologerId,
+  payload
+) => {
+  // 1️⃣ SOCKET (real-time)
+  emitSocketEvent(
+    req,
+    astrologerId.toString(),
+    ChatEventsEnum.CALL_INITIATED_EVENT,
+    {
       eventType: "incomingCall",
       requestId: payload.requestId,
       sessionId: payload.sessionId,
@@ -43,60 +47,24 @@ export const notifyAstrologerAboutCallRequest = async (req, astrologerId, payloa
       ratePerMinute: payload.ratePerMinute,
       expiresAt: payload.expiresAt,
       timestamp: new Date(),
-      message: payload.message || "Wants to connect via call",
-
-      // Additional metadata for frontend
-      meta: {
-        callRecordId: payload.callRecordId || payload.requestId,
-        channel: "call_channel",
-        screen: "Incomingcall",
-        action: "call_request"
-      }
-    };
-
-    // 1. Socket notification
-    emitSocketEvent(
-      req,
-      astrologerId.toString(),
-      ChatEventsEnum.CALL_INITIATED_EVENT,
-      notificationPayload
-    );
-
-    console.log(`📡 Socket event sent to astrologer ${astrologerId}:`, {
-      event: ChatEventsEnum.CALL_INITIATED_EVENT,
-      data: notificationPayload
-    });
-
-    // 2. Push notification (only if device token exists)
-    if (astrologer?.deviceToken) {
-      await sendCallNotification({
-        userId: astrologerId,
-        deviceToken: astrologer.deviceToken,
-        callerId: payload.callerId,
-        callerName: payload.callerName,
-        callerAvatar: payload.callerImage || "",
-        callType: payload.callType,
-        requestId: payload.requestId,
-        sessionId: payload.sessionId,
-        ratePerMinute: payload.ratePerMinute,
-        expiresAt: payload.expiresAt
-      });
-    } else {
-      console.log(`⚠️ No device token found for astrologer: ${astrologerId}`);
+      message: "Wants to connect via call",
     }
+  );
 
-    // 3. Also send global socket event for reliability
-    emitSocketEventGlobal(
-      astrologerId.toString(),
-      ChatEventsEnum.CALL_INITIATED_EVENT,
-      notificationPayload
-    );
-
-  } catch (error) {
-    console.error("❌ Error notifying astrologer about call request:", error);
-    // Don't throw error here, just log it
-  }
+  // 2️⃣ PUSH (background / killed app)
+  await sendCallNotification({
+    userId: astrologerId,
+    requestId: payload.requestId,
+    sessionId: payload.sessionId,
+    callType: payload.callType,
+    callerId: payload.callerId,
+    callerName: payload.callerName,
+    callerAvatar: payload.callerImage,
+    ratePerMinute: payload.ratePerMinute,
+    expiresAt: payload.expiresAt,
+  });
 };
+
 
 function generateTxId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1775,121 +1743,81 @@ const sendCallReminder = async (sessionId, minutesRemaining) => {
   }
 };
 
-// Send call notification with proper data
 export async function sendCallNotification({
   userId,
-  deviceToken,
+  requestId,
+  sessionId,
+  callType = "audio",
   callerId,
   callerName,
   callerAvatar = "",
-  callType = "AUDIO",
-  requestId,
-  sessionId,
   ratePerMinute,
-  expiresAt
+  expiresAt,
 }) {
   try {
-    if (!deviceToken) {
-      console.warn(`⚠️ No device token provided for user: ${userId}`);
+    const user = await User.findById(userId).select("deviceToken");
+
+    if (!user || !user.deviceToken) {
+      logger.warn(`⚠️ No device token for user: ${userId}`);
       return;
     }
 
-    // Prepare expiry timestamp (5 minutes from now)
-    const expiryTime = expiresAt || new Date(Date.now() + 5 * 60 * 1000);
+    const timestamp = Date.now().toString();
 
-    // 1. DATA PAYLOAD for app handling (ALL STRING VALUES)
-    const dataPayload = {
-      // Core notification data
-      type: "incoming_call",
-      event: "incoming",
-      title: `Incoming ${callType} Call`,
-      body: `${callerName} is calling you (₹${ratePerMinute}/min)`,
-
-      // Navigation & routing
-      screen: "IncomingCall",
-      channel: "call_channel",
-      action: "CALL_REQUEST",
-
-      // Call data (MUST BE STRINGS for FCM)
-      requestId: String(requestId),
-      sessionId: String(sessionId),
-      callType: String(callType),
-      callerId: String(callerId),
-      callerName: String(callerName),
-      callerAvatar: String(callerAvatar),
-      ratePerMinute: String(ratePerMinute),
-      expiresAt: expiryTime.toISOString(),
-      timestamp: new Date().toISOString(),
-
-      // Additional metadata
-      priority: "high",
-      click_action: "FLUTTER_NOTIFICATION_CLICK",
-      android_channel_id: "call_channel"
-    };
-
-    // 2. Prepare FCM message
     const message = {
-      token: deviceToken,
+      token: user.deviceToken,
 
-      // Data payload (for background handling)
-      data: dataPayload,
-
-      // Notification payload (for foreground display)
-      notification: {
-        title: `Incoming ${callType} Call`,
-        body: `${callerName} is calling you (₹${ratePerMinute}/min)`,
-        sound: "default",
-        badge: "1"
-      },
-
-      // Android specific config
+      // 🔔 Android
       android: {
         priority: "high",
-        ttl: 300000, // 5 minutes
         notification: {
-          channel_id: "call_channel",
+          channelId: "calls",
           sound: "default",
-          priority: "max",
           visibility: "public",
-          default_sound: true,
-          default_vibrate_timings: true,
-          default_light_settings: true
-        }
+        },
       },
 
-     
+      // 🍎 iOS
+      apns: {
+        headers: {
+          "apns-push-type": "voip",
+          "apns-priority": "10",
+        },
+        payload: {
+          aps: {
+            sound: "default",
+            badge: 1,
+            contentAvailable: true,
+          },
+        },
+      },
 
-      
+      // 📦 DATA PAYLOAD (MOST IMPORTANT)
+      data: {
+        type: "incoming_call",
+        screen: "IncomingCall",
+
+        requestId: String(requestId),
+        sessionId: String(sessionId),
+        callType,
+        callerId: String(callerId),
+        callerName,
+        callerAvatar:
+          callerAvatar ||
+          "https://investogram.ukvalley.com/avatars/default.png",
+
+        ratePerMinute: String(ratePerMinute),
+        expiresAt: String(expiresAt),
+        timestamp,
+      },
     };
 
-    // 3. Send notification
     const response = await admin.messaging().send(message);
 
-    console.log(`✅ Push notification sent to ${userId}:`, {
-      requestId,
-      sessionId,
-      callType,
-      messageId: response,
-      sentAt: new Date().toISOString()
-    });
-
-    return response;
-
+    logger.info(
+      `✅ Incoming call notification sent to ${userId} → ${response}`
+    );
   } catch (error) {
-    console.error("❌ Error sending call notification:", {
-      userId,
-      error: error.message,
-      errorCode: error.code,
-      stack: error.stack
-    });
-
-    // Handle specific FCM errors
-    if (error.code === 'messaging/registration-token-not-registered') {
-      console.log(`🔄 Removing invalid token for user: ${userId}`);
-      // Remove invalid token from database
-      await User.findByIdAndUpdate(userId, { $unset: { deviceToken: 1 } });
-    }
-
-    throw error;
+    logger.error("❌ Call notification error:", error);
   }
 }
