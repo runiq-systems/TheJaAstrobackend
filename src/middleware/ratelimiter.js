@@ -59,3 +59,33 @@ export const authActionLimiter = createRateLimiter({
   message:
     "Too many requests. Slow down.",
 });
+
+
+/**
+ * 10 requests per user/IP for astrology APIs
+ */
+export const astrologyRateLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000, // 24 hours
+  max: 3,
+
+  keyGenerator: (req) => {
+    // ✅ Prefer authenticated user
+    if (req.user?._id) {
+      return `user:${req.user._id}`;
+    }
+
+    // ⚠️ Fallback to IP
+    return `ip:${req.ip}`;
+  },
+
+  handler: (req, res) => {
+    return res.status(429).json({
+      status: "error",
+      message:
+        "Daily astrology API limit reached (10 requests). Try again tomorrow.",
+    });
+  },
+
+  standardHeaders: true,
+  legacyHeaders: false,
+});

@@ -76,8 +76,8 @@ export const getDailyHoroscope = async (req, res) => {
 
   let datetime;
   try {
-    datetime = getDateTimeFromTimeQuery(time); // MUST return RFC3339
-  } catch (e) {
+    datetime = getDateTimeFromTimeQuery(time);
+  } catch {
     return res.status(400).json({
       status: "error",
       message: "Invalid time parameter",
@@ -85,16 +85,14 @@ export const getDailyHoroscope = async (req, res) => {
   }
 
   try {
-    const token = await getAccessToken(); // PRODUCTION token only
+    const token = await getAccessToken();
 
     const response = await axios.get(
-      "https://api.prokerala.com/v2/horoscope/daily/advanced",
+      "https://api.prokerala.com/v2/horoscope/daily",
       {
         params: {
           sign,
-          datetime,
-          timezone: "Asia/Kolkata",
-          type: "general,health,love",
+          datetime, // ISO 8601 encoded
         },
         headers: {
           Authorization: `Bearer ${token}`,
@@ -103,37 +101,32 @@ export const getDailyHoroscope = async (req, res) => {
       }
     );
 
-    const core = response.data?.data;
-    if (!core) {
-      throw new Error("Empty horoscope payload");
-    }
+    const daily = response.data?.data?.daily_prediction;
+    if (!daily) throw new Error("Invalid payload");
 
     return res.json({
       status: "ok",
-      data: core,
+      data: {
+        sign: daily.sign_name,
+        date: daily.date,
+        prediction: daily.prediction,
+      },
       meta: {
-        sign,
-        date: datetime.split("T")[0],
-        source: "prokerala-premium",
+        source: "prokerala",
+        tier: "basic",
       },
     });
 
   } catch (err) {
-    const status = err.response?.status || 500;
-
-    logger.error("Prokerala API failure", {
-      status,
-      error: err.response?.data || err.message,
-    });
-
-    return res.status(status).json({
+    logger.error("Daily horoscope failed", err.response?.data || err.message);
+    return res.status(err.response?.status || 500).json({
       status: "error",
-      message: "Failed to fetch horoscope",
+      message: "Failed to fetch daily horoscope",
     });
   }
 };
 
-// 💑 Kundali Matching
+
 // 💑 Detailed Kundli Matching (v2 format)
 export const getKundaliMatching = async (req, res) => {
   try {
