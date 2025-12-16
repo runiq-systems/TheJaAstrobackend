@@ -1807,8 +1807,7 @@ export async function sendCallNotification({
     };
 
     const response = await admin.messaging().send(message);
-
-    console.log(
+    logger.info(
       `✅ Call notification sent to ${userId}: ${response}`
     );
   } catch (error) {
