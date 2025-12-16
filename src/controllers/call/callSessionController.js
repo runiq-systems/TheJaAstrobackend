@@ -1758,7 +1758,7 @@ export async function sendCallNotification({
     const user = await User.findById(userId).select("deviceToken");
 
     if (!user || !user.deviceToken) {
-     logger.warn(`⚠️ No device token for user: ${userId}`);
+      logger.warn(`⚠️ No device token for user: ${userId}`);
       return;
     }
 
@@ -1774,7 +1774,7 @@ export async function sendCallNotification({
       // 📦 DATA (for navigation & actions)
       data: {
         type: "incoming_call",
-        screen: "IncomingCall",
+        screen: "call",
         requestId: String(requestId),
         sessionId: String(sessionId),
         callType,
