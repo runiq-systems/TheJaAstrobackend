@@ -1748,61 +1748,67 @@ const sendCallReminder = async (sessionId, minutesRemaining) => {
 
 const sendNotification = async ({
   userId,
-  title,
-  body,
-  type = "incoming_call",
-  data = {},
+  callRecordId,
+  callerId,
+  receiverId,
+  callerName,
+  callType = "AUDIO", // AUDIO | VIDEO
 }) => {
   try {
     const user = await User.findById(userId).select("deviceToken fullName");
+
     if (!user?.deviceToken) {
       console.log(`❌ No device token for user ${userId}`);
       return;
     }
 
-    // 🔹 DATA payload (ALL values must be strings)
-    const payloadData = {
-      type,
-      screen: "Call",
-      title: title || "",
-      body: body || "",
-      ...data,
-    };
+    // ✅ DATA-ONLY PAYLOAD (ALL VALUES MUST BE STRING)
+    const dataPayload = {
+      type: "incoming_call",
+      event: "incoming",
+      screen: "Incomingcall",
 
-    Object.keys(payloadData).forEach(
-      key => (payloadData[key] = String(payloadData[key]))
-    );
+      callRecordId: String(callRecordId),
+      callerId: String(callerId),
+      receiverId: String(receiverId),
+      callerName: String(callerName),
+      callType: String(callType),
+
+      channel: "call_channel",
+    };
 
     const message = {
       token: user.deviceToken,
 
-      // ✅ DATA-ONLY MESSAGE (BEST for calls)
-      data: payloadData,
+      // 🔥 DATA-ONLY MESSAGE
+      data: dataPayload,
 
       android: {
         priority: "high",
         ttl: 0,
       },
 
+      // 🍎 iOS support (safe even if Android-only app)
       apns: {
         headers: {
           "apns-priority": "10",
         },
         payload: {
           aps: {
-            alert: { title, body },
-            sound: "default",
             "content-available": 1,
+            sound: "default",
           },
         },
       },
     };
 
     await admin.messaging().send(message);
-    console.log("✅ Incoming call FCM sent");
+    console.log("✅ Incoming call notification sent:", {
+      userId,
+      callRecordId,
+    });
 
-  } catch (err) {
-    console.error("❌ FCM error:", err);
+  } catch (error) {
+    console.error("❌ Failed to send incoming call notification:", error);
   }
 };
-
