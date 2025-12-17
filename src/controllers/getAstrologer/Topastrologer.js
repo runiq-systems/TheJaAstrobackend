@@ -1,6 +1,12 @@
 import { User } from "../../models/user.js";
 import { Astrologer } from "../../models/astrologer.js";
 
+import {
+    uploadOnCloudinary,
+    getPublicIdFromUrl,
+    deleteFromCloudinary,
+} from "../../utils/cloudinary.js";
+
 export const getTopAstrologers = async (req, res) => {
     try {
         const result = await Astrologer.aggregate([
@@ -108,6 +114,147 @@ export const toggleOnlineStatus = async (req, res) => {
         return res.status(500).json({
             ok: false,
             message: "Server Error"
+        });
+    }
+};
+
+
+
+
+
+/**
+ * @desc    Get astrologer profile (self)
+ * @route   GET /api/astrologer/profile
+ * @access  Astrologer (protected)
+ */
+export const getAstrologerProfile = async (req, res) => {
+    try {
+        const userId = req.user._id;
+
+        // Fetch astrologer profile
+        const astrologer = await Astrologer.findOne({ userId })
+            .populate("userId", "fullName phone email photo");
+
+        if (!astrologer) {
+            return res.status(404).json({
+                success: false,
+                message: "Astrologer profile not found",
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: astrologer,
+        });
+    } catch (error) {
+        console.error("Get astrologer profile error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Failed to fetch profile",
+        });
+    }
+};
+
+
+
+/**
+ * @desc    Update astrologer profile
+ * @route   PUT /api/astrologer/profile
+ * @access  Astrologer (protected)
+ */
+
+export const updateAstrologerProfile = async (req, res) => {
+    try {
+        const userId = req.user._id;
+
+        const {
+            fullName,
+            bio,
+            description,
+            yearOfExperience,
+            yearOfExpertise,
+            ratepermin,
+            languages,
+            qualification,
+            specialization,
+        } = req.body;
+
+        let photoUrl;
+
+        // 1️⃣ Upload image to Cloudinary (if provided)
+        if (req.file?.path) {
+            const astrologer = await Astrologer.findOne({ userId });
+
+            // Delete old photo if exists
+            if (astrologer?.photo) {
+                const oldPublicId = getPublicIdFromUrl(astrologer.photo);
+                if (oldPublicId) {
+                    await deleteFromCloudinary(oldPublicId);
+                }
+            }
+
+            const uploadResult = await uploadOnCloudinary(
+                req.file.path,
+                "astrologers/profile"
+            );
+
+            photoUrl = uploadResult.url;
+        }
+
+        // 2️⃣ Update User basic info
+        if (fullName || photoUrl) {
+            await User.findByIdAndUpdate(userId, {
+                ...(fullName && { fullName }),
+                ...(photoUrl && { photo: photoUrl }),
+            });
+        }
+
+        // 3️⃣ Prepare astrologer update payload
+        const updateData = {
+            bio,
+            description,
+            qualification,
+            ...(photoUrl && { photo: photoUrl }),
+            yearOfExperience,
+            yearOfExpertise,
+            ratepermin: ratepermin ? Number(ratepermin) : undefined,
+            languages: languages
+                ? languages.split(",").map(l => l.trim())
+                : undefined,
+            specialization: Array.isArray(specialization)
+                ? specialization
+                : undefined,
+            isProfilecomplet: true,
+        };
+
+        // Remove undefined fields
+        Object.keys(updateData).forEach(
+            key => updateData[key] === undefined && delete updateData[key]
+        );
+
+        const astrologer = await Astrologer.findOneAndUpdate(
+            { userId },
+            { $set: updateData },
+            { new: true }
+        ).populate("userId", "fullName phone email photo");
+
+        if (!astrologer) {
+            return res.status(404).json({
+                success: false,
+                message: "Astrologer profile not found",
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "Profile updated successfully",
+            data: astrologer,
+        });
+    } catch (error) {
+        console.error("Update astrologer profile error:", error);
+        return res.status(500).json({
+            success: false,
+            message: error.message || "Failed to update profile",
         });
     }
 };
