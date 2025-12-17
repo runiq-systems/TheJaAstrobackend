@@ -537,7 +537,7 @@ async handleCallDisconnection(userId) {
 
       this.emitToUser(callerId, "callRejected", {
         receiverId,
-        callRecordId: callRecord._id,
+        callRecordId,
         reason,
         timestamp: new Date(),
       });
