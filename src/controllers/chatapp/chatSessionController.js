@@ -1635,7 +1635,7 @@ export async function sendNotification({
     userId,
     title,
     message,
-   
+    type = "chat_message",
     channelId = "chat_channel",
     data = {},
 }) {
