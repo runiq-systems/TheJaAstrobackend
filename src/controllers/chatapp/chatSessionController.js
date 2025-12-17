@@ -1616,9 +1616,9 @@ const notifyAstrologerAboutRequest = async (req, astrologerId, requestData) => {
         userId: astrologerId,
         title: "New Chat Request",
         message: `${requestData.userInfo.fullName} wants to chat with you`,
-        type: "chat_request",
+     
         data: {
-            screen: "AstrologerChatRequest", // ✅ HERE
+            screen: "Chat", // ✅ HERE
             type: "chat_message",
 
             requestId: requestData.requestId,
@@ -1637,7 +1637,7 @@ export async function sendNotification({
     userId,
     title,
     message,
-    type = "chat_message",
+   
     channelId = "chat_channel",
     data = {},
 }) {
