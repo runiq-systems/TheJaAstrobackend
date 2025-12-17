@@ -1757,16 +1757,11 @@ export async function sendCallNotification({
     const message = {
       token: user.deviceToken,
 
-      // ✅ THIS MAKES IT WORK (AUTO DISPLAY)
-      notification: {
-        title: `Incoming ${callType} Call`,
-        body: `${callerName} is calling you`,
-      },
-
-      // 📦 DATA (for navigation & actions)
+      // 📦 DATA (for navigation & actions) - No 'notification' field for data-only message
       data: {
-        type: "call",
-        screen: "call",
+        type: "incoming_call",  // Matches NotificationType.INCOMING_CALL
+        event: "incoming",      // Fallback for frontend checks
+        screen: "Incomingcall", // Matches frontend navigation screen name
         requestId: String(requestId),
         sessionId: String(sessionId),
         callType,
@@ -1780,12 +1775,7 @@ export async function sendCallNotification({
       },
 
       android: {
-        priority: "high",
-        notification: {
-          channelId: "calls",
-          sound: "default",
-          visibility: "public",
-        },
+        priority: "high",  // Ensures high-priority delivery for data-only messages
       },
 
       apns: {
@@ -1793,6 +1783,7 @@ export async function sendCallNotification({
           aps: {
             sound: "default",
             badge: 1,
+            'content-available': 1,  // Helps wake iOS app for background handling
           },
         },
       },
