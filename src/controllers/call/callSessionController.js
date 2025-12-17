@@ -1761,7 +1761,7 @@ export async function sendCallNotification({
       data: {
         type: "incoming_call",  // Matches NotificationType.INCOMING_CALL
         event: "incoming",      // Fallback for frontend checks
-        screen: "Incomingcall", // Matches frontend navigation screen name
+        screen: "Call", // Matches frontend navigation screen name
         requestId: String(requestId),
         sessionId: String(sessionId),
         callType,
