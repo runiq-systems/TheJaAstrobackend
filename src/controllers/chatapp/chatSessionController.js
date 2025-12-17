@@ -1618,6 +1618,9 @@ const notifyAstrologerAboutRequest = async (req, astrologerId, requestData) => {
         message: `${requestData.userInfo.fullName} wants to chat with you`,
         type: "chat_request",
         data: {
+            screen: "AstrologerChatRequest", // ✅ HERE
+            type: "chat_message",
+
             requestId: requestData.requestId,
             sessionId: requestData.sessionId,
             userId: requestData.userId,
@@ -1630,68 +1633,81 @@ const notifyAstrologerAboutRequest = async (req, astrologerId, requestData) => {
 // export { billingTimers };
 
 
-export const sendNotification = async ({
+export async function sendNotification({
     userId,
     title,
     message,
-    type,
-    data = {}
-}) => {
+    type = "chat_message",
+    channelId = "chat_channel",
+    data = {},
+}) {
     try {
-        // Get user's device tokens
-        const user = await User.findById(userId).select("deviceTokens");
-
-        if (!user || !user.deviceToken?.length) {
-            console.log("User has no device tokens");
+        // 1️⃣ Fetch user device token(s)
+        const user = await User.findById(userId).select("deviceToken fullName");
+        if (!user || !user.deviceToken) {
+            console.warn(`⚠️ No device token for user: ${userId}`);
             return;
         }
 
+
+
+        // 2️⃣ Build payload (SAME channelId everywhere)
         const payload = {
+            token: user.deviceToken,
+
             notification: {
-                title: title,
+                title,
                 body: message,
             },
+
             data: {
-                type: type || "",
+                type,
+                channelId,
                 ...Object.keys(data).reduce((acc, key) => {
                     acc[key] = String(data[key]);
                     return acc;
-                }, {})
-            }
+                }, {}),
+            },
+
+            android: {
+                priority: "high",
+                notification: {
+                    channelId, // ✅ SAME channel used for chat request & chat message
+                    sound: "default",
+                    clickAction: "FLUTTER_NOTIFICATION_CLICK",
+                },
+            },
+
+            apns: {
+                headers: {
+                    "apns-priority": "10",
+                },
+                payload: {
+                    aps: {
+                        alert: {
+                            title,
+                            body: message,
+                        },
+                        sound: "default",
+                        contentAvailable: true,
+                    },
+                },
+            },
         };
 
-        const tokens = user.deviceToken;
+        // 3️⃣ Send notification
+        const response = await admin.messaging().send(payload);
 
-        console.log("Sending Firebase notification to:", tokens);
+        console.log(
+            `✅ Notification sent to ${user.fullName || userId} via ${channelId}`,
+            response
+        );
 
-        const response = await admin.messaging().sendEachForMulticast({
-            tokens,
-            ...payload,
-        });
-
-        // Remove invalid tokens
-        const invalidTokens = [];
-        response.responses.forEach((res, index) => {
-            if (!res.success) {
-                invalidTokens.push(tokens[index]);
-            }
-        });
-
-        if (invalidTokens.length) {
-            await User.findByIdAndUpdate(userId, {
-                $pull: { deviceTokens: { $in: invalidTokens } }
-            });
-            console.log("Removed invalid tokens:", invalidTokens);
-        }
-
-        console.log("Notification sent!");
         return response;
-
     } catch (error) {
-        console.error("Error sending Firebase notification:", error);
+        console.error("❌ Error sending notification:", error);
     }
-};
-
+}
 
 
 
