@@ -1614,8 +1614,11 @@ const notifyAstrologerAboutRequest = async (req, astrologerId, requestData) => {
         userId: astrologerId,
         title: "New Chat Request",
         message: `${requestData.userInfo.fullName} wants to chat with you`,
-        type: "chat_request",
+     
         data: {
+            screen: "Chat", // ✅ HERE
+            type: "chat_message",
+
             requestId: requestData.requestId,
             sessionId: requestData.sessionId,
             userId: requestData.userId,
@@ -1627,71 +1630,82 @@ const notifyAstrologerAboutRequest = async (req, astrologerId, requestData) => {
 // Export billing timers for external management
 // export { billingTimers };
 
-export const sendNotification = async ({
+
+export async function sendNotification({
     userId,
     title,
     message,
-    type = "chat_message",
-    data = {}
-}) => {
+   
+    channelId = "chat_channel",
+    data = {},
+}) {
     try {
+        // 1️⃣ Fetch user device token(s)
         const user = await User.findById(userId).select("deviceToken fullName");
-
-        if (!user || !user.deviceToken?.length) {
-            console.log("User has no device tokens");
+        if (!user || !user.deviceToken) {
+            console.warn(`⚠️ No device token for user: ${userId}`);
             return;
         }
 
-        // Build individual messages for each token (required for sendEachForMulticast)
-        const messages = user.deviceToken.map(token => ({
-            token,
-            data: {
-                type,
+
+
+        // 2️⃣ Build payload (SAME channelId everywhere)
+        const payload = {
+            token: user.deviceToken,
+
+            notification: {
                 title,
                 body: message,
+            },
+
+            data: {
+                type,
+                channelId,
                 ...Object.keys(data).reduce((acc, key) => {
                     acc[key] = String(data[key]);
                     return acc;
-                }, {})
+                }, {}),
             },
+
             android: {
                 priority: "high",
+                notification: {
+                    channelId, // ✅ SAME channel used for chat request & chat message
+                    sound: "default",
+                    clickAction: "FLUTTER_NOTIFICATION_CLICK",
+                },
             },
+
             apns: {
+                headers: {
+                    "apns-priority": "10",
+                },
                 payload: {
                     aps: {
+                        alert: {
+                            title,
+                            body: message,
+                        },
                         sound: "default",
-                        badge: 1,
-                        'content-available': 1,
+                        contentAvailable: true,
                     },
                 },
             },
-        }));
+        };
 
-        console.log("Sending data-only chat notification to tokens:", user.deviceToken);
+        // 3️⃣ Send notification
+        const response = await admin.messaging().send(payload);
 
-        // Modern method – works in v11.7+ (including latest v13+)
-        const batchResponse = await admin.messaging().sendEachForMulticast(messages);
+        console.log(
+            `✅ Notification sent to ${user.fullName || userId} via ${channelId}`,
+            response
+        );
 
-        // Invalid token cleanup
-        const invalidTokens = [];
-        batchResponse.responses.forEach((res, index) => {
-            if (!res.success) {
-                invalidTokens.push(user.deviceToken[index]);
-            }
-        });
-
-        if (invalidTokens.length > 0) {
-            await User.findByIdAndUpdate(userId, {
-                $pull: { deviceToken: { $in: invalidTokens } }
-            });
-            console.log("Removed invalid tokens:", invalidTokens);
-        }
-
-        console.log(`Chat notification batch sent! Success: ${batchResponse.successCount}, Failure: ${batchResponse.failureCount}`);
-        return batchResponse;
-
+        return response;
     } catch (error) {
-        console.error("Error sending chat notification:", error);
+        console.error("❌ Error sending notification:", error);
     }
-};
+}
+
+
+
