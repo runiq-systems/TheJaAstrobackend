@@ -72,7 +72,6 @@ function generateTxId(prefix) {
 
 
 // === requestCallSession === REMOVE ALL RESERVATION & WALLET CODE ===
-
 export const requestCallSession = asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
   let hasCommitted = false;
@@ -233,6 +232,7 @@ export const requestCallSession = asyncHandler(async (req, res) => {
     session.endSession();
   }
 });
+
 // Updated acceptCallSession (no balance check, just set RINGING)
 export const acceptCallSession = asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
@@ -330,7 +330,6 @@ export const acceptCallSession = asyncHandler(async (req, res) => {
 });
 
 // Updated startCallSession (no balance check, start billing)
-
 export const startCallSession = asyncHandler(async (req, res) => {
   const mongoSession = await mongoose.startSession();
   let sessionId;
@@ -1518,10 +1517,6 @@ const clearCallTimer = (id, type = 'request') => {
   }
 };
 
-
-
-
-
 const handleCallAutoEnd = async (sessionId, callId, reservationId) => {
   const mongoSession = await mongoose.startSession();
 
@@ -1692,9 +1687,6 @@ const handleCallAutoEnd = async (sessionId, callId, reservationId) => {
   }
 };
 
-
-
-
 const setupCallReminders = (sessionId, estimatedMinutes) => {
   clearReminders(sessionId);
 
@@ -1765,16 +1757,11 @@ export async function sendCallNotification({
     const message = {
       token: user.deviceToken,
 
-      // ✅ THIS MAKES IT WORK (AUTO DISPLAY)
-      notification: {
-        title: `Incoming ${callType} Call`,
-        body: `${callerName} is calling you`,
-      },
-
-      // 📦 DATA (for navigation & actions)
+      // 📦 DATA (for navigation & actions) - No 'notification' field for data-only message
       data: {
-        type: "call",
-        screen: "call",
+        type: "incoming_call",  // Matches NotificationType.INCOMING_CALL
+        event: "incoming",      // Fallback for frontend checks
+        screen: "Call", // Matches frontend navigation screen name
         requestId: String(requestId),
         sessionId: String(sessionId),
         callType,
@@ -1788,12 +1775,7 @@ export async function sendCallNotification({
       },
 
       android: {
-        priority: "high",
-        notification: {
-          channelId: "calls",
-          sound: "default",
-          visibility: "public",
-        },
+        priority: "high",  // Ensures high-priority delivery for data-only messages
       },
 
       apns: {
@@ -1801,6 +1783,7 @@ export async function sendCallNotification({
           aps: {
             sound: "default",
             badge: 1,
+            'content-available': 1,  // Helps wake iOS app for background handling
           },
         },
       },
