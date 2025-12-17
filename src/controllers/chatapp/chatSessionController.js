@@ -1604,8 +1604,6 @@ const stopBillingTimer = (sessionId) => {
 };
 
 
-
-
 // Utility function to notify astrologer
 const notifyAstrologerAboutRequest = async (req, astrologerId, requestData) => {
     // Socket notification
@@ -1629,69 +1627,71 @@ const notifyAstrologerAboutRequest = async (req, astrologerId, requestData) => {
 // Export billing timers for external management
 // export { billingTimers };
 
-
 export const sendNotification = async ({
     userId,
     title,
     message,
-    type,
+    type = "chat_message",
     data = {}
 }) => {
     try {
-        // Get user's device tokens
-        const user = await User.findById(userId).select("deviceTokens");
+        const user = await User.findById(userId).select("deviceToken fullName");
 
         if (!user || !user.deviceToken?.length) {
             console.log("User has no device tokens");
             return;
         }
 
-        const payload = {
-            notification: {
-                title: title,
-                body: message,
-            },
+        // Build individual messages for each token (required for sendEachForMulticast)
+        const messages = user.deviceToken.map(token => ({
+            token,
             data: {
-                type: type || "",
+                type,
+                title,
+                body: message,
                 ...Object.keys(data).reduce((acc, key) => {
                     acc[key] = String(data[key]);
                     return acc;
                 }, {})
-            }
-        };
+            },
+            android: {
+                priority: "high",
+            },
+            apns: {
+                payload: {
+                    aps: {
+                        sound: "default",
+                        badge: 1,
+                        'content-available': 1,
+                    },
+                },
+            },
+        }));
 
-        const tokens = user.deviceToken;
+        console.log("Sending data-only chat notification to tokens:", user.deviceToken);
 
-        console.log("Sending Firebase notification to:", tokens);
+        // Modern method – works in v11.7+ (including latest v13+)
+        const batchResponse = await admin.messaging().sendEachForMulticast(messages);
 
-        const response = await admin.messaging().sendEachForMulticast({
-            tokens,
-            ...payload,
-        });
-
-        // Remove invalid tokens
+        // Invalid token cleanup
         const invalidTokens = [];
-        response.responses.forEach((res, index) => {
+        batchResponse.responses.forEach((res, index) => {
             if (!res.success) {
-                invalidTokens.push(tokens[index]);
+                invalidTokens.push(user.deviceToken[index]);
             }
         });
 
-        if (invalidTokens.length) {
+        if (invalidTokens.length > 0) {
             await User.findByIdAndUpdate(userId, {
-                $pull: { deviceTokens: { $in: invalidTokens } }
+                $pull: { deviceToken: { $in: invalidTokens } }
             });
             console.log("Removed invalid tokens:", invalidTokens);
         }
 
-        console.log("Notification sent!");
-        return response;
+        console.log(`Chat notification batch sent! Success: ${batchResponse.successCount}, Failure: ${batchResponse.failureCount}`);
+        return batchResponse;
 
     } catch (error) {
-        console.error("Error sending Firebase notification:", error);
+        console.error("Error sending chat notification:", error);
     }
 };
-
-
-
-
