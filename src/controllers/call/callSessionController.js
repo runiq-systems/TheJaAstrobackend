@@ -72,7 +72,6 @@ function generateTxId(prefix) {
 
 
 // === requestCallSession === REMOVE ALL RESERVATION & WALLET CODE ===
-
 export const requestCallSession = asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
   let hasCommitted = false;
@@ -233,6 +232,7 @@ export const requestCallSession = asyncHandler(async (req, res) => {
     session.endSession();
   }
 });
+
 // Updated acceptCallSession (no balance check, just set RINGING)
 export const acceptCallSession = asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
@@ -330,7 +330,6 @@ export const acceptCallSession = asyncHandler(async (req, res) => {
 });
 
 // Updated startCallSession (no balance check, start billing)
-
 export const startCallSession = asyncHandler(async (req, res) => {
   const mongoSession = await mongoose.startSession();
   let sessionId;
@@ -1518,10 +1517,6 @@ const clearCallTimer = (id, type = 'request') => {
   }
 };
 
-
-
-
-
 const handleCallAutoEnd = async (sessionId, callId, reservationId) => {
   const mongoSession = await mongoose.startSession();
 
@@ -1691,9 +1686,6 @@ const handleCallAutoEnd = async (sessionId, callId, reservationId) => {
     stopBillingTimer(sessionId);
   }
 };
-
-
-
 
 const setupCallReminders = (sessionId, estimatedMinutes) => {
   clearReminders(sessionId);
