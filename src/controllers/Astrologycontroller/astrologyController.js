@@ -46,16 +46,14 @@ const getAccessToken = async () => {
   }
 };
 
-
-
-export const storeDailyHoroscope = async (apiResponse) => {
-  const { datetime, daily_predictions } = apiResponse.data;
+export const storeDailyHoroscope = async (apiData) => {
+  const { datetime, daily_predictions } = apiData;
 
   if (!datetime || !Array.isArray(daily_predictions)) {
     throw new Error("Invalid API payload");
   }
 
-  const date = new Date(datetime); // 🔥 same for all signs
+  const date = new Date(datetime); // same date for all signs
 
   const bulkOps = daily_predictions.map((item) => ({
     updateOne: {
@@ -84,45 +82,53 @@ export const storeDailyHoroscope = async (apiResponse) => {
           })),
 
           aspects: item.aspects || [],
-
           transits: item.transits || [],
-
           source: "prokerala",
         },
       },
-      upsert: true, // 🔥 prevents duplicates
+      upsert: true, // prevents duplicates
     },
   }));
 
-  // 🚀 Fast + safe bulk insert
   await DailyHoroscopeSign.bulkWrite(bulkOps);
 
   return {
-    inserted: bulkOps.length,
+    upserted: bulkOps.length,
     date,
   };
 };
+
 // ♈ Horoscope
 // 🕒 Updated Date utility for horoscope (removes sandbox restriction)
 const getDateTimeFromTimeQuery = (time = "today") => {
   const date = new Date();
 
+  // Adjust for yesterday if needed
   if (time === "yesterday") {
     date.setDate(date.getDate() - 1);
   }
 
+  // Format to YYYY-MM-DD
   const year = date.getFullYear();
   const month = `${date.getMonth() + 1}`.padStart(2, "0");
   const day = `${date.getDate()}`.padStart(2, "0");
 
-  // IST midnight
+  // ✅ Correct format for Prokerala: Date at midnight in IST
+  // This format is crucial for the API to return predictions[citation:9]
   return `${year}-${month}-${day}T00:00:00+05:30`;
 };
+export const getDailyHoroscope = async ({
+  sign = "all",
+  time = "today",
+} = {}) => {
 
 
-
-export const getAdvancedDailyHoroscope = async (req, res) => {
-  const { time = "today" } = req.query;
+  if (!sign) {
+    return res.status(400).json({
+      status: "error",
+      message: "Missing zodiac sign",
+    });
+  }
 
   let datetime;
   try {
@@ -141,58 +147,39 @@ export const getAdvancedDailyHoroscope = async (req, res) => {
       "https://api.prokerala.com/v2/horoscope/daily/advanced",
       {
         params: {
-          sign: "all",
-          type: "general",
-          datetime: encodeURIComponent(datetime), // 🔥 VERY IMPORTANT
+          datetime, // ISO 8601 encoded
+          sign,
+          type: "general"
         },
         headers: {
           Authorization: `Bearer ${token}`,
         },
-        timeout: 8000,
+
       }
     );
+    const result = await storeDailyHoroscope(response.data.data);
 
 
-    await storeDailyHoroscope(response.data);
-
-    const predictions = response.data?.data?.daily_predictions;
-    if (!predictions || !Array.isArray(predictions)) {
-      throw new Error("Invalid payload from Prokerala");
-    }
 
     return res.json({
       status: "ok",
+      data: {
+        result,
+      },
       meta: {
         source: "prokerala",
-        tier: "advanced",
-        type: "general",
-        signs: "all",
+        tier: "basic",
       },
-      data: predictions.map((item) => ({
-        sign: item.sign.name,
-        element: item.sign_info.triplicity,
-        modality: item.sign_info.quadruplicity,
-        prediction: item.predictions[0]?.prediction || "",
-      })),
     });
 
   } catch (err) {
-    logger.error(
-      "Advanced daily horoscope failed",
-      err.response?.data || err.message
-    );
-
+    logger.error("Daily horoscope failed", err.response?.data || err.message);
     return res.status(err.response?.status || 500).json({
       status: "error",
-      message: "Failed to fetch advanced daily horoscope",
+      message: "Failed to fetch daily horoscope",
     });
   }
 };
-
-
-
-
-
 
 
 
@@ -576,3 +563,23 @@ export const getKundaliCompatibility = async (req, res) => {
 };
 
 
+
+
+
+
+// ⏰ Runs every day at 12:05 AM
+cron.schedule("5 0 * * *", async () => {
+  try {
+    logger.info("🟢 Daily Horoscope Cron Started");
+
+    await getDailyHoroscope({
+      sign: "all",
+      time: "today",
+      type: "general",
+    });
+
+    logger.info("✅ Daily Horoscope Cron Completed");
+  } catch (error) {
+    logger.error("❌ Daily Horoscope Cron Failed", error.message);
+  }
+});

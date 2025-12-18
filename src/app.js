@@ -29,6 +29,7 @@ import review from './routes/review.routes.js'
 import userRoute from "./routes/users/users.routes.js"
 import astro from './routes/astrologyRoutes/astrologyRoutes.js'
 import sendnotification from './routes/notification.routes.js'
+import './cron/dailyHoroscope.cron.js'
 const app = express();
 dotenv.config({
     path: "./.env",
