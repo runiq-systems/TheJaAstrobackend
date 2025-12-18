@@ -1,15 +1,15 @@
 import axios from "axios";
 import NodeGeocoder from "node-geocoder";
 import logger from "../../utils/logger.js";
-
+import DailyHoroscopeSign from "../../models/DailyHoroscopeSign.js";
 // 🌍 Geocoder
 const geocoder = NodeGeocoder({ provider: "openstreetmap" });
 
 // ✅ Convert location name → coordinates
 export const getCoordinates = async (place) => {
-    const res = await geocoder.geocode(place);
-    if (!res.length) throw new Error("Invalid location");
-    return { latitude: res[0].latitude, longitude: res[0].longitude };
+  const res = await geocoder.geocode(place);
+  if (!res.length) throw new Error("Invalid location");
+  return { latitude: res[0].latitude, longitude: res[0].longitude };
 };
 
 // 🔐 Prokerala credentials (replace with .env in production)
@@ -22,57 +22,107 @@ let tokenExpiry = 0;
 
 // 🔐 Generate or reuse token
 const getAccessToken = async () => {
-    const now = Math.floor(Date.now() / 1000);
-    if (accessToken && now < tokenExpiry) return accessToken;
+  const now = Math.floor(Date.now() / 1000);
+  if (accessToken && now < tokenExpiry) return accessToken;
 
-    try {
-        const res = await axios.post(
-            "https://api.prokerala.com/token",
-            new URLSearchParams({
-                grant_type: "client_credentials",
-                client_id: PROKERALA_CLIENT_ID,
-                client_secret: PROKERALA_CLIENT_SECRET,
-            }),
-            { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
-        );
+  try {
+    const res = await axios.post(
+      "https://api.prokerala.com/token",
+      new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: PROKERALA_CLIENT_ID,
+        client_secret: PROKERALA_CLIENT_SECRET,
+      }),
+      { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+    );
 
-        accessToken = res.data.access_token;
-        tokenExpiry = now + res.data.expires_in - 60;
-        logger.info("✅ Prokerala access token generated");
-        return accessToken;
-    } catch (err) {
-        logger.error("❌ Error generating token:", err.response?.data || err.message);
-        throw new Error("Failed to generate Prokerala access token");
-    }
+    accessToken = res.data.access_token;
+    tokenExpiry = now + res.data.expires_in - 60;
+    logger.info("✅ Prokerala access token generated");
+    return accessToken;
+  } catch (err) {
+    logger.error("❌ Error generating token:", err.response?.data || err.message);
+    throw new Error("Failed to generate Prokerala access token");
+  }
+};
+
+
+
+export const storeDailyHoroscope = async (apiResponse) => {
+  const { datetime, daily_predictions } = apiResponse.data;
+
+  if (!datetime || !Array.isArray(daily_predictions)) {
+    throw new Error("Invalid API payload");
+  }
+
+  const date = new Date(datetime); // 🔥 same for all signs
+
+  const bulkOps = daily_predictions.map((item) => ({
+    updateOne: {
+      filter: {
+        date,
+        "sign.name": item.sign.name,
+      },
+      update: {
+        $set: {
+          date,
+
+          sign: {
+            id: item.sign.id,
+            name: item.sign.name,
+            lord: item.sign.lord,
+          },
+
+          sign_info: item.sign_info,
+
+          predictions: item.predictions.map((p) => ({
+            type: p.type,
+            prediction: p.prediction,
+            seek: p.seek,
+            challenge: p.challenge,
+            insight: p.insight,
+          })),
+
+          aspects: item.aspects || [],
+
+          transits: item.transits || [],
+
+          source: "prokerala",
+        },
+      },
+      upsert: true, // 🔥 prevents duplicates
+    },
+  }));
+
+  // 🚀 Fast + safe bulk insert
+  await DailyHoroscopeSign.bulkWrite(bulkOps);
+
+  return {
+    inserted: bulkOps.length,
+    date,
+  };
 };
 // ♈ Horoscope
 // 🕒 Updated Date utility for horoscope (removes sandbox restriction)
 const getDateTimeFromTimeQuery = (time = "today") => {
-    const date = new Date();
-    
-    // Adjust for yesterday if needed
-    if (time === "yesterday") {
-        date.setDate(date.getDate() - 1);
-    }
-    
-    // Format to YYYY-MM-DD
-    const year = date.getFullYear();
-    const month = `${date.getMonth() + 1}`.padStart(2, "0");
-    const day = `${date.getDate()}`.padStart(2, "0");
-    
-    // ✅ Correct format for Prokerala: Date at midnight in IST
-    // This format is crucial for the API to return predictions[citation:9]
-    return `${year}-${month}-${day}T00:00:00+05:30`;
-};
-export const getDailyHoroscope = async (req, res) => {
-  const { sign, time = "today" } = req.query;
+  const date = new Date();
 
-  if (!sign) {
-    return res.status(400).json({
-      status: "error",
-      message: "Missing zodiac sign",
-    });
+  if (time === "yesterday") {
+    date.setDate(date.getDate() - 1);
   }
+
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+
+  // IST midnight
+  return `${year}-${month}-${day}T00:00:00+05:30`;
+};
+
+
+
+export const getAdvancedDailyHoroscope = async (req, res) => {
+  const { time = "today" } = req.query;
 
   let datetime;
   try {
@@ -88,11 +138,12 @@ export const getDailyHoroscope = async (req, res) => {
     const token = await getAccessToken();
 
     const response = await axios.get(
-      "https://api.prokerala.com/v2/horoscope/daily",
+      "https://api.prokerala.com/v2/horoscope/daily/advanced",
       {
         params: {
-          sign,
-          datetime, // ISO 8601 encoded
+          sign: "all",
+          type: "general",
+          datetime: encodeURIComponent(datetime), // 🔥 VERY IMPORTANT
         },
         headers: {
           Authorization: `Bearer ${token}`,
@@ -101,30 +152,48 @@ export const getDailyHoroscope = async (req, res) => {
       }
     );
 
-    const daily = response.data?.data?.daily_prediction;
-    if (!daily) throw new Error("Invalid payload");
+
+    await storeDailyHoroscope(response.data);
+
+    const predictions = response.data?.data?.daily_predictions;
+    if (!predictions || !Array.isArray(predictions)) {
+      throw new Error("Invalid payload from Prokerala");
+    }
 
     return res.json({
       status: "ok",
-      data: {
-        sign: daily.sign_name,
-        date: daily.date,
-        prediction: daily.prediction,
-      },
       meta: {
         source: "prokerala",
-        tier: "basic",
+        tier: "advanced",
+        type: "general",
+        signs: "all",
       },
+      data: predictions.map((item) => ({
+        sign: item.sign.name,
+        element: item.sign_info.triplicity,
+        modality: item.sign_info.quadruplicity,
+        prediction: item.predictions[0]?.prediction || "",
+      })),
     });
 
   } catch (err) {
-    logger.error("Daily horoscope failed", err.response?.data || err.message);
+    logger.error(
+      "Advanced daily horoscope failed",
+      err.response?.data || err.message
+    );
+
     return res.status(err.response?.status || 500).json({
       status: "error",
-      message: "Failed to fetch daily horoscope",
+      message: "Failed to fetch advanced daily horoscope",
     });
   }
 };
+
+
+
+
+
+
 
 
 // 💑 Detailed Kundli Matching (v2 format)
@@ -221,157 +290,157 @@ export const getKundaliMatching = async (req, res) => {
   }
 };
 
- 
+
 // 🧘 Kundali Report
 export const getKundaliReport = async (req, res) => {
-    try {
-        const { name, dob, tob, place } = req.body;
-        if (!dob || !tob || !place)
-            return res.status(400).json({ error: "Missing required fields (dob, tob, place)" });
+  try {
+    const { name, dob, tob, place } = req.body;
+    if (!dob || !tob || !place)
+      return res.status(400).json({ error: "Missing required fields (dob, tob, place)" });
 
-        const parseDate = () => {
-            if (dob.includes("/")) {
-                const [day, month, year] = dob.split("/").map((x) => x.padStart(2, "0"));
-                return `${year}-${month}-${day}`;
-            } else {
-                const d = new Date(dob);
-                return d.toISOString().split("T")[0];
-            }
-        };
+    const parseDate = () => {
+      if (dob.includes("/")) {
+        const [day, month, year] = dob.split("/").map((x) => x.padStart(2, "0"));
+        return `${year}-${month}-${day}`;
+      } else {
+        const d = new Date(dob);
+        return d.toISOString().split("T")[0];
+      }
+    };
 
-        const parseTime = () => {
-            let [h, m] = [0, 0];
-            if (tob.toLowerCase().includes("am") || tob.toLowerCase().includes("pm")) {
-                const isPM = tob.toLowerCase().includes("pm");
-                const clean = tob.toLowerCase().replace("am", "").replace("pm", "").trim();
-                [h, m] = clean.split(":").map(Number);
-                if (isPM && h < 12) h += 12;
-                if (!isPM && h === 12) h = 0;
-            } else {
-                [h, m] = tob.split(":").map(Number);
-            }
-            return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:00`;
-        };
+    const parseTime = () => {
+      let [h, m] = [0, 0];
+      if (tob.toLowerCase().includes("am") || tob.toLowerCase().includes("pm")) {
+        const isPM = tob.toLowerCase().includes("pm");
+        const clean = tob.toLowerCase().replace("am", "").replace("pm", "").trim();
+        [h, m] = clean.split(":").map(Number);
+        if (isPM && h < 12) h += 12;
+        if (!isPM && h === 12) h = 0;
+      } else {
+        [h, m] = tob.split(":").map(Number);
+      }
+      return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:00`;
+    };
 
-        // 🧪 Sandbox fix (use January 1)
-        const sandboxMode = true; // change to false for live
-        const datePart = sandboxMode ? "2000-01-01" : parseDate();
-        const isoDate = `${datePart}T${parseTime()}+05:30`;
+    // 🧪 Sandbox fix (use January 1)
+    const sandboxMode = true; // change to false for live
+    const datePart = sandboxMode ? "2000-01-01" : parseDate();
+    const isoDate = `${datePart}T${parseTime()}+05:30`;
 
-        const { latitude, longitude } = await getCoordinates(place);
-        const coordinates = `${latitude.toFixed(2)},${longitude.toFixed(2)}`;
+    const { latitude, longitude } = await getCoordinates(place);
+    const coordinates = `${latitude.toFixed(2)},${longitude.toFixed(2)}`;
 
-        const token = await getAccessToken();
-        const response = await axios.get(
-            "https://api.prokerala.com/v2/astrology/kundli/advanced",
-            {
-                params: { datetime: isoDate, coordinates, ayanamsa: 1 },
-                headers: { Authorization: `Bearer ${token}` },
-            }
-        );
+    const token = await getAccessToken();
+    const response = await axios.get(
+      "https://api.prokerala.com/v2/astrology/kundli/advanced",
+      {
+        params: { datetime: isoDate, coordinates, ayanamsa: 1 },
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
 
-        res.json(response.data);
-    } catch (error) {
-        logger.error("❌ Kundali Report Error:", error.response?.data || error.message);
-        res.status(500).json({ error: error.response?.data || error.message });
-    }
+    res.json(response.data);
+  } catch (error) {
+    logger.error("❌ Kundali Report Error:", error.response?.data || error.message);
+    res.status(500).json({ error: error.response?.data || error.message });
+  }
 };
 
 
 // 🌟 Birth Details (Nakshatra and Zodiac Details)
 export const getBirthDetails = async (req, res) => {
-    try {
-        const { name, dob, tob, place, ayanamsa = 1, la = 'en' } = req.body;
+  try {
+    const { name, dob, tob, place, ayanamsa = 1, la = 'en' } = req.body;
 
-        // Validate required fields
-        if (!dob || !tob || !place) {
-            return res.status(400).json({ 
-                status: "error", 
-                message: "Missing required fields: dob (date of birth), tob (time of birth), and place are required." 
-            });
-        }
-
-        // 🧪 Optional: Sandbox mode date handling (if needed for testing)
-        const sandboxMode = true; // Set to false for live/production use
-        const parseDate = () => {
-            if (sandboxMode) {
-                // Sandbox restriction — use a fixed date like January 1
-                return "2000-01-01";
-            }
-
-            if (dob.includes("/")) {
-                const [day, month, year] = dob.split("/").map((x) => x.padStart(2, "0"));
-                return `${year}-${month}-${day}`;
-            } else {
-                const d = new Date(dob);
-                return d.toISOString().split("T")[0];
-            }
-        };
-
-        const parseTime = () => {
-            let [h, m] = [0, 0];
-            const tobLower = tob.toLowerCase();
-            if (tobLower.includes("am") || tobLower.includes("pm")) {
-                const isPM = tobLower.includes("pm");
-                const clean = tobLower.replace("am", "").replace("pm", "").trim();
-                [h, m] = clean.split(":").map(Number);
-                if (isPM && h < 12) h += 12;
-                if (!isPM && h === 12) h = 0;
-            } else {
-                [h, m] = tob.split(":").map(Number);
-            }
-            return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:00`;
-        };
-
-        // Combine date and time into ISO 8601 format with IST timezone
-        const datePart = parseDate();
-        const timePart = parseTime();
-        const datetime = `${datePart}T${timePart}+05:30`;
-
-        // 🧭 Convert place to coordinates (reuse your existing function)
-        const { latitude, longitude } = await getCoordinates(place);
-        const coordinates = `${latitude.toFixed(6)},${longitude.toFixed(6)}`;
-
-        // 🪙 Get API Access Token
-        const token = await getAccessToken();
-
-        // 🚀 Call the Prokerala Birth Details API
-        const response = await axios.get(
-            "https://api.prokerala.com/v2/astrology/birth-details",
-            {
-                params: {
-                    datetime,
-                    coordinates,
-                    ayanamsa,
-                    la
-                },
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                },
-            }
-        );
-
-        logger.info("✅ Birth Details fetched successfully");
-        return res.json(response.data);
-
-        //postman Test
-
-        // {
-        //     "name": "Rajesh Kumar",
-        //     "dob": "15/08/1990",
-        //     "tob": "10:30 AM",
-        //     "place": "Delhi, India",
-        //     "ayanamsa": 1,
-        //     "la": "en"
-        // }
-
-    } catch (error) {
-        logger.error("❌ Birth Details API Error:", error.response?.data || error.message);
-        res.status(error.response?.status || 500).json({
-            status: "error",
-            message: error.response?.data || error.message,
-        });
+    // Validate required fields
+    if (!dob || !tob || !place) {
+      return res.status(400).json({
+        status: "error",
+        message: "Missing required fields: dob (date of birth), tob (time of birth), and place are required."
+      });
     }
+
+    // 🧪 Optional: Sandbox mode date handling (if needed for testing)
+    const sandboxMode = true; // Set to false for live/production use
+    const parseDate = () => {
+      if (sandboxMode) {
+        // Sandbox restriction — use a fixed date like January 1
+        return "2000-01-01";
+      }
+
+      if (dob.includes("/")) {
+        const [day, month, year] = dob.split("/").map((x) => x.padStart(2, "0"));
+        return `${year}-${month}-${day}`;
+      } else {
+        const d = new Date(dob);
+        return d.toISOString().split("T")[0];
+      }
+    };
+
+    const parseTime = () => {
+      let [h, m] = [0, 0];
+      const tobLower = tob.toLowerCase();
+      if (tobLower.includes("am") || tobLower.includes("pm")) {
+        const isPM = tobLower.includes("pm");
+        const clean = tobLower.replace("am", "").replace("pm", "").trim();
+        [h, m] = clean.split(":").map(Number);
+        if (isPM && h < 12) h += 12;
+        if (!isPM && h === 12) h = 0;
+      } else {
+        [h, m] = tob.split(":").map(Number);
+      }
+      return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:00`;
+    };
+
+    // Combine date and time into ISO 8601 format with IST timezone
+    const datePart = parseDate();
+    const timePart = parseTime();
+    const datetime = `${datePart}T${timePart}+05:30`;
+
+    // 🧭 Convert place to coordinates (reuse your existing function)
+    const { latitude, longitude } = await getCoordinates(place);
+    const coordinates = `${latitude.toFixed(6)},${longitude.toFixed(6)}`;
+
+    // 🪙 Get API Access Token
+    const token = await getAccessToken();
+
+    // 🚀 Call the Prokerala Birth Details API
+    const response = await axios.get(
+      "https://api.prokerala.com/v2/astrology/birth-details",
+      {
+        params: {
+          datetime,
+          coordinates,
+          ayanamsa,
+          la
+        },
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+
+    logger.info("✅ Birth Details fetched successfully");
+    return res.json(response.data);
+
+    //postman Test
+
+    // {
+    //     "name": "Rajesh Kumar",
+    //     "dob": "15/08/1990",
+    //     "tob": "10:30 AM",
+    //     "place": "Delhi, India",
+    //     "ayanamsa": 1,
+    //     "la": "en"
+    // }
+
+  } catch (error) {
+    logger.error("❌ Birth Details API Error:", error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      status: "error",
+      message: error.response?.data || error.message,
+    });
+  }
 };
 
 function toRFC3339(dob, tob) {
@@ -507,4 +576,3 @@ export const getKundaliCompatibility = async (req, res) => {
 };
 
 
- 
