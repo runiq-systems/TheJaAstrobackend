@@ -563,23 +563,3 @@ export const getKundaliCompatibility = async (req, res) => {
 };
 
 
-
-
-
-
-// ⏰ Runs every day at 12:05 AM
-cron.schedule("5 0 * * *", async () => {
-  try {
-    logger.info("🟢 Daily Horoscope Cron Started");
-
-    await getDailyHoroscope({
-      sign: "all",
-      time: "today",
-      type: "general",
-    });
-
-    logger.info("✅ Daily Horoscope Cron Completed");
-  } catch (error) {
-    logger.error("❌ Daily Horoscope Cron Failed", error.message);
-  }
-});
