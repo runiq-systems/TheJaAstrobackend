@@ -1604,8 +1604,6 @@ const stopBillingTimer = (sessionId) => {
 };
 
 
-
-
 // Utility function to notify astrologer
 const notifyAstrologerAboutRequest = async (req, astrologerId, requestData) => {
     // Socket notification
@@ -1637,7 +1635,7 @@ export async function sendNotification({
     userId,
     title,
     message,
-   
+    type = "chat_message",
     channelId = "chat_channel",
     data = {},
 }) {
