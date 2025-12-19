@@ -4,6 +4,9 @@ import logger from "../../utils/logger.js";
 import DailyHoroscopeSign from "../../models/DailyHoroscopeSign.js";
 import { getDailyHoroscopeBySign } from "../../services/prokerala/horoscopeCache.js";
 import { getISTDayRange } from "../../utils/date.utils.js";
+import { getCachedKundaliReport, storeKundaliReport } from "../../services/prokerala/kundaliReportCache.js";
+import { getAccessToken } from "../../services/prokerala/prokeralaToken.services.js";
+import { getCachedMatching, storeKundaliMatching } from "../../services/prokerala/kundaliMatchingCache.js";
 // 🌍 Geocoder
 const geocoder = NodeGeocoder({ provider: "openstreetmap" });
 
@@ -127,378 +130,150 @@ export const getDailyHoroscope = async (req, res) => {
   }
 };
 
-// export const getKundaliMatching = async (req, res) => {
-//   try {
-//     const {
-//       boy_name,
-//       boy_dob, // e.g. "12/02/2000" or "2000-02-12"
-//       boy_tob, // e.g. "3:15 PM" or "15:15"
-//       boy_place,
-//       girl_name,
-//       girl_dob,
-//       girl_tob,
-//       girl_place,
-//       ayanamsa = 1, // default: Lahiri
-//       la = "en", // default: English
-//     } = req.body;
 
-//     // 🧭 Convert places to coordinates
-//     const boyCoords = await getCoordinates(boy_place);
-//     const girlCoords = await getCoordinates(girl_place);
 
-//     // 🕓 Convert DOB + TOB → ISO datetime
-//     const parseDateTime = (dob, tob, isSandbox) => {
-//       const parseDate = () => {
-//         if (isSandbox) {
-//           // 🧪 Sandbox restriction — use January 1
-//           return "2000-01-01";
-//         }
 
-//         if (dob.includes("/")) {
-//           const [day, month, year] = dob.split("/").map((x) => x.padStart(2, "0"));
-//           return `${year}-${month}-${day}`;
-//         } else {
-//           const d = new Date(dob);
-//           return d.toISOString().split("T")[0];
-//         }
-//       };
+function toRFC3339(dob, tob) {
+  if (!dob || !tob) throw new Error("DOB and TOB required");
 
-//       const parseTime = () => {
-//         let [h, m] = [0, 0];
-//         if (tob.toLowerCase().includes("am") || tob.toLowerCase().includes("pm")) {
-//           const isPM = tob.toLowerCase().includes("pm");
-//           const clean = tob.toLowerCase().replace("am", "").replace("pm", "").trim();
-//           [h, m] = clean.split(":").map(Number);
-//           if (isPM && h < 12) h += 12;
-//           if (!isPM && h === 12) h = 0;
-//         } else {
-//           [h, m] = tob.split(":").map(Number);
-//         }
-//         return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:00`;
-//       };
+  let datePart;
+  if (dob.includes("/")) {
+    const [dd, mm, yyyy] = dob.split("/").map(x => x.padStart(2, "0"));
+    datePart = `${yyyy}-${mm}-${dd}`;
+  } else {
+    const d = new Date(dob);
+    if (isNaN(d)) throw new Error("Invalid DOB format");
+    datePart = d.toISOString().split("T")[0];
+  }
 
-//       return `${parseDate()}T${parseTime()}+05:30`;
-//     };
+  let h = 0, m = 0, s = 0;
+  const t = tob.toLowerCase().trim();
 
-//     // 🧪 Toggle sandboxMode here
-//     const sandboxMode = true; // set false when using live credentials
+  if (t.includes("am") || t.includes("pm")) {
+    const isPM = t.includes("pm");
+    const clean = t.replace(/am|pm/g, "").trim();
+    [h, m, s = 0] = clean.split(":").map(Number);
+    if (isPM && h < 12) h += 12;
+    if (!isPM && h === 12) h = 0;
+  } else {
+    [h, m, s = 0] = t.split(":").map(Number);
+  }
 
-//     const boy_dob_iso = parseDateTime(boy_dob, boy_tob, sandboxMode);
-//     const girl_dob_iso = parseDateTime(girl_dob, girl_tob, sandboxMode);
+  return `${datePart}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}+05:30`;
+}
 
-//     const boy_coordinates = `${boyCoords.latitude.toFixed(6)},${boyCoords.longitude.toFixed(6)}`;
-//     const girl_coordinates = `${girlCoords.latitude.toFixed(6)},${girlCoords.longitude.toFixed(6)}`;
 
-//     // 🪙 Get API Token
-//     const token = await getAccessToken();
+export const getAdvancedKundaliReport = async (req, res) => {
+  try {
+    const userId = req.user?._id;
+    const { name, dob, tob, place, ayanamsa = 1, la = "en" } = req.body;
 
-//     // 🚀 Call the Detailed Kundli Matching endpoint
-//     const response = await axios.get(
-//       "https://api.prokerala.com/v2/astrology/kundli-matching/detailed",
-//       {
-//         params: {
-//           boy_dob: boy_dob_iso,
-//           boy_coordinates,
-//           girl_dob: girl_dob_iso,
-//           girl_coordinates,
-//           ayanamsa,
-//           la,
-//         },
-//         headers: {
-//           Authorization: `Bearer ${token}`,
-//         },
-//       }
-//     );
+    if (!name || !dob || !tob || !place) {
+      return res.status(400).json({ success: false, message: "Missing required fields" });
+    }
 
-//     logger.info("✅ Detailed Kundli Matching Success");
-//     return res.json(response.data);
-//   } catch (error) {
-//     logger.error("❌ Kundali Matching Error:", error.response?.data || error.message);
-//     res.status(500).json({
-//       error: error.response?.data || error.message,
-//     });
-//   }
-// };
+    // 1. Check cache
+    let cached = userId ? await getCachedKundaliReport(userId, dob, tob, place) : null;
+    if (cached) {
+      return res.json({ success: true, source: "db", data: cached.report, saved: true });
+    }
 
-// // 🧘 Kundali Report
-// export const getKundaliReport = async (req, res) => {
-//   try {
-//     const { name, dob, tob, place } = req.body;
-//     if (!dob || !tob || !place)
-//       return res.status(400).json({ error: "Missing required fields (dob, tob, place)" });
+    // 2. Fetch from Prokerala
+    const datetime = toRFC3339(dob, tob);
+    const geo = await getCoordinates(place);
+    if (!geo) return res.status(400).json({ success: false, message: "Invalid place" });
 
-//     const parseDate = () => {
-//       if (dob.includes("/")) {
-//         const [day, month, year] = dob.split("/").map((x) => x.padStart(2, "0"));
-//         return `${year}-${month}-${day}`;
-//       } else {
-//         const d = new Date(dob);
-//         return d.toISOString().split("T")[0];
-//       }
-//     };
+    const token = await getAccessToken();
+    const response = await axios.get("https://api.prokerala.com/v2/astrology/kundli/advanced", {
+      params: { datetime, coordinates: `${geo.latitude},${geo.longitude}`, ayanamsa, la },
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 8000
+    });
 
-//     const parseTime = () => {
-//       let [h, m] = [0, 0];
-//       if (tob.toLowerCase().includes("am") || tob.toLowerCase().includes("pm")) {
-//         const isPM = tob.toLowerCase().includes("pm");
-//         const clean = tob.toLowerCase().replace("am", "").replace("pm", "").trim();
-//         [h, m] = clean.split(":").map(Number);
-//         if (isPM && h < 12) h += 12;
-//         if (!isPM && h === 12) h = 0;
-//       } else {
-//         [h, m] = tob.split(":").map(Number);
-//       }
-//       return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:00`;
-//     };
+    const reportData = response.data.data;
 
-//     // 🧪 Sandbox fix (use January 1)
-//     const sandboxMode = true; // change to false for live
-//     const datePart = sandboxMode ? "2000-01-01" : parseDate();
-//     const isoDate = `${datePart}T${parseTime()}+05:30`;
+    // 3. Store in DB
+    if (userId) {
+      await storeKundaliReport(userId, {
+        name, dob, tob, place, coordinates: geo, ayanamsa, language: la
+      }, reportData);
+    }
 
-//     const { latitude, longitude } = await getCoordinates(place);
-//     const coordinates = `${latitude.toFixed(2)},${longitude.toFixed(2)}`;
+    return res.json({ success: true, source: "api_cached", data: reportData });
+  } catch (err) {
+    console.error("Kundali error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to generate Kundali",
+      details: err.response?.data || err.message
+    });
+  }
+};
 
-//     const token = await getAccessToken();
-//     const response = await axios.get(
-//       "https://api.prokerala.com/v2/astrology/kundli/advanced",
-//       {
-//         params: { datetime: isoDate, coordinates, ayanamsa: 1 },
-//         headers: { Authorization: `Bearer ${token}` },
-//       }
-//     );
+// Kundali Compatibility
+export const getKundaliCompatibility = async (req, res) => {
+  try {
+    const userId = req.user?._id;
+    const {
+      person1, person2, ayanamsa = 1, la = "en"
+    } = req.body;
 
-//     res.json(response.data);
-//   } catch (error) {
-//     logger.error("❌ Kundali Report Error:", error.response?.data || error.message);
-//     res.status(500).json({ error: error.response?.data || error.message });
-//   }
-// };
+    const p1 = person1; const p2 = person2;
 
-// // 🌟 Birth Details (Nakshatra and Zodiac Details)
-// export const getBirthDetails = async (req, res) => {
-//   try {
-//     const { name, dob, tob, place, ayanamsa = 1, la = 'en' } = req.body;
+    // 1. Get or create individual reports
+    const report1 = await getOrCreateKundali(userId, p1, ayanamsa, la);
+    const report2 = await getOrCreateKundali(userId, p2, ayanamsa, la);
 
-//     // Validate required fields
-//     if (!dob || !tob || !place) {
-//       return res.status(400).json({
-//         status: "error",
-//         message: "Missing required fields: dob (date of birth), tob (time of birth), and place are required."
-//       });
-//     }
+    // 2. Check cached matching
+    let cachedMatching = userId ? await getCachedMatching(userId, report1._id, report2._id) : null;
+    if (cachedMatching) {
+      return res.json({ success: true, source: "db", data: cachedMatching.matchingReport });
+    }
 
-//     // 🧪 Optional: Sandbox mode date handling (if needed for testing)
-//     const sandboxMode = true; // Set to false for live/production use
-//     const parseDate = () => {
-//       if (sandboxMode) {
-//         // Sandbox restriction — use a fixed date like January 1
-//         return "2000-01-01";
-//       }
+    // 3. Call Prokerala matching API
+    const token = await getAccessToken();
+    const response = await axios.get("https://api.prokerala.com/v2/astrology/kundli-matching", {
+      params: {
+        girl_dob: toRFC3339(p1.dob, p1.tob),
+        girl_coordinates: `${p1.coordinates.lat},${p1.coordinates.lon}`,
+        boy_dob: toRFC3339(p2.dob, p2.tob),
+        boy_coordinates: `${p2.coordinates.lat},${p2.coordinates.lon}`,
+        ayanamsa, la
+      },
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 8000
+    });
 
-//       if (dob.includes("/")) {
-//         const [day, month, year] = dob.split("/").map((x) => x.padStart(2, "0"));
-//         return `${year}-${month}-${day}`;
-//       } else {
-//         const d = new Date(dob);
-//         return d.toISOString().split("T")[0];
-//       }
-//     };
+    const matchingData = response.data.data;
 
-//     const parseTime = () => {
-//       let [h, m] = [0, 0];
-//       const tobLower = tob.toLowerCase();
-//       if (tobLower.includes("am") || tobLower.includes("pm")) {
-//         const isPM = tobLower.includes("pm");
-//         const clean = tobLower.replace("am", "").replace("pm", "").trim();
-//         [h, m] = clean.split(":").map(Number);
-//         if (isPM && h < 12) h += 12;
-//         if (!isPM && h === 12) h = 0;
-//       } else {
-//         [h, m] = tob.split(":").map(Number);
-//       }
-//       return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:00`;
-//     };
+    // 4. Store matching result
+    if (userId) {
+      await storeKundaliMatching(userId, {
+        name: p1.name, dob: p1.dob, tob: p1.tob, place: p1.place, reportId: report1._id
+      }, {
+        name: p2.name, dob: p2.dob, tob: p2.tob, place: p2.place, reportId: report2._id
+      }, matchingData);
+    }
 
-//     // Combine date and time into ISO 8601 format with IST timezone
-//     const datePart = parseDate();
-//     const timePart = parseTime();
-//     const datetime = `${datePart}T${timePart}+05:30`;
+    return res.json({ success: true, source: "api_cached", data: matchingData });
+  } catch (err) {
+    console.error("Matching error:", err);
+    return res.status(500).json({ success: false, message: "Matching failed" });
+  }
+};
 
-//     // 🧭 Convert place to coordinates (reuse your existing function)
-//     const { latitude, longitude } = await getCoordinates(place);
-//     const coordinates = `${latitude.toFixed(6)},${longitude.toFixed(6)}`;
+// Helper
+const getOrCreateKundali = async (userId, person, ayanamsa, la) => {
+  const cached = userId ? await getCachedKundaliReport(userId, person.dob, person.tob, person.place) : null;
+  if (cached) return cached;
 
-//     // 🪙 Get API Access Token
-//     const token = await getAccessToken();
+  const geo = await getCoordinates(person.place);
+  const datetime = toRFC3339(person.dob, person.tob);
+  const token = await getAccessToken();
+  const res = await axios.get("https://api.prokerala.com/v2/astrology/kundli/advanced", {
+    params: { datetime, coordinates: `${geo.latitude},${geo.longitude}`, ayanamsa, la },
+    headers: { Authorization: `Bearer ${token}` }
+  });
 
-//     // 🚀 Call the Prokerala Birth Details API
-//     const response = await axios.get(
-//       "https://api.prokerala.com/v2/astrology/birth-details",
-//       {
-//         params: {
-//           datetime,
-//           coordinates,
-//           ayanamsa,
-//           la
-//         },
-//         headers: {
-//           Authorization: `Bearer ${token}`,
-//         },
-//       }
-//     );
-
-//     logger.info("✅ Birth Details fetched successfully");
-//     return res.json(response.data);
-
-//     //postman Test
-
-//     // {
-//     //     "name": "Rajesh Kumar",
-//     //     "dob": "15/08/1990",
-//     //     "tob": "10:30 AM",
-//     //     "place": "Delhi, India",
-//     //     "ayanamsa": 1,
-//     //     "la": "en"
-//     // }
-
-//   } catch (error) {
-//     logger.error("❌ Birth Details API Error:", error.response?.data || error.message);
-//     res.status(error.response?.status || 500).json({
-//       status: "error",
-//       message: error.response?.data || error.message,
-//     });
-//   }
-// };
-
-// function toRFC3339(dob, tob) {
-//   if (!dob || !tob) throw new Error("DOB and TOB required");
-
-//   let datePart;
-//   if (dob.includes("/")) {
-//     const [dd, mm, yyyy] = dob.split("/").map(x => x.padStart(2, "0"));
-//     datePart = `${yyyy}-${mm}-${dd}`;
-//   } else {
-//     const d = new Date(dob);
-//     if (isNaN(d)) throw new Error("Invalid DOB format");
-//     datePart = d.toISOString().split("T")[0];
-//   }
-
-//   let h = 0, m = 0, s = 0;
-//   const t = tob.toLowerCase().trim();
-
-//   if (t.includes("am") || t.includes("pm")) {
-//     const isPM = t.includes("pm");
-//     const clean = t.replace(/am|pm/g, "").trim();
-//     [h, m, s = 0] = clean.split(":").map(Number);
-//     if (isPM && h < 12) h += 12;
-//     if (!isPM && h === 12) h = 0;
-//   } else {
-//     [h, m, s = 0] = t.split(":").map(Number);
-//   }
-
-//   return `${datePart}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}+05:30`;
-// }
-
-// // 🌟 Advanced Kundali Report (Filtered - Nakshatra & Mangal Dosha Only)
-// export const getAdvancedKundaliReport = async (req, res) => {
-//   try {
-//     const { dob, tob, place, ayanamsa = 1, la = "en", year_length = 1 } = req.body;
-
-//     if (!dob || !tob || !place) {
-//       return res.status(400).json({ status: "error", message: "Missing required fields" });
-//     }
-
-//     const datetime = toRFC3339(dob, tob);
-//     const geo = await getCoordinates(place);
-
-//     if (!geo) {
-//       return res.status(400).json({ status: "error", message: "Invalid place" });
-//     }
-
-//     const token = await getAccessToken();
-
-//     const response = await axios.get(
-//       "https://api.prokerala.com/v2/astrology/kundli/advanced",
-//       {
-//         params: {
-//           datetime,
-//           coordinates: `${geo.latitude},${geo.longitude}`,
-//           ayanamsa,
-//           la,
-//           year_length
-//         },
-//         headers: { Authorization: `Bearer ${token}` },
-//         timeout: 8000
-//       }
-//     );
-
-//     return res.json({
-//       status: "ok",
-//       data: response.data.data
-//     });
-
-//   } catch (err) {
-//     return res.status(err.response?.status || 500).json({
-//       status: "error",
-//       message: "Advanced kundali failed",
-//       details: err.response?.data || err.message
-//     });
-//   }
-// };
-
-// // 🌟 Kundali Compatibility Report (Two People)
-// export const getKundaliCompatibility = async (req, res) => {
-//   try {
-//     const {
-//       name1, dob1, tob1, place1,
-//       name2, dob2, tob2, place2,
-//       ayanamsa = 1,
-//       la = "en"
-//     } = req.body;
-
-//     if (![dob1, tob1, place1, dob2, tob2, place2].every(Boolean)) {
-//       return res.status(400).json({ status: "error", message: "Missing required fields" });
-//     }
-
-//     const girlDOB = toRFC3339(dob1, tob1);
-//     const boyDOB = toRFC3339(dob2, tob2);
-
-//     const girlGeo = await getCoordinates(place1);
-//     const boyGeo = await getCoordinates(place2);
-
-//     if (!girlGeo || !boyGeo) {
-//       return res.status(400).json({ status: "error", message: "Invalid place coordinates" });
-//     }
-
-//     const token = await getAccessToken();
-
-//     const response = await axios.get(
-//       "https://api.prokerala.com/v2/astrology/kundli-matching",
-//       {
-//         params: {
-//           girl_dob: girlDOB,
-//           girl_coordinates: `${girlGeo.latitude},${girlGeo.longitude}`,
-//           boy_dob: boyDOB,
-//           boy_coordinates: `${boyGeo.latitude},${boyGeo.longitude}`,
-//           ayanamsa,
-//           la
-//         },
-//         headers: { Authorization: `Bearer ${token}` },
-//         timeout: 8000
-//       }
-//     );
-
-//     return res.json({
-//       status: "ok",
-//       data: response.data.data
-//     });
-
-//   } catch (err) {
-//     return res.status(err.response?.status || 500).json({
-//       status: "error",
-//       message: "Kundali compatibility failed",
-//       details: err.response?.data || err.message
-//     });
-//   }
-// };
+  return await storeKundaliReport(userId, { ...person, coordinates: geo, ayanamsa, language: la }, res.data.data);
+};
