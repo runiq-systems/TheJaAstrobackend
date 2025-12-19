@@ -163,7 +163,7 @@ function toRFC3339(dob, tob) {
 
 export const getAdvancedKundaliReport = async (req, res) => {
   try {
-    const userId = req.user._id || req.user.id;
+    const userId = req.user.id;
     const { name, dob, tob, place, ayanamsa = 1, language = "en" } = req.body;
 
     if (!name || !dob || !tob || !place) {
@@ -216,7 +216,7 @@ export const getAdvancedKundaliReport = async (req, res) => {
 // Kundali Compatibility
 export const getKundaliCompatibility = async (req, res) => {
   try {
-    const userId = req.user._id || req.user.id;
+    const userId = req.user.id;
     const {
       person1, person2, ayanamsa = 1, la = "en"
     } = req.body;
