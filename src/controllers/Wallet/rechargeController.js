@@ -428,6 +428,8 @@ export const processRechargeCallback = async (req, res) => {
         await Transaction.create({
             txId: generateTxId("RCH"),
             userId: recharge.userId,
+            entityType: "USER",
+            entityId: recharge.userId,
             type: "CREDIT",
             category: "RECHARGE",
             amount: recharge.finalAmount,
