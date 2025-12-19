@@ -5,12 +5,12 @@ import { getDailyHoroscope } from "../../controllers/Astrologycontroller/astrolo
 
 const router = express.Router();
 
-router.use(astrologyRateLimiter)
+// router.use(astrologyRateLimiter)
 // router.get("/daily-horoscope", getDailyHoroscope);
 // router.post("/birth-details", getBirthDetails);
 // router.post("/kundali-matching", getKundaliCompatibility);
 // router.post("/kundali-report", getKundaliReport);
 
 // router.post("/kundali-advanced", getAdvancedKundaliReport);  // NEW
-router.get("/daily", getDailyHoroscope)
+router.get("/daily-horoscope", getDailyHoroscope)
 export default router;

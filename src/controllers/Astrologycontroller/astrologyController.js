@@ -3,7 +3,7 @@ import NodeGeocoder from "node-geocoder";
 import logger from "../../utils/logger.js";
 import DailyHoroscopeSign from "../../models/DailyHoroscopeSign.js";
 import { getDailyHoroscopeBySign } from "../../services/prokerala/horoscopeCache.js";
-import { getStartOfISTDay } from "../../utils/date.utils.js";
+import { getISTDayRange } from "../../utils/date.utils.js";
 // 🌍 Geocoder
 const geocoder = NodeGeocoder({ provider: "openstreetmap" });
 
@@ -51,22 +51,21 @@ export const getCoordinates = async (place) => {
 export const storeDailyHoroscope = async (apiData) => {
   const { datetime, daily_predictions } = apiData;
 
-
   if (!datetime || !Array.isArray(daily_predictions)) {
     throw new Error("Invalid API payload");
   }
 
-  const date = getStartOfISTDay()
+  const { dayUTC } = getISTDayRange();
 
   const bulkOps = daily_predictions.map((item) => ({
     updateOne: {
       filter: {
-        date,
-        "sign.name": item.sign.name,
+        date: dayUTC,
+        "sign.name": item.sign.name.toLowerCase(),
       },
       update: {
         $set: {
-          date,
+          date: dayUTC,  // Single Date value
 
           sign: {
             id: item.sign.id,
@@ -89,18 +88,17 @@ export const storeDailyHoroscope = async (apiData) => {
           source: "prokerala",
         },
       },
-      upsert: true, // prevents duplicates
+      upsert: true,
     },
   }));
 
-  await DailyHoroscopeSign.bulkWrite(bulkOps);
+  const result = await DailyHoroscopeSign.bulkWrite(bulkOps);
 
   return {
-    upserted: bulkOps.length,
-    date,
+    upsertedCount: result.upsertedCount,
+    modifiedCount: result.modifiedCount,
   };
 };
-
 
 export const getDailyHoroscope = async (req, res) => {
   try {
@@ -113,7 +111,7 @@ export const getDailyHoroscope = async (req, res) => {
       });
     }
 
-    const result = await getDailyHoroscopeBySign(sign.toLowerCase());
+    const result = await getDailyHoroscopeBySign(sign);
 
     return res.json({
       success: true,
