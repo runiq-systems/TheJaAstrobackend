@@ -24,7 +24,7 @@ const PredictionSchema = new Schema(
     {
         type: {
             type: String,
-            enum: ["General", "Health", "Career", "Love"],
+            enum: ["General"],
             required: true,
         },
         prediction: String,
