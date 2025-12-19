@@ -7,49 +7,19 @@ import { getISTDayRange } from "../../utils/date.utils.js";
 import { getCachedKundaliReport, storeKundaliReport } from "../../services/prokerala/kundaliReportCache.js";
 import { getAccessToken } from "../../services/prokerala/prokeralaToken.services.js";
 import { getCachedMatching, storeKundaliMatching } from "../../services/prokerala/kundaliMatchingCache.js";
+
+
 // 🌍 Geocoder
 const geocoder = NodeGeocoder({ provider: "openstreetmap" });
 
 // ✅ Convert location name → coordinates
 export const getCoordinates = async (place) => {
   const res = await geocoder.geocode(place);
+  console.log(res);
   if (!res.length) throw new Error("Invalid location");
   return { latitude: res[0].latitude, longitude: res[0].longitude };
 };
 
-// // 🔐 Prokerala credentials (replace with .env in production)
-// const PROKERALA_CLIENT_ID = process.env.PROKERALA_CLIENT_ID
-// const PROKERALA_CLIENT_SECRET = process.env.PROKERALA_CLIENT_SECRET
-
-// // 🔁 Token cache
-// let accessToken = null;
-// let tokenExpiry = 0;
-
-// // 🔐 Generate or reuse token
-// const getAccessToken = async () => {
-//   const now = Math.floor(Date.now() / 1000);
-//   if (accessToken && now < tokenExpiry) return accessToken;
-
-//   try {
-//     const res = await axios.post(
-//       "https://api.prokerala.com/token",
-//       new URLSearchParams({
-//         grant_type: "client_credentials",
-//         client_id: PROKERALA_CLIENT_ID,
-//         client_secret: PROKERALA_CLIENT_SECRET,
-//       }),
-//       { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
-//     );
-
-//     accessToken = res.data.access_token;
-//     tokenExpiry = now + res.data.expires_in - 60;
-//     logger.info("✅ Prokerala access token generated");
-//     return accessToken;
-//   } catch (err) {
-//     logger.error("❌ Error generating token:", err.response?.data || err.message);
-//     throw new Error("Failed to generate Prokerala access token");
-//   }
-// };
 
 export const storeDailyHoroscope = async (apiData) => {
   const { datetime, daily_predictions } = apiData;
@@ -134,39 +104,67 @@ export const getDailyHoroscope = async (req, res) => {
 
 
 function toRFC3339(dob, tob) {
-  if (!dob || !tob) throw new Error("DOB and TOB required");
-
-  let datePart;
-  if (dob.includes("/")) {
-    const [dd, mm, yyyy] = dob.split("/").map(x => x.padStart(2, "0"));
-    datePart = `${yyyy}-${mm}-${dd}`;
-  } else {
-    const d = new Date(dob);
-    if (isNaN(d)) throw new Error("Invalid DOB format");
-    datePart = d.toISOString().split("T")[0];
+  if (!dob || !tob) {
+    throw new Error("DOB and TOB required");
   }
 
-  let h = 0, m = 0, s = 0;
-  const t = tob.toLowerCase().trim();
+  let yyyy, mm, dd;
+
+  // ✅ Handle DD/MM/YYYY
+  if (typeof dob === "string" && dob.includes("/")) {
+    const parts = dob.split("/");
+    if (parts.length !== 3) throw new Error("Invalid DOB format");
+    [dd, mm, yyyy] = parts;
+  }
+  // ✅ Handle YYYY-MM-DD
+  else if (typeof dob === "string" && dob.includes("-")) {
+    const parts = dob.split("-");
+    if (parts.length !== 3) throw new Error("Invalid DOB format");
+    [yyyy, mm, dd] = parts;
+  }
+  // ❌ Anything else
+  else {
+    throw new Error("DOB must be string in DD/MM/YYYY or YYYY-MM-DD");
+  }
+
+  // Normalize date
+  yyyy = String(yyyy);
+  mm = String(mm).padStart(2, "0");
+  dd = String(dd).padStart(2, "0");
+
+  // ---- Time ----
+  let h = 0, m = 0;
+  const t = String(tob).toLowerCase().trim();
 
   if (t.includes("am") || t.includes("pm")) {
     const isPM = t.includes("pm");
-    const clean = t.replace(/am|pm/g, "").trim();
-    [h, m, s = 0] = clean.split(":").map(Number);
+    const clean = t.replace(/am|pm/gi, "").trim();
+    const timeParts = clean.split(":");
+    h = Number(timeParts[0] ?? 0);
+    m = Number(timeParts[1] ?? 0);
+
     if (isPM && h < 12) h += 12;
     if (!isPM && h === 12) h = 0;
   } else {
-    [h, m, s = 0] = t.split(":").map(Number);
+    const timeParts = t.split(":");
+    h = Number(timeParts[0] ?? 0);
+    m = Number(timeParts[1] ?? 0);
   }
 
-  return `${datePart}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}+05:30`;
+  h = String(h).padStart(2, "0");
+  m = String(m).padStart(2, "0");
+
+  // ✅ REQUIRED by Prokerala
+  return `${yyyy}-${mm}-${dd}T${h}:${m}:00+05:30`;
 }
+
+
 
 
 export const getAdvancedKundaliReport = async (req, res) => {
   try {
-    const userId = req.user?._id;
-    const { name, dob, tob, place, ayanamsa = 1, la = "en" } = req.body;
+    const userId = req.user._id || req.user.id;
+    const { name, dob, tob, place, ayanamsa = 1, language = "en" } = req.body;
 
     if (!name || !dob || !tob || !place) {
       return res.status(400).json({ success: false, message: "Missing required fields" });
@@ -185,7 +183,12 @@ export const getAdvancedKundaliReport = async (req, res) => {
 
     const token = await getAccessToken();
     const response = await axios.get("https://api.prokerala.com/v2/astrology/kundli/advanced", {
-      params: { datetime, coordinates: `${geo.latitude},${geo.longitude}`, ayanamsa, la },
+      params: {
+        datetime,
+        coordinates: `${geo.latitude},${geo.longitude}`,
+        ayanamsa,
+        language: "en"
+      },
       headers: { Authorization: `Bearer ${token}` },
       timeout: 8000
     });
@@ -213,7 +216,7 @@ export const getAdvancedKundaliReport = async (req, res) => {
 // Kundali Compatibility
 export const getKundaliCompatibility = async (req, res) => {
   try {
-    const userId = req.user?._id;
+    const userId = req.user._id || req.user.id;
     const {
       person1, person2, ayanamsa = 1, la = "en"
     } = req.body;
