@@ -3,10 +3,6 @@ import mongoose from "mongoose";
 import { Transaction, Reservation, Payout } from "../../models/Wallet/AstroWallet.js";
 import { ChatSession } from "../../models/chatapp/chatSession.js";
 import { CallSession } from "../../models/calllogs/callSession.js";
-import mongoose from "mongoose";
-import { Transaction, Reservation, Payout } from "../../models/Wallet/AstroWallet.js";
-import { ChatSession } from "../../models/chatapp/chatSession.js";
-import { CallSession } from "../../models/calllogs/callSession.js";
 
 /**
  * @desc    Get total lifetime earnings for an astrologer
