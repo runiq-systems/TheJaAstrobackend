@@ -71,33 +71,36 @@ export const getTopAstrologers = async (req, res) => {
 
 export const toggleOnlineStatus = async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user.id; // ✅ from auth middleware
 
-        if (!userId) {
-            return res.status(400).json({
-                ok: false,
-                message: "User ID is required"
-            });
-        }
-
-        // Fetch current user
         const user = await User.findById(userId);
 
         if (!user) {
             return res.status(404).json({
                 ok: false,
-                message: "User not found"
+                message: "User not found",
             });
         }
 
-        // Toggle logic
-        const newStatus = !user.isOnline; // TRUE → FALSE, FALSE → TRUE
+        let newStatus;
+        let newIsOnline;
+
+        if (user.status === "Busy") {
+            newStatus = "Online";
+            newIsOnline = true;
+        } else if (user.isOnline) {
+            newStatus = "offline";
+            newIsOnline = false;
+        } else {
+            newStatus = "Online";
+            newIsOnline = true;
+        }
 
         const updatedUser = await User.findByIdAndUpdate(
             userId,
             {
-                isOnline: newStatus,
-                status: newStatus ? "Online" : "offline",
+                status: newStatus,
+                isOnline: newIsOnline,
                 lastSeen: new Date(),
             },
             { new: true }
@@ -105,18 +108,18 @@ export const toggleOnlineStatus = async (req, res) => {
 
         return res.status(200).json({
             ok: true,
-            message: newStatus ? "User is Online" : "User is Offline",
-            user: updatedUser
+            message: `Status updated to ${newStatus}`,
+            data: updatedUser,
         });
-
     } catch (error) {
         console.error("Toggle online/offline error:", error);
         return res.status(500).json({
             ok: false,
-            message: "Server Error"
+            message: "Server Error",
         });
     }
 };
+
 
 
 
