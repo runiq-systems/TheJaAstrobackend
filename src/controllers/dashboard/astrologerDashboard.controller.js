@@ -4,7 +4,8 @@ import { ChatSession } from "../../models/chatapp/chatSession.js";
 import { CallRequest } from "../../models/calllogs/callRequest.js";
 import { ChatRequest } from "../../models/chatapp/chatRequest.js";
 import { Transaction } from "../../models/Wallet/AstroWallet.js";
-import { Payout } from "../../models/Wallet/AstroWallet.js";
+import { Payout, Wallet } from "../../models/Wallet/AstroWallet.js";
+import { Review } from "../../models/review.model.js";
 
 const { ObjectId } = mongoose.Types;
 
@@ -28,8 +29,91 @@ export const getAstrologerDashboard = async (req, res) => {
         if (!astrologerId) return res.status(401).json({ message: "Unauthorized" });
 
         const { todayStart, todayEnd } = getISTRange();
+        const astrologerIdObj = new ObjectId(astrologerId);
 
-        // Single aggregation pipeline for maximum performance
+        // Define helper async functions
+        const getRepeatClientsCount = async () => {
+            const [callGroups, chatGroups] = await Promise.all([
+                CallSession.aggregate([
+                    { $match: { astrologerId: astrologerIdObj, status: "COMPLETED" } },
+                    { $group: { _id: "$userId", count: { $sum: 1 } } }
+                ]),
+                ChatSession.aggregate([
+                    { $match: { astrologerId: astrologerIdObj, status: "COMPLETED" } },
+                    { $group: { _id: "$userId", count: { $sum: 1 } } }
+                ])
+            ]);
+
+            const userCountMap = new Map();
+            [...callGroups, ...chatGroups].forEach(group => {
+                const userStr = group._id.toString();
+                userCountMap.set(userStr, (userCountMap.get(userStr) || 0) + group.count);
+            });
+
+            return [...userCountMap.values()].filter(count => count > 1).length;
+        };
+
+        const getOngoingSession = async () => {
+            const ongoingCall = await CallSession.findOne({
+                astrologerId: astrologerIdObj,
+                status: { $in: ["CONNECTED", "ACTIVE"] }
+            })
+                .populate("userId", "fullName avatar zodiacSign")
+                .select("callType connectedAt")
+                .lean();
+
+            const ongoingChat = await ChatSession.findOne({
+                astrologerId: astrologerIdObj,
+                status: "ACTIVE"
+            })
+                .populate("userId", "fullName avatar zodiacSign")
+                .select("startedAt")
+                .lean();
+
+            return ongoingCall || ongoingChat || null;
+        };
+
+        const getRecentSession = async () => {
+            const recentCall = await CallSession.findOne({
+                astrologerId: astrologerIdObj,
+                status: "COMPLETED"
+            })
+                .sort({ endedAt: -1 })
+                .populate("userId", "fullName avatar zodiacSign")
+                .select("totalDuration endedAt")
+                .lean();
+
+            const recentChat = await ChatSession.findOne({
+                astrologerId: astrologerIdObj,
+                status: "COMPLETED"
+            })
+                .sort({ endedAt: -1 })
+                .populate("userId", "fullName avatar zodiacSign")
+                .select("activeDuration endedAt")
+                .lean();
+
+            if (recentCall && recentChat) {
+                return recentCall.endedAt > recentChat.endedAt ? recentCall : recentChat;
+            }
+            return recentCall || recentChat || null;
+        };
+
+        const getTotalConsultationTime = async () => {
+            const [totalCallMinutes, totalChatMinutes] = await Promise.all([
+                CallSession.aggregate([
+                    { $match: { astrologerId: astrologerIdObj, status: "COMPLETED" } },
+                    { $group: { _id: null, total: { $sum: "$billedDuration" } } }
+                ]),
+                ChatSession.aggregate([
+                    { $match: { astrologerId: astrologerIdObj, status: "COMPLETED" } },
+                    { $group: { _id: null, total: { $sum: "$billedDuration" } } }
+                ])
+            ]);
+            const totalSeconds = (totalCallMinutes[0]?.total || 0) + (totalChatMinutes[0]?.total || 0);
+            return Math.floor(totalSeconds / 60);
+        };
+
+        // Fetch all data concurrently
         const [
             earnings,
             todayStats,
@@ -38,13 +122,14 @@ export const getAstrologerDashboard = async (req, res) => {
             pendingPayouts,
             incomingRequests,
             ongoingSession,
-            recentSession
+            recentSession,
+            totalConsultationTimeMinutes
         ] = await Promise.all([
             // 1. Total Earnings (All Time)
             Transaction.aggregate([
                 {
                     $match: {
-                        entityId: new ObjectId(astrologerId),
+                        entityId: astrologerIdObj,
                         entityType: "ASTROLOGER",
                         category: "EARNINGS",
                         status: "SUCCESS"
@@ -57,7 +142,7 @@ export const getAstrologerDashboard = async (req, res) => {
             Transaction.aggregate([
                 {
                     $match: {
-                        entityId: new ObjectId(astrologerId),
+                        entityId: astrologerIdObj,
                         entityType: "ASTROLOGER",
                         category: "EARNINGS",
                         status: "SUCCESS",
@@ -73,64 +158,26 @@ export const getAstrologerDashboard = async (req, res) => {
                 }
             ]),
 
-            // 3. Average Rating (Most Accurate)
-            Promise.all([
-                CallSession.aggregate([
-                    {
-                        $match: {
-                            astrologerId: new ObjectId(astrologerId),
-                            status: "COMPLETED",
-                            "userRating.stars": { $gte: 1, $lte: 5 }
-                        }
-                    },
-                    {
-                        $group: {
-                            _id: null,
-                            totalStars: { $sum: "$userRating.stars" },
-                            totalReviews: { $sum: 1 }
-                        }
+            // 3. Average Rating from Reviews
+            Review.aggregate([
+                { $match: { astrologerId: astrologerIdObj } },
+                {
+                    $group: {
+                        _id: null,
+                        totalStars: { $sum: "$stars" },
+                        totalReviews: { $sum: 1 }
                     }
-                ]),
-                ChatSession.aggregate([
-                    {
-                        $match: {
-                            astrologerId: new ObjectId(astrologerId),
-                            status: "COMPLETED",
-                            "userRating.stars": { $gte: 1, $lte: 5 }
-                        }
-                    },
-                    {
-                        $group: {
-                            _id: null,
-                            totalStars: { $sum: "$userRating.stars" },
-                            totalReviews: { $sum: 1 }
-                        }
-                    }
-                ])
+                }
             ]),
 
-            // 4. Repeat Clients (Users who consulted >1 time)
-            Promise.all([
-                CallSession.aggregate([
-                    { $match: { astrologerId: new ObjectId(astrologerId), status: "COMPLETED" } },
-                    { $group: { _id: "$userId" } },
-                    { $group: { _id: null, users: { $push: "$_id" } } }
-                ]),
-                ChatSession.aggregate([
-                    { $match: { astrologerId: new ObjectId(astrologerId), status: "COMPLETED" } },
-                    { $group: { _id: "$userId" } },
-                    { $group: { _id: null, users: { $push: "$_id" } } }
-                ])
-            ]).then(([call, chat]) => {
-                const allUsers = new Set([...(call[0]?.users || []), ...(chat[0]?.users || [])]);
-                return allUsers.size;
-            }),
+            // 4. Repeat Clients Count
+            getRepeatClientsCount(),
 
             // 5. Pending Withdrawals
             Payout.aggregate([
                 {
                     $match: {
-                        astrologerId: new ObjectId(astrologerId),
+                        astrologerId: astrologerIdObj,
                         status: { $in: ["REQUESTED", "APPROVED", "PROCESSING"] }
                     }
                 },
@@ -140,77 +187,31 @@ export const getAstrologerDashboard = async (req, res) => {
             // 6. Incoming Requests
             Promise.all([
                 CallRequest.countDocuments({
-                    astrologerId: new ObjectId(astrologerId),
+                    astrologerId: astrologerIdObj,
                     status: "PENDING",
                     expiresAt: { $gt: new Date() }
                 }),
                 ChatRequest.countDocuments({
-                    astrologerId: new ObjectId(astrologerId),
+                    astrologerId: astrologerIdObj,
                     status: "PENDING",
                     expiresAt: { $gt: new Date() }
                 })
             ]),
 
-            // 7. Ongoing Consultation (Call or Chat)
-            CallSession.find({
-                astrologerId: new ObjectId(astrologerId),
-                status: { $in: ["CONNECTED", "ACTIVE"] } // VALID BASED ON YOUR SCHEMA
-            })
-                .populate("userId", "fullName phone gender")
-                .select("userId callType connectedAt")
-                .lean()
-                .then(session =>
-                    session ||
-                    ChatSession.findOne({
-                        astrologerId: new ObjectId(astrologerId),
-                        status: "ACTIVE"
-                    })
-                        .populate("userId", "fullName phone gender")
-                        .select("userId startedAt")
-                        .lean()
-                ),
+            // 7. Ongoing Consultation
+            getOngoingSession(),
 
             // 8. Recent Completed Session
-            CallSession.find({
-                astrologerId: new ObjectId(astrologerId),
-                status: "COMPLETED"
-            })
-                .sort({ endedAt: -1 })
-                .populate("userId", "fullName phone gender")
-                .select("userId totalDuration endedAt")
-                .lean()
-                .then(session =>
-                    session ||
-                    ChatSession.findOne({
-                        astrologerId: new ObjectId(astrologerId),
-                        status: "COMPLETED"
-                    })
-                        .sort({ endedAt: -1 })
-                        .populate("userId", "fullName phone gender")
-                        .select("userId activeDuration endedAt")
-                        .lean()
-                ),
+            getRecentSession(),
+
+            // 9. Total Consultation Time
+            getTotalConsultationTime()
         ]);
 
         // Calculate Rating
-        const callRating = ratingResult[0][0] || { totalStars: 0, totalReviews: 0 };
-        const chatRating = ratingResult[1][0] || { totalStars: 0, totalReviews: 0 };
-        const totalReviews = callRating.totalReviews + chatRating.totalReviews;
-        const totalStars = callRating.totalStars + chatRating.totalStars;
-        const averageRating = totalReviews > 0 ? Number((totalStars / totalReviews).toFixed(1)) : 0;
-
-        // Total Consultation Time (All Time) in minutes
-        const totalCallMinutes = await CallSession.aggregate([
-            { $match: { astrologerId: new ObjectId(astrologerId), status: "COMPLETED" } },
-            { $group: { _id: null, total: { $sum: "$billedDuration" } } }
-        ]);
-        const totalChatMinutes = await ChatSession.aggregate([
-            { $match: { astrologerId: new ObjectId(astrologerId), status: "COMPLETED" } },
-            { $group: { _id: null, total: { $sum: "$billedDuration" } } }
-        ]);
-        const totalMinutes = Math.floor(
-            ((totalCallMinutes[0]?.total || 0) + (totalChatMinutes[0]?.total || 0)) / 60
-        );
+        const rating = ratingResult[0] || { totalStars: 0, totalReviews: 0 };
+        const totalReviews = rating.totalReviews;
+        const averageRating = totalReviews > 0 ? Number((rating.totalStars / totalReviews).toFixed(1)) : 0;
 
         res.status(200).json({
             success: true,
@@ -218,7 +219,7 @@ export const getAstrologerDashboard = async (req, res) => {
                 totalEarnings: Math.round(earnings[0]?.total || 0),
                 todayEarnings: Math.round(todayStats[0]?.earnings || 0),
                 todayConsultations: todayStats[0]?.count || 0,
-                totalConsultationTime: totalMinutes,
+                totalConsultationTime: totalConsultationTimeMinutes,
                 averageRating,
                 totalReviews,
                 repeatClients: repeatClientsCount,
@@ -230,7 +231,7 @@ export const getAstrologerDashboard = async (req, res) => {
                 },
                 ongoingConsultation: ongoingSession ? {
                     user: {
-                        name: ongoingSession.userId?.name || "User",
+                        name: ongoingSession.userId?.fullName || "User",
                         avatar: ongoingSession.userId?.avatar,
                         zodiacSign: ongoingSession.userId?.zodiacSign
                     },
@@ -242,7 +243,7 @@ export const getAstrologerDashboard = async (req, res) => {
                 } : null,
                 recentConversation: recentSession ? {
                     user: {
-                        name: recentSession.userId?.name || "User",
+                        name: recentSession.userId?.fullName || "User",
                         avatar: recentSession.userId?.avatar,
                         zodiacSign: recentSession.userId?.zodiacSign
                     },
