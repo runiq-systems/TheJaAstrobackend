@@ -4,7 +4,7 @@ import { ChatSession } from "../../models/chatapp/chatSession.js";
 import { CallRequest } from "../../models/calllogs/callRequest.js";
 import { ChatRequest } from "../../models/chatapp/chatRequest.js";
 import { Transaction } from "../../models/Wallet/AstroWallet.js";
-import { Payout, Wallet } from "../../models/Wallet/AstroWallet.js";
+import { Payout } from "../../models/Wallet/AstroWallet.js";
 import { Review } from "../../models/review.model.js";
 
 const { ObjectId } = mongoose.Types;
@@ -23,6 +23,16 @@ const getISTRange = () => {
     return { todayStart: startUTC, todayEnd: endOfDay };
 };
 
+// Helper to get display name (fullName → phone last 10 digits → "User")
+const getDisplayName = (user) => {
+    if (user?.fullName && user.fullName.trim()) return user.fullName.trim();
+    if (user?.phone) {
+        const digits = user.phone.replace(/\D/g, ''); // remove non-digits
+        return digits.slice(-10); // last 10 digits
+    }
+    return "User";
+};
+
 export const getAstrologerDashboard = async (req, res) => {
     try {
         const astrologerId = req.user._id;
@@ -31,7 +41,7 @@ export const getAstrologerDashboard = async (req, res) => {
         const { todayStart, todayEnd } = getISTRange();
         const astrologerIdObj = new ObjectId(astrologerId);
 
-        // Define helper async functions
+        // Helper: Repeat Clients Count
         const getRepeatClientsCount = async () => {
             const [callGroups, chatGroups] = await Promise.all([
                 CallSession.aggregate([
@@ -53,12 +63,13 @@ export const getAstrologerDashboard = async (req, res) => {
             return [...userCountMap.values()].filter(count => count > 1).length;
         };
 
+        // Helper: Ongoing Session
         const getOngoingSession = async () => {
             const ongoingCall = await CallSession.findOne({
                 astrologerId: astrologerIdObj,
                 status: { $in: ["CONNECTED", "ACTIVE"] }
             })
-                .populate("userId", "fullName photo zodiacSign")
+                .populate("userId", "fullName phone photo zodiacSign")
                 .select("callType connectedAt")
                 .lean();
 
@@ -66,21 +77,22 @@ export const getAstrologerDashboard = async (req, res) => {
                 astrologerId: astrologerIdObj,
                 status: "ACTIVE"
             })
-                .populate("userId", "fullName photo zodiacSign")
+                .populate("userId", "fullName phone photo zodiacSign")
                 .select("startedAt")
                 .lean();
 
             return ongoingCall || ongoingChat || null;
         };
 
+        // Helper: Recent Completed Session
         const getRecentSession = async () => {
             const recentCall = await CallSession.findOne({
                 astrologerId: astrologerIdObj,
                 status: "COMPLETED"
             })
                 .sort({ endedAt: -1 })
-                .populate("userId", "fullName photo zodiacSign")
-                .select("totalDuration endedAt")
+                .populate("userId", "fullName phone photo zodiacSign")
+                .select("totalDuration endedAt billedDuration")
                 .lean();
 
             const recentChat = await ChatSession.findOne({
@@ -88,8 +100,8 @@ export const getAstrologerDashboard = async (req, res) => {
                 status: "COMPLETED"
             })
                 .sort({ endedAt: -1 })
-                .populate("userId", "fullName photo zodiacSign")
-                .select("activeDuration endedAt")
+                .populate("userId", "fullName phone photo zodiacSign")
+                .select("activeDuration endedAt billedDuration")
                 .lean();
 
             if (recentCall && recentChat) {
@@ -98,6 +110,7 @@ export const getAstrologerDashboard = async (req, res) => {
             return recentCall || recentChat || null;
         };
 
+        // Helper: Total Consultation Time (in minutes)
         const getTotalConsultationTime = async () => {
             const [totalCallMinutes, totalChatMinutes] = await Promise.all([
                 CallSession.aggregate([
@@ -125,7 +138,6 @@ export const getAstrologerDashboard = async (req, res) => {
             recentSession,
             totalConsultationTimeMinutes
         ] = await Promise.all([
-            // 1. Total Earnings (All Time)
             Transaction.aggregate([
                 {
                     $match: {
@@ -138,7 +150,6 @@ export const getAstrologerDashboard = async (req, res) => {
                 { $group: { _id: null, total: { $sum: "$amount" } } }
             ]),
 
-            // 2. Today's Earnings + Consultations
             Transaction.aggregate([
                 {
                     $match: {
@@ -158,7 +169,6 @@ export const getAstrologerDashboard = async (req, res) => {
                 }
             ]),
 
-            // 3. Average Rating from Reviews
             Review.aggregate([
                 { $match: { astrologerId: astrologerIdObj } },
                 {
@@ -170,10 +180,8 @@ export const getAstrologerDashboard = async (req, res) => {
                 }
             ]),
 
-            // 4. Repeat Clients Count
             getRepeatClientsCount(),
 
-            // 5. Pending Withdrawals
             Payout.aggregate([
                 {
                     $match: {
@@ -184,7 +192,6 @@ export const getAstrologerDashboard = async (req, res) => {
                 { $group: { _id: null, total: { $sum: "$amount" } } }
             ]),
 
-            // 6. Incoming Requests
             Promise.all([
                 CallRequest.countDocuments({
                     astrologerId: astrologerIdObj,
@@ -198,20 +205,44 @@ export const getAstrologerDashboard = async (req, res) => {
                 })
             ]),
 
-            // 7. Ongoing Consultation
             getOngoingSession(),
 
-            // 8. Recent Completed Session
             getRecentSession(),
 
-            // 9. Total Consultation Time
             getTotalConsultationTime()
         ]);
 
-        // Calculate Rating
+        // Calculate average rating
         const rating = ratingResult[0] || { totalStars: 0, totalReviews: 0 };
         const totalReviews = rating.totalReviews;
         const averageRating = totalReviews > 0 ? Number((rating.totalStars / totalReviews).toFixed(1)) : 0;
+
+        // Format ongoing consultation
+        const ongoingConsultation = ongoingSession ? {
+            user: {
+                name: getDisplayName(ongoingSession.userId),
+                avatar: ongoingSession.userId?.photo || null,
+                zodiacSign: ongoingSession.userId?.zodiacSign || null
+            },
+            durationMin: Math.floor(
+                (Date.now() - new Date(ongoingSession.connectedAt || ongoingSession.startedAt)) / 60000
+            ),
+            type: ongoingSession.callType || "CHAT",
+            startTime: ongoingSession.connectedAt || ongoingSession.startedAt
+        } : null;
+
+        // Format recent conversation
+        const recentConversation = recentSession ? {
+            user: {
+                name: getDisplayName(recentSession.userId),
+                avatar: recentSession.userId?.photo || null,
+                zodiacSign: recentSession.userId?.zodiacSign || null
+            },
+            durationMin: Math.floor(
+                (recentSession.totalDuration || recentSession.activeDuration || recentSession.billedDuration || 0) / 60
+            ),
+            endedAt: recentSession.endedAt
+        } : null;
 
         res.status(200).json({
             success: true,
@@ -225,31 +256,12 @@ export const getAstrologerDashboard = async (req, res) => {
                 repeatClients: repeatClientsCount,
                 pendingWithdrawals: Math.round(pendingPayouts[0]?.total || 0),
                 incomingRequests: {
-                    chat: incomingRequests[1],
                     call: incomingRequests[0],
+                    chat: incomingRequests[1],
                     total: incomingRequests[0] + incomingRequests[1]
                 },
-                ongoingConsultation: ongoingSession ? {
-                    user: {
-                        name: ongoingSession.userId?.fullName || "User",
-                        avatar: ongoingSession.userId?.avatar,
-                        zodiacSign: ongoingSession.userId?.zodiacSign
-                    },
-                    durationMin: Math.floor(
-                        (Date.now() - new Date(ongoingSession.connectedAt || ongoingSession.startedAt)) / 60000
-                    ),
-                    type: ongoingSession.callType || "CHAT",
-                    startTime: ongoingSession.connectedAt || ongoingSession.startedAt
-                } : null,
-                recentConversation: recentSession ? {
-                    user: {
-                        name: recentSession.userId?.fullName || "User",
-                        avatar: recentSession.userId?.avatar,
-                        zodiacSign: recentSession.userId?.zodiacSign
-                    },
-                    durationMin: Math.floor((recentSession.totalDuration || recentSession.activeDuration || 0) / 60),
-                    endedAt: recentSession.endedAt
-                } : null
+                ongoingConsultation,
+                recentConversation
             }
         });
 
