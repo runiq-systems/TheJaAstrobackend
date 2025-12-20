@@ -71,7 +71,7 @@ export const getTopAstrologers = async (req, res) => {
 
 export const toggleOnlineStatus = async (req, res) => {
     try {
-        const { userId } = req.body;
+        const userId = req.user.id;
 
         if (!userId) {
             return res.status(400).json({

@@ -6,7 +6,7 @@ import { uploadSingleImage } from "../../middleware/Uploadimage.js";
 const router = express.Router();
 
 router.get("/getTopAstrologers", getTopAstrologers);
-router.get("/toggleOnlineStatus", toggleOnlineStatus);
+router.post("/toggleOnlineStatus", authMiddleware, toggleOnlineStatus);
 
 router.get(
     "/profile",
