@@ -3,32 +3,41 @@ import mongoose from "mongoose";
 import { Transaction, Reservation, Payout } from "../../models/Wallet/AstroWallet.js";
 
 /**
- * @desc    Calculate total lifetime earnings of an astrologer
+ * @desc    Get total lifetime earnings for an astrologer
  * @route   GET /api/earnings/lifetime/:astrologerId
  * @access  Admin / Astrologer
  */
 export const getLifetimeEarnings = async (req, res) => {
     try {
-        const astrologerId = req.user.id;
+        const { astrologerId } = req.params;
 
         if (!mongoose.Types.ObjectId.isValid(astrologerId)) {
-            return res.status(400).json({ success: false, message: "Invalid astrologer ID" });
+            return res.status(400).json({
+                success: false,
+                message: "Invalid astrologer ID",
+            });
         }
 
-        const astroObjectId = new mongoose.Types.ObjectId(astrologerId);
+        const astroId = new mongoose.Types.ObjectId(astrologerId);
 
-        /* ===================== TRANSACTIONS ===================== */
+        /* =====================================================
+           1️⃣ TRANSACTIONS (REAL EARNINGS — WALLET BASED)
+           ===================================================== */
         const transactionAgg = await Transaction.aggregate([
             {
                 $match: {
-                    entityType: "ASTROLOGER",
-                    entityId: astroObjectId,
+                    userId: astroId,                // 🔥 FIX: wallet owner
+                    type: "CREDIT",
                     status: "SUCCESS",
+                    category: {
+                        $in: ["EARNINGS", "CALL_SESSION", "CHAT_SESSION", "LIVE"],
+                    },
                 },
             },
             {
                 $group: {
                     _id: null,
+
                     totalEarnings: { $sum: "$amount" },
                     totalCommission: { $sum: "$commissionAmount" },
                     totalTax: { $sum: "$taxAmount" },
@@ -52,7 +61,7 @@ export const getLifetimeEarnings = async (req, res) => {
             },
         ]);
 
-        const txData = transactionAgg[0] || {
+        const tx = transactionAgg[0] || {
             totalEarnings: 0,
             totalCommission: 0,
             totalTax: 0,
@@ -61,11 +70,13 @@ export const getLifetimeEarnings = async (req, res) => {
             liveEarnings: 0,
         };
 
-        /* ===================== PAYOUTS ===================== */
+        /* =====================================================
+           2️⃣ PAYOUTS (ONLY SUCCESSFUL)
+           ===================================================== */
         const payoutAgg = await Payout.aggregate([
             {
                 $match: {
-                    astrologerId: astroObjectId,
+                    astrologerId: astroId,
                     status: "SUCCESS",
                 },
             },
@@ -79,11 +90,13 @@ export const getLifetimeEarnings = async (req, res) => {
 
         const totalPayouts = payoutAgg[0]?.totalPayouts || 0;
 
-        /* ===================== SESSIONS ===================== */
+        /* =====================================================
+           3️⃣ SESSIONS (SETTLED ONLY)
+           ===================================================== */
         const sessionAgg = await Reservation.aggregate([
             {
                 $match: {
-                    astrologerId: astroObjectId,
+                    astrologerId: astroId,
                     status: "SETTLED",
                 },
             },
@@ -97,28 +110,35 @@ export const getLifetimeEarnings = async (req, res) => {
         ]);
 
         const totalSessions = sessionAgg[0]?.totalSessions || 0;
-        const totalDurationSec = sessionAgg[0]?.totalDurationSec || 0;
+        const totalDurationMinutes = Math.floor(
+            (sessionAgg[0]?.totalDurationSec || 0) / 60
+        );
 
-        /* ===================== FINAL RESPONSE ===================== */
-        const pendingBalance = txData.totalEarnings - totalPayouts;
+        /* =====================================================
+           4️⃣ FINAL CALCULATION
+           ===================================================== */
+        const pendingBalance = tx.totalEarnings - totalPayouts;
 
+        /* =====================================================
+           5️⃣ RESPONSE
+           ===================================================== */
         return res.status(200).json({
             success: true,
             data: {
                 astrologerId,
 
-                lifetimeEarnings: txData.totalEarnings,
+                lifetimeEarnings: tx.totalEarnings,
                 pendingBalance,
 
                 earningsBreakdown: {
-                    call: txData.callEarnings,
-                    chat: txData.chatEarnings,
-                    live: txData.liveEarnings,
+                    call: tx.callEarnings,
+                    chat: tx.chatEarnings,
+                    live: tx.liveEarnings,
                 },
 
                 deductions: {
-                    commissionPaid: txData.totalCommission,
-                    taxPaid: txData.totalTax,
+                    commissionPaid: tx.totalCommission,
+                    taxPaid: tx.totalTax,
                 },
 
                 payouts: {
@@ -127,13 +147,13 @@ export const getLifetimeEarnings = async (req, res) => {
 
                 sessions: {
                     totalSessions,
-                    totalDurationMinutes: Math.floor(totalDurationSec / 60),
+                    totalDurationMinutes,
                 },
             },
         });
     } catch (error) {
         console.error("Lifetime earnings error:", error);
-        res.status(500).json({
+        return res.status(500).json({
             success: false,
             message: "Failed to calculate lifetime earnings",
         });
