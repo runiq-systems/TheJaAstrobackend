@@ -58,7 +58,7 @@ export const getAstrologerDashboard = async (req, res) => {
                 astrologerId: astrologerIdObj,
                 status: { $in: ["CONNECTED", "ACTIVE"] }
             })
-                .populate("userId", "fullName avatar zodiacSign")
+                .populate("userId", "fullName photo zodiacSign")
                 .select("callType connectedAt")
                 .lean();
 
@@ -66,7 +66,7 @@ export const getAstrologerDashboard = async (req, res) => {
                 astrologerId: astrologerIdObj,
                 status: "ACTIVE"
             })
-                .populate("userId", "fullName avatar zodiacSign")
+                .populate("userId", "fullName photo zodiacSign")
                 .select("startedAt")
                 .lean();
 
@@ -79,7 +79,7 @@ export const getAstrologerDashboard = async (req, res) => {
                 status: "COMPLETED"
             })
                 .sort({ endedAt: -1 })
-                .populate("userId", "fullName avatar zodiacSign")
+                .populate("userId", "fullName photo zodiacSign")
                 .select("totalDuration endedAt")
                 .lean();
 
@@ -88,7 +88,7 @@ export const getAstrologerDashboard = async (req, res) => {
                 status: "COMPLETED"
             })
                 .sort({ endedAt: -1 })
-                .populate("userId", "fullName avatar zodiacSign")
+                .populate("userId", "fullName photo zodiacSign")
                 .select("activeDuration endedAt")
                 .lean();
 
