@@ -66,7 +66,7 @@ export const authActionLimiter = createRateLimiter({
  */
 export const astrologyRateLimiter = rateLimit({
   windowMs: 24 * 60 * 60 * 1000, // 24 hours
-  max: 3,
+  max: 1,
 
   keyGenerator: (req) => {
     // ✅ Prefer authenticated user

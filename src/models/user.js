@@ -1,5 +1,4 @@
 import mongoose, { Schema } from "mongoose";
-import { type } from "os";
 const userSchema = new mongoose.Schema(
   {
     fullName: {

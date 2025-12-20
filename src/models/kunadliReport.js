@@ -8,7 +8,7 @@ const KundaliReportSchema = new mongoose.Schema({
   dob: { type: String, required: true }, // "1994-06-12"
   tob: { type: String, required: true }, // "08:35"
   place: { type: String, required: true },
-  coordinates: { lat: Number, lon: Number },
+  coordinates: { latitude: Number, longitude: Number },
 
   // Cached API response
   report: { type: Object, required: true }, // Full Prokerala response.data.data

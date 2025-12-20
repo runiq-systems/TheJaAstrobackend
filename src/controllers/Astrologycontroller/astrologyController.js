@@ -6,8 +6,7 @@ import { getDailyHoroscopeBySign } from "../../services/prokerala/horoscopeCache
 import { getISTDayRange } from "../../utils/date.utils.js";
 import { getCachedKundaliReport, storeKundaliReport } from "../../services/prokerala/kundaliReportCache.js";
 import { getAccessToken } from "../../services/prokerala/prokeralaToken.services.js";
-import { getCachedMatching, storeKundaliMatching } from "../../services/prokerala/kundaliMatchingCache.js";
-
+import { getOrCreateKundliMatch } from "../../services/prokerala/kundaliMatchingCache.js";
 
 // 🌍 Geocoder
 const geocoder = NodeGeocoder({ provider: "openstreetmap" });
@@ -15,11 +14,9 @@ const geocoder = NodeGeocoder({ provider: "openstreetmap" });
 // ✅ Convert location name → coordinates
 export const getCoordinates = async (place) => {
   const res = await geocoder.geocode(place);
-  console.log(res);
   if (!res.length) throw new Error("Invalid location");
   return { latitude: res[0].latitude, longitude: res[0].longitude };
 };
-
 
 export const storeDailyHoroscope = async (apiData) => {
   const { datetime, daily_predictions } = apiData;
@@ -101,70 +98,131 @@ export const getDailyHoroscope = async (req, res) => {
 };
 
 
+// function toRFC3339(dob, tob) {
+//   if (!dob || !tob) {
+//     throw new Error("DOB and TOB required");
+//   }
+
+//   let yyyy, mm, dd;
+
+//   // ✅ Handle DD/MM/YYYY
+//   if (typeof dob === "string" && dob.includes("/")) {
+//     const parts = dob.split("/");
+//     if (parts.length !== 3) throw new Error("Invalid DOB format");
+//     [dd, mm, yyyy] = parts;
+//   }
+//   // ✅ Handle YYYY-MM-DD
+//   else if (typeof dob === "string" && dob.includes("-")) {
+//     const parts = dob.split("-");
+//     if (parts.length !== 3) throw new Error("Invalid DOB format");
+//     [yyyy, mm, dd] = parts;
+//   }
+//   // ❌ Anything else
+//   else {
+//     throw new Error("DOB must be string in DD/MM/YYYY or YYYY-MM-DD");
+//   }
+
+//   // Normalize date
+//   yyyy = String(yyyy);
+//   mm = String(mm).padStart(2, "0");
+//   dd = String(dd).padStart(2, "0");
+
+//   // ---- Time ----
+//   let h = 0, m = 0;
+//   const t = String(tob).toLowerCase().trim();
+
+//   if (t.includes("am") || t.includes("pm")) {
+//     const isPM = t.includes("pm");
+//     const clean = t.replace(/am|pm/gi, "").trim();
+//     const timeParts = clean.split(":");
+//     h = Number(timeParts[0] ?? 0);
+//     m = Number(timeParts[1] ?? 0);
+
+//     if (isPM && h < 12) h += 12;
+//     if (!isPM && h === 12) h = 0;
+//   } else {
+//     const timeParts = t.split(":");
+//     h = Number(timeParts[0] ?? 0);
+//     m = Number(timeParts[1] ?? 0);
+//   }
+
+//   h = String(h).padStart(2, "0");
+//   m = String(m).padStart(2, "0");
+
+//   // ✅ REQUIRED by Prokerala
+//   return `${yyyy}-${mm}-${dd}T${h}:${m}:00+05:30`;
+// }
 
 
+// export const toRFC3340 = (dob, tob) => {
+//   // dob: "YYYY-MM-DD"
+//   // tob: "HH:MM" (24-hour)
+//   const [year, month, day] = dob.split('-').map(Number);
+//   const [hour, minute] = tob.split(':').map(Number);
+
+//   const date = new Date(Date.UTC(year, month - 1, day, hour, minute));
+
+//   // Prokerala expects ISO with +05:30 offset for India
+//   return date.toISOString().replace('Z', '+05:30');
+// };
 function toRFC3339(dob, tob) {
-  if (!dob || !tob) {
-    throw new Error("DOB and TOB required");
-  }
+  if (!dob || !tob) throw new Error("DOB and TOB required");
 
   let yyyy, mm, dd;
-
-  // ✅ Handle DD/MM/YYYY
-  if (typeof dob === "string" && dob.includes("/")) {
-    const parts = dob.split("/");
-    if (parts.length !== 3) throw new Error("Invalid DOB format");
-    [dd, mm, yyyy] = parts;
-  }
-  // ✅ Handle YYYY-MM-DD
-  else if (typeof dob === "string" && dob.includes("-")) {
-    const parts = dob.split("-");
-    if (parts.length !== 3) throw new Error("Invalid DOB format");
-    [yyyy, mm, dd] = parts;
-  }
-  // ❌ Anything else
-  else {
-    throw new Error("DOB must be string in DD/MM/YYYY or YYYY-MM-DD");
+  if (dob.includes("/")) {
+    [dd, mm, yyyy] = dob.split("/");
+  } else if (dob.includes("-")) {
+    [yyyy, mm, dd] = dob.split("-");
+  } else {
+    throw new Error("Invalid DOB format");
   }
 
-  // Normalize date
-  yyyy = String(yyyy);
-  mm = String(mm).padStart(2, "0");
-  dd = String(dd).padStart(2, "0");
+  yyyy = yyyy.padStart(4, "0");
+  mm = mm.padStart(2, "0");
+  dd = dd.padStart(2, "0");
 
-  // ---- Time ----
   let h = 0, m = 0;
-  const t = String(tob).toLowerCase().trim();
+  const t = String(tob).trim().toLowerCase();
 
   if (t.includes("am") || t.includes("pm")) {
     const isPM = t.includes("pm");
     const clean = t.replace(/am|pm/gi, "").trim();
-    const timeParts = clean.split(":");
-    h = Number(timeParts[0] ?? 0);
-    m = Number(timeParts[1] ?? 0);
-
+    [h, m] = clean.split(":").map(Number);
     if (isPM && h < 12) h += 12;
     if (!isPM && h === 12) h = 0;
   } else {
-    const timeParts = t.split(":");
-    h = Number(timeParts[0] ?? 0);
-    m = Number(timeParts[1] ?? 0);
+    [h, m] = t.split(":").map(Number);
   }
 
-  h = String(h).padStart(2, "0");
-  m = String(m).padStart(2, "0");
+  const hh = String(h).padStart(2, "0");
+  const mmTime = String(m).padStart(2, "0");
 
-  // ✅ REQUIRED by Prokerala
-  return `${yyyy}-${mm}-${dd}T${h}:${m}:00+05:30`;
+  // ✅ This format works 99% of the time with Prokerala
+  return `${yyyy}-${mm}-${dd}T${hh}:${mmTime}:00+05:30`;
 }
+export const toRFC3340 = (dob, tob) => {
+  // dob: "YYYY-MM-DD"
+  // tob: "HH:MM" (24-hour format)
+  const [year, month, day] = dob.split('-').map(Number);
+  let [hour, minute, second = 0] = tob.includes(':') ? tob.split(':').map(Number) : [0, 0];
 
+  // Ensure always HH:MM:SS
+  const yyyy = year.toString().padStart(4, '0');
+  const mm = month.toString().padStart(2, '0');
+  const dd = day.toString().padStart(2, '0');
+  const hh = hour.toString().padStart(2, '0');
+  const min = minute.toString().padStart(2, '0');
+  const sec = second.toString().padStart(2, '0');
 
-
+  // Exact format: YYYY-MM-DDTHH:MM:SS+05:30 (no milliseconds, no space)
+  return `${yyyy}-${mm}-${dd}T${hh}:${min}:${sec}+05:30`;
+};
 
 export const getAdvancedKundaliReport = async (req, res) => {
   try {
-    const userId = req.user.id;
-    const { name, dob, tob, place, ayanamsa = 1, language = "en" } = req.body;
+    const userId = req.user.id || req.user._id;
+    console.log(userId)
+    const { name, dob, tob, place, ayanamsa = 1, la = "en" } = req.body;
 
     if (!name || !dob || !tob || !place) {
       return res.status(400).json({ success: false, message: "Missing required fields" });
@@ -187,7 +245,7 @@ export const getAdvancedKundaliReport = async (req, res) => {
         datetime,
         coordinates: `${geo.latitude},${geo.longitude}`,
         ayanamsa,
-        language: "en"
+        language: la
       },
       headers: { Authorization: `Bearer ${token}` },
       timeout: 8000
@@ -213,70 +271,100 @@ export const getAdvancedKundaliReport = async (req, res) => {
   }
 };
 
-// Kundali Compatibility
-export const getKundaliCompatibility = async (req, res) => {
+export const getKundliMatch = async (req, res) => {
   try {
-    const userId = req.user.id;
-    const {
-      person1, person2, ayanamsa = 1, la = "en"
+    const { 
+      person1_name, person1_dob, person1_tob, person1_place,
+      person2_name, person2_dob, person2_tob, person2_place,
+      ayanamsa = 1, language = 'en'
     } = req.body;
 
-    const p1 = person1; const p2 = person2;
+    const userId = req.user.id;
 
-    // 1. Get or create individual reports
-    const report1 = await getOrCreateKundali(userId, p1, ayanamsa, la);
-    const report2 = await getOrCreateKundali(userId, p2, ayanamsa, la);
-
-    // 2. Check cached matching
-    let cachedMatching = userId ? await getCachedMatching(userId, report1._id, report2._id) : null;
-    if (cachedMatching) {
-      return res.json({ success: true, source: "db", data: cachedMatching.matchingReport });
+    // Validate
+    const errors = [];
+    if (!person1_name || !person1_dob || !person1_tob || !person1_place ) {
+      errors.push('Person 1 details incomplete');
+    }
+    if (!person2_name || !person2_dob || !person2_tob || !person2_place ) {
+      errors.push('Person 2 details incomplete');
     }
 
-    // 3. Call Prokerala matching API
-    const token = await getAccessToken();
-    const response = await axios.get("https://api.prokerala.com/v2/astrology/kundli-matching", {
-      params: {
-        girl_dob: toRFC3339(p1.dob, p1.tob),
-        girl_coordinates: `${p1.coordinates.lat},${p1.coordinates.lon}`,
-        boy_dob: toRFC3339(p2.dob, p2.tob),
-        boy_coordinates: `${p2.coordinates.lat},${p2.coordinates.lon}`,
-        ayanamsa, la
-      },
-      headers: { Authorization: `Bearer ${token}` },
-      timeout: 8000
+    if (errors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        errors
+      });
+    }
+
+    // Prepare person objects
+    const person1 = {
+      name: person1_name,
+      dob: person1_dob,
+      tob: person1_tob,
+      place: person1_place
+    };
+
+    const person2 = {
+      name: person2_name,
+      dob: person2_dob,
+      tob: person2_tob,
+      place: person2_place
+    };
+
+    // Get match report
+    const result = await getOrCreateKundliMatch(
+      userId,
+      person1,
+      person2,
+      parseInt(ayanamsa),
+      language
+    );
+
+    console.log(result.data)
+
+    return res.json({
+      success: true,
+      source: result.source,
+      data: result.data
     });
 
-    const matchingData = response.data.data;
-
-    // 4. Store matching result
-    if (userId) {
-      await storeKundaliMatching(userId, {
-        name: p1.name, dob: p1.dob, tob: p1.tob, place: p1.place, reportId: report1._id
-      }, {
-        name: p2.name, dob: p2.dob, tob: p2.tob, place: p2.place, reportId: report2._id
-      }, matchingData);
-    }
-
-    return res.json({ success: true, source: "api_cached", data: matchingData });
-  } catch (err) {
-    console.error("Matching error:", err);
-    return res.status(500).json({ success: false, message: "Matching failed" });
+  } catch (error) {
+    console.error('Kundli Matching Error:', error);
+    
+    return res.status(500).json({
+      success: false,
+      message: error.message.includes('API') 
+        ? 'Failed to fetch from astrology service. Please try again later.'
+        : 'Internal server error'
+    });
   }
 };
 
-// Helper
-const getOrCreateKundali = async (userId, person, ayanamsa, la) => {
-  const cached = userId ? await getCachedKundaliReport(userId, person.dob, person.tob, person.place) : null;
-  if (cached) return cached;
+// Get user's match history
+const getMatchHistory = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { limit = 20, page = 1 } = req.query;
+    const skip = (page - 1) * limit;
 
-  const geo = await getCoordinates(person.place);
-  const datetime = toRFC3339(person.dob, person.tob);
-  const token = await getAccessToken();
-  const res = await axios.get("https://api.prokerala.com/v2/astrology/kundli/advanced", {
-    params: { datetime, coordinates: `${geo.latitude},${geo.longitude}`, ayanamsa, la },
-    headers: { Authorization: `Bearer ${token}` }
-  });
-
-  return await storeKundaliReport(userId, { ...person, coordinates: geo, ayanamsa, language: la }, res.data.data);
+    const matches = await kundliMatchingService.getUserMatches(userId, parseInt(limit), parseInt(skip));
+    
+    return res.json({
+      success: true,
+      data: matches,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        hasMore: matches.length === parseInt(limit)
+      }
+    });
+  } catch (error) {
+    console.error('Match History Error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch match history'
+    });
+  }
 };
+ 

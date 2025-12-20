@@ -1,14 +1,12 @@
 import { KundaliReport } from "../../models/kunadliReport.js";
-import { getISTDayRange } from "../../utils/date.utils.js";
 
 export const getCachedKundaliReport = async (userId, dob, tob, place) => {
-  const { dayUTC } = getISTDayRange();
-  return await KundaliReport.findOne({
+   return await KundaliReport.findOne({
     userId,
     dob,
     tob,
     place,
-    generatedAt: { $gte: dayUTC }
+    // generatedAt: { $gte: dayUTC }
   });
 };
 
@@ -23,7 +21,10 @@ export const storeKundaliReport = async (userId, input, reportData) => {
       dob,
       tob,
       place,
-      coordinates,
+      coordinates: {
+        latitude: coordinates.latitude,
+        longitude: coordinates.longitude
+      },
       report: reportData,
       ayanamsa,
       language,
