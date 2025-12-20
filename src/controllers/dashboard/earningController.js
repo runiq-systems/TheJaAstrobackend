@@ -9,8 +9,7 @@ import { Transaction, Reservation, Payout } from "../../models/Wallet/AstroWalle
  */
 export const getLifetimeEarnings = async (req, res) => {
     try {
-        const { astrologerId } = req.params;
-
+        const { astrologerId } = req.user._id ? req.user : req.params;
         if (!mongoose.Types.ObjectId.isValid(astrologerId)) {
             return res.status(400).json({
                 success: false,
