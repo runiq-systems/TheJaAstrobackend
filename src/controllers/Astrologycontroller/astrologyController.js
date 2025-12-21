@@ -8,53 +8,45 @@ import { getCachedKundaliReport, storeKundaliReport } from "../../services/proke
 import { getAccessToken } from "../../services/prokerala/prokeralaToken.services.js";
 import { getOrCreateKundliMatch } from "../../services/prokerala/kundaliMatchingCache.js";
 
-// 🌍 Geocoder
-const geocoder = NodeGeocoder({
-  provider: "openstreetmap",
+import axios from "axios";
 
-  // ✅ THIS is the correct way
-  headers: {
-    "User-Agent": "TheJaAstroBackend/1.0 (contact: support@thejaastro.com)",
-    "Referer": "https://thejaastrobackend.onrender.com"
-  },
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  timeout: 8000
-});
-
-// ✅ Convert location name → coordinates
 export const getCoordinates = async (place) => {
-  if (!place || typeof place !== "string") {
-    throw new Error("Place is required");
+  if (!place) throw new Error("Place is required");
+
+  // 🔒 Nominatim rate limit
+  await sleep(1100);
+
+  const res = await axios.get(
+    "https://nominatim.openstreetmap.org/search",
+    {
+      params: {
+        q: place,
+        format: "json",
+        limit: 1
+      },
+      headers: {
+        "User-Agent": "TheJaAstroBackend/1.0 (contact: support@thejaastro.com)",
+        "Referer": "https://thejaastrobackend.onrender.com"
+      },
+      timeout: 8000
+    }
+  );
+
+  if (!res.data || !res.data.length) {
+    throw new Error("Location not found");
   }
 
-  try {
-    // 🔒 OSM rate limit protection
-    await sleep(1100);
-
-    const res = await geocoder.geocode(place);
-
-    if (!Array.isArray(res) || res.length === 0) {
-      throw new Error("Location not found");
-    }
-
-    const { latitude, longitude } = res[0];
-
-    if (!latitude || !longitude) {
-      throw new Error("Invalid coordinates");
-    }
-
-    return { latitude, longitude };
-  } catch (err) {
-    console.error("Geocoding failed:", err.message);
-
-    // 🔥 Make Kundali error clear
-    throw new Error(
-      err.message.includes("blocked")
-        ? "Geocoding temporarily blocked"
-        : "Failed to resolve location"
-    );
-  }
+  return {
+    latitude: parseFloat(res.data[0].lat),
+    longitude: parseFloat(res.data[0].lon),
+    displayName: res.data[0].display_name
+  };
 };
+
+
+
 
 
 export const storeDailyHoroscope = async (apiData) => {
