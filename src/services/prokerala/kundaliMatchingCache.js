@@ -4,7 +4,7 @@ import { KundaliMatching } from "../../models/kundaliMatching.js";
 import { getAccessToken } from "./prokeralaToken.services.js";
 
 function createMatchHash(person1, person2) {
-  const normalize = (str) => 
+  const normalize = (str) =>
     (str || '')
       .toLowerCase()
       .trim()
@@ -99,12 +99,29 @@ export async function getOrCreateKundliMatch(userId, person1, person2, ayanamsa 
 }
 
 // Get all matches for a user
-export async function getUserMatches(userId, limit = 20, skip = 0) {
-  return await KundaliMatching.find({ userId })
+export async function getUserMatches(userId, limit, skip) {
+  return KundaliMatching.find({ userId })
     .sort({ generatedAt: -1 })
     .skip(skip)
     .limit(limit)
     .lean();
+}
+
+export async function getUserMatchesCount(userId) {
+  return KundaliMatching.countDocuments({ userId });
+}
+
+
+
+export async function getMatchById(matchId, userId) {
+  if (!mongoose.Types.ObjectId.isValid(matchId)) {
+    return null;
+  }
+
+  return KundaliMatching.findOne({
+    _id: matchId,
+    userId, // 🔒 security: user sirf apna data dekh sake
+  }).lean();
 }
 
 // Search matches by name
@@ -120,4 +137,3 @@ export async function searchMatches(userId, searchTerm) {
     .limit(10)
     .lean();
 }
- 
