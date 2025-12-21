@@ -9,9 +9,6 @@ import axios from "axios";
 import logger from "../../utils/logger.js";
 
 
-import axios from "axios";
-import logger from "../../utils/logger.js";
-
 export const getCoordinates = async (place) => {
   if (!place || typeof place !== "string") {
     throw new Error("Place is required");
@@ -30,11 +27,11 @@ export const getCoordinates = async (place) => {
     }
   );
 
-  // 🔍 Log ONLY data (not whole axios response)
+  // ✅ LOG ONLY DATA
   logger.info("Geocoding response:", res.data);
 
-  // ✅ FIX: Open-Meteo response is inside res.data.results
-  if (!res.data || !res.data.results || res.data.results.length === 0) {
+  // ✅ CORRECT CHECK
+  if (!res.data?.results || res.data.results.length === 0) {
     throw new Error("Location not found");
   }
 
@@ -43,10 +40,9 @@ export const getCoordinates = async (place) => {
   return {
     latitude: Number(loc.latitude),
     longitude: Number(loc.longitude),
-    displayName: `${loc.name}${loc.admin1 ? ", " + loc.admin1 : ""}, ${loc.country}`,
+    displayName: `${loc.name}, ${loc.admin1}, ${loc.country}`,
   };
 };
-
 
 
 
