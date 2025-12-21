@@ -97,7 +97,6 @@ export const getDailyHoroscope = async (req, res) => {
   }
 };
 
-
 // function toRFC3339(dob, tob) {
 //   if (!dob || !tob) {
 //     throw new Error("DOB and TOB required");
