@@ -1,5 +1,5 @@
 import express from "express";
-import { ReviewController } from "../controllers/review.controller.js";
+import { ReviewController, getCompletedRequestCountController } from "../controllers/review.controller.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 const router = express.Router();
 
@@ -25,5 +25,9 @@ router.get("/:astrologerId/stats", ReviewController.getRatingStats);
  * /api/review/<astrologerId>/list
  */
 router.get("/:astrologerId/list", ReviewController.getReviews);
+router.get(
+    "/astro/:astrologerId/completed-count",
+    getCompletedRequestCountController
+);
 
 export default router;

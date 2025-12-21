@@ -1,5 +1,6 @@
 import { reviewService } from "../services/review.service.js";
-
+import { ChatRequest } from "../models/chatapp/chatRequest.js";
+import { CallRequest } from "../models/callRequest.model.js";
 export const ReviewController = {
     // ⭐ Create review
     async addReview(req, res) {
@@ -59,4 +60,50 @@ export const ReviewController = {
             return res.status(500).json({ ok: false, message: error.message });
         }
     },
+};
+
+
+
+
+
+/**
+ * GET TOTAL COMPLETED CHAT + CALL REQUEST COUNT
+ * @route GET /api/v1/astro/completed-request-count
+ * @access Private (Astrologer)
+ */
+export const getCompletedRequestCountController = async (req, res) => {
+    try {
+        const { astrologerId } = req.params;
+
+
+        const [completedChats, completedCalls] = await Promise.all([
+            // ✅ Completed Chats
+            ChatRequest.countDocuments({
+                astrologerId,
+                status: "COMPLETED",
+            }),
+
+            // ✅ Completed Calls
+            CallRequest.countDocuments({
+                astrologerId,
+                status: "COMPLETED",
+            }),
+        ]);
+
+        return res.status(200).json({
+            ok: true,
+            message: "Completed chat and call counts fetched successfully",
+            data: {
+                completedChats,
+                completedCalls,
+                totalCompleted: completedChats + completedCalls,
+            },
+        });
+    } catch (error) {
+        console.error("Completed request count error:", error);
+        return res.status(500).json({
+            ok: false,
+            message: "Failed to fetch completed request counts",
+        });
+    }
 };
