@@ -1,6 +1,7 @@
 import { reviewService } from "../services/review.service.js";
 import { ChatRequest } from "../models/chatapp/chatRequest.js";
-import { CallRequest } from "../models/callRequest.model.js";
+import { CallRequest } from "../models/calllogs/callRequest.js";
+
 export const ReviewController = {
     // ⭐ Create review
     async addReview(req, res) {
