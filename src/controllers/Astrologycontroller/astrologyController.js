@@ -11,20 +11,51 @@ import { getOrCreateKundliMatch } from "../../services/prokerala/kundaliMatching
 // 🌍 Geocoder
 const geocoder = NodeGeocoder({
   provider: "openstreetmap",
-  fetch: {
-    headers: {
-      "User-Agent": "TheJaAstroBackend/1.0 (contact: support@thejaastro.com)",
-      "Referer": "https://thejaastrobackend.onrender.com"
-    }
-  }
+
+  // ✅ THIS is the correct way
+  headers: {
+    "User-Agent": "TheJaAstroBackend/1.0 (contact: support@thejaastro.com)",
+    "Referer": "https://thejaastrobackend.onrender.com"
+  },
+
+  timeout: 8000
 });
 
 // ✅ Convert location name → coordinates
 export const getCoordinates = async (place) => {
-  const res = await geocoder.geocode(place);
-  if (!res.length) throw new Error("Invalid location");
-  return { latitude: res[0].latitude, longitude: res[0].longitude };
+  if (!place || typeof place !== "string") {
+    throw new Error("Place is required");
+  }
+
+  try {
+    // 🔒 OSM rate limit protection
+    await sleep(1100);
+
+    const res = await geocoder.geocode(place);
+
+    if (!Array.isArray(res) || res.length === 0) {
+      throw new Error("Location not found");
+    }
+
+    const { latitude, longitude } = res[0];
+
+    if (!latitude || !longitude) {
+      throw new Error("Invalid coordinates");
+    }
+
+    return { latitude, longitude };
+  } catch (err) {
+    console.error("Geocoding failed:", err.message);
+
+    // 🔥 Make Kundali error clear
+    throw new Error(
+      err.message.includes("blocked")
+        ? "Geocoding temporarily blocked"
+        : "Failed to resolve location"
+    );
+  }
 };
+
 
 export const storeDailyHoroscope = async (apiData) => {
   const { datetime, daily_predictions } = apiData;
@@ -177,7 +208,19 @@ export const getAdvancedKundaliReport = async (req, res) => {
 
     // 2. Fetch from Prokerala
     const datetime = toRFC3339(dob, tob);
-    const geo = await getCoordinates(place);
+    let geo;
+
+    try {
+      geo = await getCoordinates(place);
+    } catch (err) {
+      console.error("Location error:", err.message);
+
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or unsupported place name"
+      });
+    }
+
     if (!geo) return res.status(400).json({ success: false, message: "Invalid place" });
 
     const token = await getAccessToken();
