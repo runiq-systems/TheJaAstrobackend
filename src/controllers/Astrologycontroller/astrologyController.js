@@ -9,7 +9,15 @@ import { getAccessToken } from "../../services/prokerala/prokeralaToken.services
 import { getOrCreateKundliMatch } from "../../services/prokerala/kundaliMatchingCache.js";
 
 // 🌍 Geocoder
-const geocoder = NodeGeocoder({ provider: "openstreetmap" });
+const geocoder = NodeGeocoder({
+  provider: "openstreetmap",
+  fetch: {
+    headers: {
+      "User-Agent": "TheJaAstroBackend/1.0 (contact: support@thejaastro.com)",
+      "Referer": "https://thejaastrobackend.onrender.com"
+    }
+  }
+});
 
 // ✅ Convert location name → coordinates
 export const getCoordinates = async (place) => {
@@ -98,73 +106,6 @@ export const getDailyHoroscope = async (req, res) => {
 };
 
 
-// function toRFC3339(dob, tob) {
-//   if (!dob || !tob) {
-//     throw new Error("DOB and TOB required");
-//   }
-
-//   let yyyy, mm, dd;
-
-//   // ✅ Handle DD/MM/YYYY
-//   if (typeof dob === "string" && dob.includes("/")) {
-//     const parts = dob.split("/");
-//     if (parts.length !== 3) throw new Error("Invalid DOB format");
-//     [dd, mm, yyyy] = parts;
-//   }
-//   // ✅ Handle YYYY-MM-DD
-//   else if (typeof dob === "string" && dob.includes("-")) {
-//     const parts = dob.split("-");
-//     if (parts.length !== 3) throw new Error("Invalid DOB format");
-//     [yyyy, mm, dd] = parts;
-//   }
-//   // ❌ Anything else
-//   else {
-//     throw new Error("DOB must be string in DD/MM/YYYY or YYYY-MM-DD");
-//   }
-
-//   // Normalize date
-//   yyyy = String(yyyy);
-//   mm = String(mm).padStart(2, "0");
-//   dd = String(dd).padStart(2, "0");
-
-//   // ---- Time ----
-//   let h = 0, m = 0;
-//   const t = String(tob).toLowerCase().trim();
-
-//   if (t.includes("am") || t.includes("pm")) {
-//     const isPM = t.includes("pm");
-//     const clean = t.replace(/am|pm/gi, "").trim();
-//     const timeParts = clean.split(":");
-//     h = Number(timeParts[0] ?? 0);
-//     m = Number(timeParts[1] ?? 0);
-
-//     if (isPM && h < 12) h += 12;
-//     if (!isPM && h === 12) h = 0;
-//   } else {
-//     const timeParts = t.split(":");
-//     h = Number(timeParts[0] ?? 0);
-//     m = Number(timeParts[1] ?? 0);
-//   }
-
-//   h = String(h).padStart(2, "0");
-//   m = String(m).padStart(2, "0");
-
-//   // ✅ REQUIRED by Prokerala
-//   return `${yyyy}-${mm}-${dd}T${h}:${m}:00+05:30`;
-// }
-
-
-// export const toRFC3340 = (dob, tob) => {
-//   // dob: "YYYY-MM-DD"
-//   // tob: "HH:MM" (24-hour)
-//   const [year, month, day] = dob.split('-').map(Number);
-//   const [hour, minute] = tob.split(':').map(Number);
-
-//   const date = new Date(Date.UTC(year, month - 1, day, hour, minute));
-
-//   // Prokerala expects ISO with +05:30 offset for India
-//   return date.toISOString().replace('Z', '+05:30');
-// };
 function toRFC3339(dob, tob) {
   if (!dob || !tob) throw new Error("DOB and TOB required");
 
@@ -273,7 +214,7 @@ export const getAdvancedKundaliReport = async (req, res) => {
 
 export const getKundliMatch = async (req, res) => {
   try {
-    const { 
+    const {
       person1_name, person1_dob, person1_tob, person1_place,
       person2_name, person2_dob, person2_tob, person2_place,
       ayanamsa = 1, language = 'en'
@@ -283,10 +224,10 @@ export const getKundliMatch = async (req, res) => {
 
     // Validate
     const errors = [];
-    if (!person1_name || !person1_dob || !person1_tob || !person1_place ) {
+    if (!person1_name || !person1_dob || !person1_tob || !person1_place) {
       errors.push('Person 1 details incomplete');
     }
-    if (!person2_name || !person2_dob || !person2_tob || !person2_place ) {
+    if (!person2_name || !person2_dob || !person2_tob || !person2_place) {
       errors.push('Person 2 details incomplete');
     }
 
@@ -331,10 +272,10 @@ export const getKundliMatch = async (req, res) => {
 
   } catch (error) {
     console.error('Kundli Matching Error:', error);
-    
+
     return res.status(500).json({
       success: false,
-      message: error.message.includes('API') 
+      message: error.message.includes('API')
         ? 'Failed to fetch from astrology service. Please try again later.'
         : 'Internal server error'
     });
@@ -349,7 +290,7 @@ const getMatchHistory = async (req, res) => {
     const skip = (page - 1) * limit;
 
     const matches = await kundliMatchingService.getUserMatches(userId, parseInt(limit), parseInt(skip));
-    
+
     return res.json({
       success: true,
       data: matches,
@@ -367,4 +308,3 @@ const getMatchHistory = async (req, res) => {
     });
   }
 };
- 
