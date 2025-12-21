@@ -52,7 +52,7 @@ class ReviewService {
         return Review.find({ astrologerId: objectId })
             .sort({ createdAt: -1 })
             .limit(limit)
-            .populate("userId", "name avatar");
+            .populate("userId", "fullName photo");
     }
 }
 
