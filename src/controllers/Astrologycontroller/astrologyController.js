@@ -5,8 +5,8 @@ import { getISTDayRange } from "../../utils/date.utils.js";
 import { getCachedKundaliReport, storeKundaliReport } from "../../services/prokerala/kundaliReportCache.js";
 import { getAccessToken } from "../../services/prokerala/prokeralaToken.services.js";
 import { getOrCreateKundliMatch } from "../../services/prokerala/kundaliMatchingCache.js";
-
 import axios from "axios";
+import logger from "../../utils/logger.js";
 
 
 export const getCoordinates = async (place) => {
@@ -27,8 +27,9 @@ export const getCoordinates = async (place) => {
     }
   );
 
+  logger.info("Geocoding response:", res);
   // ✅ Open-Meteo returns results[]
-  if (!res.data?.results || res.data.results.length === 0) {
+  if (!res.results || res.results.length === 0) {
     throw new Error("Location not found");
   }
 
