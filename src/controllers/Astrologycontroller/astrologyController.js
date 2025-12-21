@@ -2,9 +2,9 @@
 import DailyHoroscopeSign from "../../models/DailyHoroscopeSign.js";
 import { getDailyHoroscopeBySign } from "../../services/prokerala/horoscopeCache.js";
 import { getISTDayRange } from "../../utils/date.utils.js";
-import { getCachedKundaliReport, storeKundaliReport } from "../../services/prokerala/kundaliReportCache.js";
+import { getCachedKundaliReport, storeKundaliReport, getExistingKundaliReportAll, getKundaliReportDetail } from "../../services/prokerala/kundaliReportCache.js";
 import { getAccessToken } from "../../services/prokerala/prokeralaToken.services.js";
-import { getOrCreateKundliMatch } from "../../services/prokerala/kundaliMatchingCache.js";
+import { getOrCreateKundliMatch, getUserMatches, getUserMatchesCount, getMatchById } from "../../services/prokerala/kundaliMatchingCache.js";
 import axios from "axios";
 import logger from "../../utils/logger.js";
 
@@ -316,28 +316,129 @@ export const getKundliMatch = async (req, res) => {
 };
 
 // Get user's match history
-const getMatchHistory = async (req, res) => {
+export const getMatchHistory = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { limit = 20, page = 1 } = req.query;
+
+    let limit = parseInt(req.query.limit) || 20;
+    let page = parseInt(req.query.page) || 1;
+
+    // Safety checks
+    limit = Math.min(limit, 50); // max limit protection
+    page = Math.max(page, 1);
+
     const skip = (page - 1) * limit;
 
-    const matches = await kundliMatchingService.getUserMatches(userId, parseInt(limit), parseInt(skip));
+    const [matches, total] = await Promise.all([
+      getUserMatches(userId, limit, skip),
+      getUserMatchesCount(userId),
+    ]);
 
-    return res.json({
+    return res.status(200).json({
       success: true,
       data: matches,
       pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        hasMore: matches.length === parseInt(limit)
-      }
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasMore: skip + matches.length < total,
+      },
     });
   } catch (error) {
-    console.error('Match History Error:', error);
+    console.error("Match History Error:", error);
     return res.status(500).json({
       success: false,
-      message: 'Failed to fetch match history'
+      message: "Failed to fetch match history",
+    });
+  }
+};
+
+
+
+export const getMatchDetails = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { matchId } = req.params;
+
+    if (!matchId) {
+      return res.status(400).json({
+        success: false,
+        message: "Match ID is required",
+      });
+    }
+
+    const match = await getMatchById(matchId, userId);
+
+    if (!match) {
+      return res.status(404).json({
+        success: false,
+        message: "Match not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: match,
+    });
+  } catch (error) {
+    console.error("Get Match Details Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch match details",
+    });
+  }
+};
+
+
+
+export const getUserKundaliReports = async (req, res) => {
+  try {
+    const { dob, tob, place, page = 1, limit = 10 } = req.query;
+    const userId = req.user.id;
+
+    const result = await getExistingKundaliReportAll({
+      userId,
+      dob,
+      tob,
+      place,
+      page: Number(page),
+      limit: Number(limit),
+    });
+
+    return res.status(200).json({
+      ok: true,
+      message: "User kundali reports fetched successfully",
+      ...result,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      message: err.message,
+    });
+  }
+};
+
+
+export const getKundaliReportDetailController = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+
+    const data = await getKundaliReportDetail({
+      reportId: id,
+      userId,
+    });
+
+    return res.status(200).json({
+      ok: true,
+      message: "Kundali report detail fetched successfully",
+      data,
+    });
+  } catch (error) {
+    return res.status(404).json({
+      ok: false,
+      message: error.message,
     });
   }
 };
