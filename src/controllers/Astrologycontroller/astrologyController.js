@@ -1,6 +1,4 @@
-import axios from "axios";
-import NodeGeocoder from "node-geocoder";
-import logger from "../../utils/logger.js";
+
 import DailyHoroscopeSign from "../../models/DailyHoroscopeSign.js";
 import { getDailyHoroscopeBySign } from "../../services/prokerala/horoscopeCache.js";
 import { getISTDayRange } from "../../utils/date.utils.js";
@@ -10,38 +8,36 @@ import { getOrCreateKundliMatch } from "../../services/prokerala/kundaliMatching
 
 import axios from "axios";
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export const getCoordinates = async (place) => {
-  if (!place) throw new Error("Place is required");
-
-  // 🔒 Nominatim rate limit
-  await sleep(1100);
+  if (!place || typeof place !== "string") {
+    throw new Error("Place is required");
+  }
 
   const res = await axios.get(
-    "https://nominatim.openstreetmap.org/search",
+    "https://geocoding-api.open-meteo.com/v1/search",
     {
       params: {
-        q: place,
+        name: place,
+        count: 1,
+        language: "en",
         format: "json",
-        limit: 1
       },
-      headers: {
-        "User-Agent": "TheJaAstroBackend/1.0 (contact: support@thejaastro.com)",
-        "Referer": "https://thejaastrobackend.onrender.com"
-      },
-      timeout: 8000
+      timeout: 8000,
     }
   );
 
-  if (!res.data || !res.data.length) {
+  // ✅ Open-Meteo returns results[]
+  if (!res.data?.results || res.data.results.length === 0) {
     throw new Error("Location not found");
   }
 
+  const loc = res.data.results[0];
+
   return {
-    latitude: parseFloat(res.data[0].lat),
-    longitude: parseFloat(res.data[0].lon),
-    displayName: res.data[0].display_name
+    latitude: Number(loc.latitude),
+    longitude: Number(loc.longitude),
+    displayName: `${loc.name}, ${loc.admin1 || ""}, ${loc.country}`.replace(/, ,/g, ","),
   };
 };
 
