@@ -820,9 +820,7 @@ export const cancelCallRequest = asyncHandler(async (req, res) => {
   }
 });
 
-import mongoose from "mongoose";
-import { CallSession } from "../../models/callapp/callSession.model.js";
-import User from "../../models/user.model.js";
+
 
 export const getAstrologerCallSessions = async (req, res) => {
   try {
