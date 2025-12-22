@@ -478,206 +478,6 @@ export const startCallSession = asyncHandler(async (req, res) => {
   }
 });
 
-// Updated endCall (deduct actual, refund excess)
-// export const endCall = asyncHandler(async (req, res) => {
-//   const session = await mongoose.startSession();
-//   let hasCommitted = false;
-
-//   try {
-//     session.startTransaction();
-
-//     const { sessionId } = req.params;
-//     const userId = req.user._id;
-
-//     const callSession = await CallSession.findOne({
-//       sessionId,
-//       $or: [{ userId }, { astrologerId: userId }],
-//       status: { $in: ["CONNECTED", "ACTIVE"] }
-//     }).session(session);
-
-//     if (!callSession) {
-//       await session.abortTransaction();
-//       return res.status(200).json(new ApiResponse(200, {}, "Call already ended"));
-//     }
-
-//     const now = new Date();
-//     const connectedAt = callSession.connectedAt || now;
-//     const totalSeconds = Math.floor((now - connectedAt) / 1000);
-//     const billedMinutes = Math.ceil(totalSeconds / 60);
-//     const ratePerMinute = callSession.ratePerMinute;
-//     const finalCost = billedMinutes * ratePerMinute;
-
-//     console.log(`[BILLING CALCULATION] Session: ${sessionId}`);
-//     console.log(`  - Duration: ${totalSeconds}s (${(totalSeconds / 60).toFixed(2)} min)`);
-//     console.log(`  - Billed minutes: ${billedMinutes} min`);
-//     console.log(`  - Rate: ₹${ratePerMinute}/min`);
-//     console.log(`  - Final cost: ₹${finalCost}`);
-
-//     // Stop billing timer
-//     stopBillingTimer(sessionId);
-//     clearReminders(sessionId);
-
-//     // Update session & call
-//     callSession.status = "COMPLETED";
-//     callSession.endedAt = now;
-//     callSession.totalDuration = totalSeconds;
-//     callSession.billedDuration = billedMinutes * 60;
-//     callSession.totalCost = finalCost;
-//     await callSession.save({ session });
-
-//     const call = await Call.findById(callSession.callId).session(session);
-//     if (call) {
-//       call.status = "COMPLETED";
-//       call.endTime = now;
-//       call.duration = totalSeconds;
-//       call.totalAmount = finalCost;
-//       call.endedBy = userId;
-//       await call.save({ session });
-//     }
-
-//     // FINAL SETTLEMENT WITH PROPER REFUND
-//     let refundedAmount = 0;
-//     let astrologerEarnings = 0;
-//     let platformEarnings = 0;
-
-//     if (callSession.reservationId) {
-//       const reservation = await Reservation.findById(callSession.reservationId).session(session);
-//       if (reservation) {
-//         const reservedAmount = reservation.lockedAmount || 0;
-
-//         // Calculate actual used amount vs reserved amount
-//         const usedAmount = finalCost;
-//         refundedAmount = Math.max(0, reservedAmount - usedAmount);
-
-//         // Calculate commission (20% platform, 80% astrologer)
-//         platformEarnings = Math.round(usedAmount * 0.20);
-//         astrologerEarnings = usedAmount - platformEarnings;
-
-//         console.log(`[SETTLEMENT] Session: ${sessionId}`);
-//         console.log(`  - Reserved: ₹${reservedAmount}`);
-//         console.log(`  - Used: ₹${usedAmount} (${billedMinutes} min × ₹${ratePerMinute}/min)`);
-//         console.log(`  - Refund: ₹${refundedAmount}`);
-//         console.log(`  - Platform: ₹${platformEarnings}`);
-//         console.log(`  - Astrologer: ₹${astrologerEarnings}`);
-
-//         // 1. RELEASE ALL LOCKED AMOUNT BACK TO AVAILABLE
-//         console.log(`[WALLET] Step 1: Releasing ₹${reservedAmount} from locked to available`);
-//         await WalletService.releaseAmount({
-//           userId,
-//           amount: reservedAmount,
-//           currency: "INR",
-//           reservationId: reservation._id,
-//           description: `Release reserved amount ₹${reservedAmount} back to available balance`,
-//           session
-//         });
-
-//         // 2. DEBIT ONLY THE USED AMOUNT FROM USER
-//         if (usedAmount > 0) {
-//           console.log(`[WALLET] Step 2: Debiting ₹${usedAmount} for actual usage`);
-//           await WalletService.debit({
-//             userId,
-//             amount: usedAmount,
-//             currency: "INR",
-//             category: "CALL_SESSION",
-//             subcategory: callSession.callType,
-//             description: `Call session: ${billedMinutes} min × ₹${ratePerMinute}/min`,
-//             reservationId: reservation._id,
-//             meta: {
-//               sessionId,
-//               billedMinutes,
-//               duration: totalSeconds,
-//               astrologerId: callSession.astrologerId,
-//               ratePerMinute
-//             },
-//             session
-//           });
-//         }
-
-//         // 3. CREDIT ASTROLOGER EARNINGS
-//         if (astrologerEarnings > 0) {
-//           console.log(`[WALLET] Step 3: Crediting astrologer ₹${astrologerEarnings}`);
-//           await WalletService.credit({
-//             userId: callSession.astrologerId,
-//             amount: astrologerEarnings,
-//             currency: "INR",
-//             category: "EARNINGS",
-//             subcategory: "CALL_SESSION",
-//             description: `Earnings from ${billedMinutes} min call (₹${ratePerMinute}/min)`,
-//             meta: {
-//               sessionId,
-//               callSessionId: callSession._id,
-//               billedMinutes,
-//               duration: totalSeconds,
-//               ratePerMinute,
-//               commissionPercent: 20
-//             },
-//             session
-//           });
-
-//           // Update astrologer earnings in reservation
-//           reservation.astrologerEarnings = astrologerEarnings;
-//         }
-
-//         // Update reservation with final settlement
-//         reservation.status = "SETTLED";
-//         reservation.totalCost = usedAmount;
-//         reservation.platformEarnings = platformEarnings;
-//         reservation.billedMinutes = billedMinutes;
-//         reservation.totalDurationSec = totalSeconds;
-//         reservation.refundedAmount = refundedAmount;
-//         reservation.settledAt = now;
-//         await reservation.save({ session });
-
-//         // Update call session with payment info
-//         callSession.platformCommission = platformEarnings;
-//         callSession.astrologerEarnings = astrologerEarnings;
-//         callSession.paymentStatus = "PAID";
-//         await callSession.save({ session });
-
-//         // 4. VERIFY USER'S FINAL BALANCE
-//         const finalBalance = await WalletService.getBalance(userId, "INR");
-//         console.log(`[WALLET] Final balance for user ${userId}:`);
-//         console.log(`  - Available: ₹${finalBalance.available}`);
-//         console.log(`  - Locked: ₹${finalBalance.locked}`);
-//         console.log(`  - Total: ₹${finalBalance.total}`);
-//       }
-//     }
-
-//     hasCommitted = true;
-//     await session.commitTransaction();
-
-//     // Notify both parties
-//     const payload = {
-//       sessionId,
-//       status: "COMPLETED",
-//       totalCost: finalCost,
-//       refundedAmount,
-//       durationSeconds: totalSeconds,
-//       billedMinutes,
-//       ratePerMinute,
-//       endedAt: now,
-//       astrologerEarnings,
-//       platformEarnings,
-//       calculation: {
-//         actualMinutes: (totalSeconds / 60).toFixed(2),
-//         roundedMinutes: billedMinutes,
-//         rate: ratePerMinute,
-//         total: finalCost
-//       }
-//     };
-
-//     emitSocketEvent(req, callSession.userId.toString(), ChatEventsEnum.CALL_ENDED_EVENT, payload);
-//     emitSocketEvent(req, callSession.astrologerId.toString(), ChatEventsEnum.CALL_ENDED_EVENT, payload);
-
-//     return res.status(200).json(new ApiResponse(200, payload, "Call ended & settlement completed"));
-
-//   } catch (error) {
-//     if (!hasCommitted && session.inTransaction()) await session.abortTransaction();
-//     throw error;
-//   } finally {
-//     session.endSession();
-//   }
-// });
 
 // ✅ Smart End Call — handles astrologer early end & automatic refund
 export const endCall = asyncHandler(async (req, res) => {
@@ -1027,12 +827,12 @@ export const getAstrologerCallSessions = async (req, res) => {
     const {
       page = 1,
       limit = 100,
-      status, // e.g., CONNECTED, COMPLETED, MISSED, etc.
+      status,
       dateFrom,
       dateTo,
       sortBy = "startTime",
       sortOrder = "desc",
-      search, // search by callId, user name, phone
+      search,
     } = req.query;
 
     // Build filter
@@ -1041,12 +841,10 @@ export const getAstrologerCallSessions = async (req, res) => {
     // Status filter
     if (status && status !== "ALL") {
       if (status === "ACTIVE") {
-        // Map to frontend's CONNECTED/ACTIVE status
         filter.status = { $in: ["CONNECTED", "ACTIVE"] };
       } else if (status === "COMPLETED_CALLS") {
         filter.status = "COMPLETED";
       } else {
-        // Ensure we use frontend-compatible statuses
         const statusMapping = {
           'REQUESTED': 'REQUESTED',
           'ACCEPTED': 'ACCEPTED',
@@ -1062,7 +860,6 @@ export const getAstrologerCallSessions = async (req, res) => {
           'EXPIRED': 'EXPIRED',
           'AUTO_ENDED': 'AUTO_ENDED'
         };
-
         filter.status = statusMapping[status] || status;
       }
     }
@@ -1074,43 +871,75 @@ export const getAstrologerCallSessions = async (req, res) => {
       if (dateTo) filter.startTime.$lte = new Date(dateTo);
     }
 
-    // Search: call _id, user fullName, phone
-    // FIXED SEARCH: Handle _id separately (exact match only) + regex on string fields
+    // Initialize query
+    let query = CallSession.find(filter);
+
+    // Handle search: callId, sessionId, requestId OR user details
     if (search?.trim()) {
       const searchTerm = search.trim();
-    
-      // Prepare $or for string fields
-      const regex = new RegExp(searchTerm, 'i');
-    
-      filter.$or = [
-        // Regex search on user name and phone
-        { "userId.fullName": regex },
-        { "userId.phone": regex },
-      ];
-    
-      // Optional: If search looks like a valid ObjectId (24 hex chars), match it exactly
+      const searchRegex = new RegExp(searchTerm, 'i');
       const isObjectId = /^[0-9a-fA-F]{24}$/.test(searchTerm);
+
+      // Find users matching the search term first
+      const matchingUsers = await User.find({
+        $or: [
+          { fullName: searchRegex },
+          { phone: searchRegex },
+          { email: searchRegex }
+        ]
+      }).select('_id');
+
+      const matchingUserIds = matchingUsers.map(user => user._id);
+
+      // Build the OR conditions for search
+      const searchConditions = [];
+
+      // Always search on call/session fields
+      searchConditions.push(
+        { callId: searchRegex },
+        { sessionId: searchRegex },
+        { requestId: searchRegex }
+      );
+
+      // Add ObjectId search if valid
       if (isObjectId) {
-        filter.$or.push({ _id: searchTerm });
+        searchConditions.push({ _id: searchTerm });
       }
+
+      // If we found matching users, add user ID search
+      if (matchingUserIds.length > 0) {
+        searchConditions.push({ userId: { $in: matchingUserIds } });
+      }
+
+      // Apply the search conditions to the query
+      query = CallSession.find({
+        ...filter,
+        $or: searchConditions
+      });
     }
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    // Pagination setup
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
     const sortOptions = { [sortBy]: sortOrder === "desc" ? -1 : 1 };
 
-    // Main query with population
-    const callSession = await CallSession.find(filter)
+    // Clone query for counting
+    const countQuery = query.clone();
+
+    // Execute main query with population
+    const callSessions = await query
       .populate("userId", "fullName avatar phone gender email")
       .sort(sortOptions)
-
       .skip(skip)
-      .limit(parseInt(limit))
-      .lean(); // faster + easier to manipulate
+      .limit(limitNum)
+      .lean();
 
-    const total = await CallSession.countDocuments(filter);
+    // Get total count
+    const total = await countQuery.countDocuments();
 
-    // Format response exactly like chat sessions
-    const formattedCalls = callSession.map((call) => ({
+    // Format response
+    const formattedCalls = callSessions.map((call) => ({
       _id: call._id,
       callId: call.callId || call._id,
       requestId: call.requestId,
@@ -1118,38 +947,33 @@ export const getAstrologerCallSessions = async (req, res) => {
       callType: call.callType,
       direction: call.direction,
       status: call.status,
-
       user: call.userId,
-
       ratePerMinute: call.ratePerMinute,
       totalAmount: call.totalCost || 0,
       duration: call.totalDuration || 0,
       billedDuration: call.billedDuration || 0,
-
       connectTime: call.connectedAt,
       startTime: call.requestedAt,
       endTime: call.endedAt,
-
       userRating: call.userRating?.stars,
       userFeedback: call.userRating?.review,
-
       paymentStatus: call.paymentStatus || "PENDING",
-
       createdAt: call.createdAt,
       updatedAt: call.updatedAt,
     }));
 
+    const totalPages = Math.ceil(total / limitNum);
 
     return res.status(200).json({
       success: true,
       data: formattedCalls,
       pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / limit),
+        currentPage: pageNum,
+        totalPages: totalPages,
         totalCalls: total,
-        hasNext: page < Math.ceil(total / limit),
-        hasPrev: page > 1,
-        limit: parseInt(limit),
+        hasNext: pageNum < totalPages,
+        hasPrev: pageNum > 1,
+        limit: limitNum,
       },
     });
   } catch (error) {
@@ -1180,11 +1004,7 @@ export const getCallSessionDetails = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Call session not found or access denied");
   }
 
-  // Optional: hide sensitive fields from the other party if needed
-  // e.g. hide recordingUrl from user if policy says only astrologer can access
-  // if (req.user.role === "user" && call.recordingUrl) {
-  //     delete call.recordingUrl;
-  // }
+
 
   return res
     .status(200)

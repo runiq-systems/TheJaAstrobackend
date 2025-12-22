@@ -1081,6 +1081,7 @@ export const getSessionBilling = asyncHandler(async (req, res) => {
 /**
  * Get all chat sessions for astrologer with filtering
  */
+
 export const getAstrologerSessions = async (req, res) => {
     try {
         const astrologerId = req.user.id;
@@ -1116,34 +1117,76 @@ export const getAstrologerSessions = async (req, res) => {
             if (dateTo) filter.createdAt.$lte = new Date(dateTo);
         }
 
-        // Search filter (by sessionId or user details)
-        if (search.trim()) {
-            const searchRegex = new RegExp(search.trim(), 'i');
-            filter["userId.fullName"] = searchRegex;  // Direct field path
+        // Build the query
+        let query = ChatSession.find(filter);
+
+        // Search filter - Handle search by sessionId OR user details
+        if (search && search.trim()) {
+            const searchTerm = search.trim();
+            const searchRegex = new RegExp(searchTerm, 'i');
+
+            // Create an OR condition for multiple search fields
+            query = ChatSession.find({
+                ...filter,
+                $or: [
+                    { sessionId: { $regex: searchRegex } },
+                    { 'meta.requestId': { $regex: searchRegex } }
+                ]
+            });
+
+            // For user details, we need a different approach
+            // We'll find users matching the search first, then filter sessions
+            const matchingUsers = await User.find({
+                $or: [
+                    { fullName: { $regex: searchRegex } },
+                    { email: { $regex: searchRegex } },
+                    { phone: { $regex: searchRegex } }
+                ]
+            }).select('_id');
+
+            const matchingUserIds = matchingUsers.map(user => user._id);
+
+            // If we found users, search by their IDs
+            if (matchingUserIds.length > 0) {
+                query = ChatSession.find({
+                    ...filter,
+                    $or: [
+                        { sessionId: { $regex: searchRegex } },
+                        { 'meta.requestId': { $regex: searchRegex } },
+                        { userId: { $in: matchingUserIds } }
+                    ]
+                });
+            } else if (searchTerm.length > 0) {
+                // If no users found but search term exists, ensure we still filter
+                // This prevents returning all sessions when search finds no users
+                query = ChatSession.find({
+                    ...filter,
+                    $or: [
+                        { sessionId: { $regex: searchRegex } },
+                        { 'meta.requestId': { $regex: searchRegex } }
+                    ]
+                });
+            }
         }
+
         // Pagination options
-        const options = {
-            page: parseInt(page),
-            limit: parseInt(limit),
-            sort: { [sortBy]: sortOrder === "desc" ? -1 : 1 },
-            populate: [
-                {
-                    path: "userId",
-                    select: "fullName gender email phone"
-                }
-            ]
-        };
+        const pageNum = parseInt(page);
+        const limitNum = parseInt(limit);
+        const skip = (pageNum - 1) * limitNum;
+
+        // Clone query for counting
+        const countQuery = query.clone();
 
         // Execute query with pagination
-        const sessions = await ChatSession.find(filter)
+        const sessions = await query
             .populate("userId", "fullName gender email phone")
-            .sort(options.sort)
-            .limit(options.limit * 1)
-            .skip((options.page - 1) * options.limit)
+            .sort({ [sortBy]: sortOrder === "desc" ? -1 : 1 })
+            .limit(limitNum)
+            .skip(skip)
             .exec();
 
         // Get total count for pagination
-        const total = await ChatSession.countDocuments(filter);
+        const total = await countQuery.countDocuments();
 
         // Format response
         const formattedSessions = sessions.map(session => ({
@@ -1167,15 +1210,18 @@ export const getAstrologerSessions = async (req, res) => {
             updatedAt: session.updatedAt
         }));
 
+        const totalPages = Math.ceil(total / limitNum);
+
         res.json({
             success: true,
             data: formattedSessions,
             pagination: {
-                currentPage: options.page,
-                totalPages: Math.ceil(total / options.limit),
+                currentPage: pageNum,
+                totalPages: totalPages,
                 totalSessions: total,
-                hasNext: options.page < Math.ceil(total / options.limit),
-                hasPrev: options.page > 1
+                hasNext: pageNum < totalPages,
+                hasPrev: pageNum > 1,
+                limit: limitNum
             }
         });
 
@@ -1188,7 +1234,6 @@ export const getAstrologerSessions = async (req, res) => {
         });
     }
 };
-
 
 
 /**
@@ -1611,7 +1656,7 @@ const notifyAstrologerAboutRequest = async (req, astrologerId, requestData) => {
         userId: astrologerId,
         title: "New Chat Request",
         message: `${requestData.userInfo.fullName} wants to chat with you`,
-     
+
         data: {
             screen: "Chat", // ✅ HERE
             type: "chat_message",
