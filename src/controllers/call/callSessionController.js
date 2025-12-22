@@ -1076,10 +1076,12 @@ export const getAstrologerCallSessions = async (req, res) => {
 
     // Search: call _id, user fullName, phone
     if (search?.trim()) {
+      const searchRegex = new RegExp(search.trim(), 'i');  // 'i' = case-insensitive
+    
       filter.$or = [
-        { _id: { $regex: search.trim(), $options: "i" } },
-        { "userId.fullName": { $regex: search.trim(), $options: "i" } },
-        { "userId.phone": { $regex: search.trim(), $options: "i" } },
+        { _id: searchRegex },  // works for string _id (ObjectId.toString())
+        { "userId.fullName": searchRegex },
+        { "userId.phone": searchRegex },
       ];
     }
 
