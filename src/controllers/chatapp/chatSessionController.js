@@ -1117,10 +1117,13 @@ export const getAstrologerSessions = async (req, res) => {
         }
 
         // Search filter (by sessionId or user details)
-        if (search.trim()) {
-            const searchRegex = new RegExp(search.trim(), 'i');
-            filter["userId.fullName"] = searchRegex;  // Direct field path
+        if (search) {
+            filter.$or = [
+                { sessionId: { $regex: search, $options: "i" } },
+                { "meta.userName": { $regex: search, $options: "i" } }
+            ];
         }
+
         // Pagination options
         const options = {
             page: parseInt(page),
