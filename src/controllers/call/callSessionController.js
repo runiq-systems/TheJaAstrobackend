@@ -801,7 +801,7 @@ export const cancelCallRequest = asyncHandler(async (req, res) => {
     // Notify astrologer
     emitSocketEvent(req, callRequest.astrologerId.toString(), ChatEventsEnum.CALL_CANCELLED, {
       requestId,
-      callRecordId: callRequest.callRecordId,
+      callRecordId: callRequest.callId,
       sessionId: callRequest.sessionId,
       cancelledAt: now,
       message: "User cancelled the call request"
