@@ -1075,14 +1075,24 @@ export const getAstrologerCallSessions = async (req, res) => {
     }
 
     // Search: call _id, user fullName, phone
+    // FIXED SEARCH: Handle _id separately (exact match only) + regex on string fields
     if (search?.trim()) {
-      const searchRegex = new RegExp(search.trim(), 'i');  // 'i' = case-insensitive
+      const searchTerm = search.trim();
+    
+      // Prepare $or for string fields
+      const regex = new RegExp(searchTerm, 'i');
     
       filter.$or = [
-        { _id: searchRegex },  // works for string _id (ObjectId.toString())
-        { "userId.fullName": searchRegex },
-        { "userId.phone": searchRegex },
+        // Regex search on user name and phone
+        { "userId.fullName": regex },
+        { "userId.phone": regex },
       ];
+    
+      // Optional: If search looks like a valid ObjectId (24 hex chars), match it exactly
+      const isObjectId = /^[0-9a-fA-F]{24}$/.test(searchTerm);
+      if (isObjectId) {
+        filter.$or.push({ _id: searchTerm });
+      }
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
