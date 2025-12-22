@@ -820,6 +820,10 @@ export const cancelCallRequest = asyncHandler(async (req, res) => {
   }
 });
 
+import mongoose from "mongoose";
+import { CallSession } from "../../models/callapp/callSession.model.js";
+import User from "../../models/user.model.js";
+
 export const getAstrologerCallSessions = async (req, res) => {
   try {
     const astrologerId = req.user.id;
@@ -835,99 +839,94 @@ export const getAstrologerCallSessions = async (req, res) => {
       search,
     } = req.query;
 
-    // Build filter
-    const filter = { astrologerId };
+    // ===============================
+    // BASE FILTER
+    // ===============================
+    const filter = {
+      astrologerId: new mongoose.Types.ObjectId(astrologerId),
+    };
 
-    // Status filter
+    // ===============================
+    // STATUS FILTER
+    // ===============================
     if (status && status !== "ALL") {
       if (status === "ACTIVE") {
         filter.status = { $in: ["CONNECTED", "ACTIVE"] };
       } else if (status === "COMPLETED_CALLS") {
         filter.status = "COMPLETED";
       } else {
-        const statusMapping = {
-          'REQUESTED': 'REQUESTED',
-          'ACCEPTED': 'ACCEPTED',
-          'RINGING': 'RINGING',
-          'CONNECTED': 'CONNECTED',
-          'ACTIVE': 'ACTIVE',
-          'ON_HOLD': 'ON_HOLD',
-          'COMPLETED': 'COMPLETED',
-          'REJECTED': 'REJECTED',
-          'MISSED': 'MISSED',
-          'CANCELLED': 'CANCELLED',
-          'FAILED': 'FAILED',
-          'EXPIRED': 'EXPIRED',
-          'AUTO_ENDED': 'AUTO_ENDED'
-        };
-        filter.status = statusMapping[status] || status;
+        filter.status = status;
       }
     }
 
-    // Date range (based on call start time)
+    // ===============================
+    // DATE FILTER
+    // ===============================
     if (dateFrom || dateTo) {
       filter.startTime = {};
       if (dateFrom) filter.startTime.$gte = new Date(dateFrom);
       if (dateTo) filter.startTime.$lte = new Date(dateTo);
     }
 
-    // Initialize query
-    let query = CallSession.find(filter);
-
-    // Handle search: callId, sessionId, requestId OR user details
-    if (search?.trim()) {
+    // ===============================
+    // SEARCH (🔥 FIXED)
+    // ===============================
+    if (search && search.trim()) {
       const searchTerm = search.trim();
-      const searchRegex = new RegExp(searchTerm, 'i');
-      const isObjectId = /^[0-9a-fA-F]{24}$/.test(searchTerm);
+      const searchRegex = new RegExp(searchTerm, "i");
+      const isObjectId = mongoose.Types.ObjectId.isValid(searchTerm);
 
-      // Find users matching the search term first
-      const matchingUsers = await User.find({
+      // Find matching users
+      const users = await User.find({
         $or: [
           { fullName: searchRegex },
           { phone: searchRegex },
-          { email: searchRegex }
-        ]
-      }).select('_id');
+          { email: searchRegex },
+        ],
+      }).select("_id");
 
-      const matchingUserIds = matchingUsers.map(user => user._id);
+      const userIds = users.map(u => u._id);
 
-      // Build the OR conditions for search
-      const searchConditions = [];
-
-      // Always search on call/session fields
-      searchConditions.push(
-        { callId: searchRegex },
+      const searchConditions = [
+        // ✅ STRING FIELDS ONLY
         { sessionId: searchRegex },
-        { requestId: searchRegex }
-      );
+        { requestId: searchRegex },
+      ];
 
-      // Add ObjectId search if valid
+      // ✅ ObjectId fields ONLY if valid
       if (isObjectId) {
-        searchConditions.push({ _id: searchTerm });
+        searchConditions.push(
+          { _id: new mongoose.Types.ObjectId(searchTerm) },
+          { callId: new mongoose.Types.ObjectId(searchTerm) }
+        );
       }
 
-      // If we found matching users, add user ID search
-      if (matchingUserIds.length > 0) {
-        searchConditions.push({ userId: { $in: matchingUserIds } });
+      // ✅ User search
+      if (userIds.length > 0) {
+        searchConditions.push({ userId: { $in: userIds } });
       }
 
-      // Apply the search conditions to the query
-      query = CallSession.find({
-        ...filter,
-        $or: searchConditions
-      });
+      filter.$or = searchConditions;
     }
 
-    // Pagination setup
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
+    // ===============================
+    // PAGINATION & SORT
+    // ===============================
+    const pageNum = Number(page);
+    const limitNum = Number(limit);
     const skip = (pageNum - 1) * limitNum;
-    const sortOptions = { [sortBy]: sortOrder === "desc" ? -1 : 1 };
 
-    // Clone query for counting
+    const sortOptions = {
+      [sortBy]: sortOrder === "desc" ? -1 : 1,
+    };
+
+    // ===============================
+    // QUERY
+    // ===============================
+    const query = CallSession.find(filter);
+
     const countQuery = query.clone();
 
-    // Execute main query with population
     const callSessions = await query
       .populate("userId", "fullName avatar phone gender email")
       .sort(sortOptions)
@@ -935,11 +934,12 @@ export const getAstrologerCallSessions = async (req, res) => {
       .limit(limitNum)
       .lean();
 
-    // Get total count
     const total = await countQuery.countDocuments();
 
-    // Format response
-    const formattedCalls = callSessions.map((call) => ({
+    // ===============================
+    // 🔒 RESPONSE STRUCTURE (UNCHANGED)
+    // ===============================
+    const formattedCalls = callSessions.map(call => ({
       _id: call._id,
       callId: call.callId || call._id,
       requestId: call.requestId,
@@ -969,7 +969,7 @@ export const getAstrologerCallSessions = async (req, res) => {
       data: formattedCalls,
       pagination: {
         currentPage: pageNum,
-        totalPages: totalPages,
+        totalPages,
         totalCalls: total,
         hasNext: pageNum < totalPages,
         hasPrev: pageNum > 1,
@@ -985,6 +985,7 @@ export const getAstrologerCallSessions = async (req, res) => {
     });
   }
 };
+
 
 export const getCallSessionDetails = asyncHandler(async (req, res) => {
   const { callId } = req.params; // Mongo _id (or you can change to custom callId if you add one)
