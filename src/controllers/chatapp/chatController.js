@@ -410,60 +410,203 @@ export const markMessageAsRead = asyncHandler(async (req, res) => {
  */
 
 
+// export const getAllAstrologers = asyncHandler(async (req, res) => {
+//   try {
+//     const userId = req.user?.id || req.user?._id;
+
+//     const { page = 1, limit = 20, search = "", specialization } = req.query;
+//     const searchRegex = new RegExp(search, "i");
+
+//     // 🔍 Search criteria
+//     const criteria = {
+//       _id: { $ne: userId }, // exclude current user
+//       role: "astrologer",   // ONLY astrologers
+//       ...(search
+//         ? {
+//           $or: [
+//             { fullName: { $regex: searchRegex } },
+//             { email: { $regex: searchRegex } },
+//             { phone: { $regex: searchRegex } },
+//           ],
+//         }
+//         : {}),
+//     };
+
+//     const currentPage = parseInt(page) || 1;
+//     const perPage = parseInt(limit) || 20;
+
+//     // 📌 Fetch users + astrologer profile
+//     const users = await User.find(criteria)
+//       .select(
+//         "fullName _id phone role status isOnline lastSeen isverified"
+//       )
+//       .limit(perPage)
+//       .skip((currentPage - 1) * perPage)
+//       .sort({ fullName: 1 });
+
+//     // 📌 Pull astrologer details
+//     const astrologerIds = users.map((u) => u._id);
+
+//     const astrologerData = await Astrologer.find({
+//       userId: { $in: astrologerIds },
+//     });
+
+//     // 📌 Merge astrologer + user data
+//     const mergedData = users.map((user) => {
+//       const astro = astrologerData.find(
+//         (a) => String(a.userId) === String(user._id)
+//       );
+//       return {
+//         ...user.toObject(),
+//         astrologerProfile: astro || null,
+//       };
+//     });
+
+//     // 📌 count
+//     const totalUsers = await User.countDocuments(criteria);
+
+//     return res.status(200).json(
+//       new ApiResponse(200, {
+//         data: mergedData,
+//         pagination: {
+//           currentPage,
+//           totalPages: Math.ceil(totalUsers / perPage),
+//           totalUsers,
+//           hasNext: currentPage * perPage < totalUsers,
+//           hasPrev: currentPage > 1,
+//         },
+//       },
+//         "Astrologers retrieved successfully")
+//     );
+//   } catch (error) {
+//     return res
+//       .status(500)
+//       .json(new ApiResponse(500, null, "Internal Server Error"));
+//   }
+// });
+
+
+
+
+// helper to parse query ints
+
+
 export const getAllAstrologers = asyncHandler(async (req, res) => {
   try {
     const userId = req.user?.id || req.user?._id;
 
-    const { page = 1, limit = 20, search = "" } = req.query;
-    const searchRegex = new RegExp(search, "i");
-
-    // 🔍 Search criteria
-    const criteria = {
-      _id: { $ne: userId }, // exclude current user
-      role: "astrologer",   // ONLY astrologers
-      ...(search
-        ? {
-          $or: [
-            { fullName: { $regex: searchRegex } },
-            { email: { $regex: searchRegex } },
-            { phone: { $regex: searchRegex } },
-          ],
-        }
-        : {}),
-    };
+    const {
+      page = 1,
+      limit = 20,
+      search = "",
+      specialization = ""
+    } = req.query;
 
     const currentPage = parseInt(page) || 1;
     const perPage = parseInt(limit) || 20;
 
-    // 📌 Fetch users + astrologer profile
-    const users = await User.find(criteria)
-      .select(
-        "fullName _id phone role status isOnline lastSeen isverified"
-      )
-      .limit(perPage)
-      .skip((currentPage - 1) * perPage)
-      .sort({ fullName: 1 });
+    // Build aggregation pipeline
+    const pipeline = [];
 
-    // 📌 Pull astrologer details
-    const astrologerIds = users.map((u) => u._id);
+    // Stage 1: Match astrologers with specialization filter
+    const astrologerMatchStage = {
+      $match: {
+        userId: { $ne: new mongoose.Types.ObjectId(userId) }
+      }
+    };
 
-    const astrologerData = await Astrologer.find({
-      userId: { $in: astrologerIds },
-    });
-
-    // 📌 Merge astrologer + user data
-    const mergedData = users.map((user) => {
-      const astro = astrologerData.find(
-        (a) => String(a.userId) === String(user._id)
-      );
-      return {
-        ...user.toObject(),
-        astrologerProfile: astro || null,
+    if (specialization) {
+      astrologerMatchStage.$match.specialization = {
+        $elemMatch: { $regex: specialization, $options: 'i' }
       };
+    }
+
+    pipeline.push(astrologerMatchStage);
+
+    // Stage 2: Lookup user details
+    pipeline.push({
+      $lookup: {
+        from: 'users',
+        localField: 'userId',
+        foreignField: '_id',
+        as: 'userDetails'
+      }
     });
 
-    // 📌 count
-    const totalUsers = await User.countDocuments(criteria);
+    // Stage 3: Unwind user details
+    pipeline.push({ $unwind: '$userDetails' });
+
+    // Stage 4: Match user role
+    pipeline.push({
+      $match: {
+        'userDetails.role': 'astrologer'
+      }
+    });
+
+    // Stage 5: Apply search filter
+    if (search) {
+      pipeline.push({
+        $match: {
+          $or: [
+            { 'userDetails.fullName': { $regex: search, $options: 'i' } },
+            { 'userDetails.email': { $regex: search, $options: 'i' } },
+            { 'userDetails.phone': { $regex: search, $options: 'i' } }
+          ]
+        }
+      });
+    }
+
+    // Stage 6: Project required fields
+    pipeline.push({
+      $project: {
+        _id: '$userDetails._id',
+        fullName: '$userDetails.fullName',
+        phone: '$userDetails.phone',
+        role: '$userDetails.role',
+        status: '$userDetails.status',
+        isOnline: '$userDetails.isOnline',
+        lastSeen: '$userDetails.lastSeen',
+        isverified: '$userDetails.isverified',
+        astrologerProfile: {
+          userId: '$userId',
+          photo: '$photo',
+          specialization: '$specialization',
+          yearOfExpertise: '$yearOfExpertise',
+          yearOfExperience: '$yearOfExperience',
+          bio: '$bio',
+          description: '$description',
+          ratepermin: '$ratepermin',
+          rank: '$rank',
+          languages: '$languages',
+          qualification: '$qualification',
+          astrologerApproved: '$astrologerApproved',
+          accountStatus: '$accountStatus',
+          isProfilecomplet: '$isProfilecomplet',
+          bankDetails: '$bankDetails',
+          kyc: '$kyc',
+          createdAt: '$createdAt',
+          updatedAt: '$updatedAt'
+        }
+      }
+    });
+
+    // Stage 7: Sort
+    pipeline.push({ $sort: { 'fullName': 1 } });
+
+    // Stage 8: Pagination
+    pipeline.push({ $skip: (currentPage - 1) * perPage });
+    pipeline.push({ $limit: perPage });
+
+    // Execute aggregation for data
+    const [mergedData, totalResult] = await Promise.all([
+      Astrologer.aggregate(pipeline),
+      Astrologer.aggregate([
+        ...pipeline.slice(0, -2), // Remove skip and limit stages
+        { $count: 'total' }
+      ])
+    ]);
+
+    const totalUsers = totalResult[0]?.total || 0;
 
     return res.status(200).json(
       new ApiResponse(200, {
@@ -485,10 +628,6 @@ export const getAllAstrologers = asyncHandler(async (req, res) => {
   }
 });
 
-
-
-
-// helper to parse query ints
 const toInt = v => parseInt(v, 10) || 1;
 
 export const getRecentChats = async (req, res) => {
