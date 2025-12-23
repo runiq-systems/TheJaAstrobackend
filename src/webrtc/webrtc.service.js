@@ -76,89 +76,89 @@ export class WebRTCService {
   }
 
   // 1. This one MUST be called on every socket disconnect
-handleDisconnect(socket) {
-  const userId = socket.userId;
-  if (!userId) return;
+  handleDisconnect(socket) {
+    const userId = socket.userId;
+    if (!userId) return;
 
-  logger.http(`Socket disconnected: ${socket.id} (user: ${userId})`);
+    logger.http(`Socket disconnected: ${socket.id} (user: ${userId})`);
 
-  // Remove this socket from the user's set
-  const sockets = this.users.get(userId);
-  if (sockets) {
-    sockets.delete(socket.id);
-    if (sockets.size === 0) this.users.delete(userId);
+    // Remove this socket from the user's set
+    const sockets = this.users.get(userId);
+    if (sockets) {
+      sockets.delete(socket.id);
+      if (sockets.size === 0) this.users.delete(userId);
+    }
+
+    // ←←← ONLY if the user is/was in a call → give them time to reconnect
+    if (this.isUserInCall(userId)) {
+      const gracePeriod = 8000; // 8 seconds – adjust if you want 5s or 10s
+
+      setTimeout(() => {
+        // Did they come back with a new socket in the last 8 seconds?
+        if (this.users.has(userId) && this.users.get(userId).size > 0) {
+          logger.info(`User ${userId} reconnected in time → no refund needed`);
+          return;
+        }
+
+        // Really gone → treat as network drop
+        logger.warn(`User ${userId} did not reconnect → triggering refund flow`);
+        this.handleCallDisconnection(userId); // ← call the heavy one
+      }, gracePeriod);
+    }
   }
 
-  // ←←← ONLY if the user is/was in a call → give them time to reconnect
-  if (this.isUserInCall(userId)) {
-    const gracePeriod = 8000; // 8 seconds – adjust if you want 5s or 10s
+  // 2. This one does the actual refund (keep the cleaned version below)
+  async handleCallDisconnection(userId) {
+    const activeCall = this.activeCalls.get(userId);
+    if (!activeCall) return;
 
-    setTimeout(() => {
-      // Did they come back with a new socket in the last 8 seconds?
-      if (this.users.has(userId) && this.users.get(userId).size > 0) {
-        logger.info(`User ${userId} reconnected in time → no refund needed`);
-        return;
+    const otherUserId = activeCall.callerId === userId ? activeCall.receiverId : activeCall.callerId;
+    const callKey = activeCall.callKey;
+
+    try {
+      const timing = this.callTimings.get(callKey);
+      if (!timing?.callRecordId) {
+        return this.cleanupCallResources(callKey, userId, otherUserId);
       }
 
-      // Really gone → treat as network drop
-      logger.warn(`User ${userId} did not reconnect → triggering refund flow`);
-      this.handleCallDisconnection(userId); // ← call the heavy one
-    }, gracePeriod);
-  }
-}
+      const callSession = await CallSession.findOne({
+        callId: timing.callRecordId,
+        status: { $in: ["CONNECTED", "ACTIVE"] },
+        networkDropHandled: { $ne: true }
+      }).select("sessionId");
 
-// 2. This one does the actual refund (keep the cleaned version below)
-async handleCallDisconnection(userId) {
-  const activeCall = this.activeCalls.get(userId);
-  if (!activeCall) return;
+      if (!callSession) {
+        return this.cleanupCallResources(callKey, userId, otherUserId); // already handled or not active
+      }
 
-  const otherUserId = activeCall.callerId === userId ? activeCall.receiverId : activeCall.callerId;
-  const callKey = activeCall.callKey;
+      // Prevent double refund
+      await CallSession.findOneAndUpdate(
+        { sessionId: callSession.sessionId },
+        { networkDropHandled: true }
+      );
 
-  try {
-    const timing = this.callTimings.get(callKey);
-    if (!timing?.callRecordId) {
-      return this.cleanupCallResources(callKey, userId, otherUserId);
+      // Trigger your existing perfect endCall logic
+      const dummyReq = {
+        params: { sessionId: callSession.sessionId },
+        user: { _id: userId },
+        body: { reason: "network_loss" }
+      };
+      const dummyRes = { status() { return this; }, json() { return this; } };
+
+      await this.handleEndCall(dummyReq, dummyRes);
+
+      this.emitToUser(otherUserId, "callEnded", {
+        reason: "network_loss",
+        disconnectedBy: userId,
+        message: "Call ended due to network issue"
+      });
+
+    } catch (err) {
+      logger.error("handleCallDisconnection crashed", { userId, error: err.message });
+    } finally {
+      this.cleanupCallResources(callKey, userId, otherUserId);
     }
-
-    const callSession = await CallSession.findOne({
-      callId: timing.callRecordId,
-      status: { $in: ["CONNECTED", "ACTIVE"] },
-      networkDropHandled: { $ne: true }
-    }).select("sessionId");
-
-    if (!callSession) {
-      return this.cleanupCallResources(callKey, userId, otherUserId); // already handled or not active
-    }
-
-    // Prevent double refund
-    await CallSession.findOneAndUpdate(
-      { sessionId: callSession.sessionId },
-      { networkDropHandled: true }
-    );
-
-    // Trigger your existing perfect endCall logic
-    const dummyReq = {
-      params: { sessionId: callSession.sessionId },
-      user: { _id: userId },
-      body: { reason: "network_loss" }
-    };
-    const dummyRes = { status() { return this; }, json() { return this; } };
-
-    await this.handleEndCall(dummyReq, dummyRes);
-
-    this.emitToUser(otherUserId, "callEnded", {
-      reason: "network_loss",
-      disconnectedBy: userId,
-      message: "Call ended due to network issue"
-    });
-
-  } catch (err) {
-    logger.error("handleCallDisconnection crashed", { userId, error: err.message });
-  } finally {
-    this.cleanupCallResources(callKey, userId, otherUserId);
   }
-}
 
   // ---------------- User management ----------------
   async handleJoin(socket, { userId }) {
@@ -514,6 +514,8 @@ async handleCallDisconnection(userId) {
     { receiverId, callerId, callRecordId, reason = "user_busy" }
   ) {
     try {
+
+      logger.info("callRecord id rejecting call",callRecordId);
       const callKey = this.generateCallKey(callerId, receiverId);
 
       const callRecord = await Call.findByIdAndUpdate(

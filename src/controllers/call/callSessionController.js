@@ -799,12 +799,13 @@ export const cancelCallRequest = asyncHandler(async (req, res) => {
     clearCallTimer(requestId, 'request');
 
     // Notify astrologer
-    emitSocketEvent(req, callRequest.astrologerId.toString(), ChatEventsEnum.CALL_CANCELLED, {
-      requestId,
-      sessionId: callRequest.sessionId,
-      cancelledAt: now,
-      message: "User cancelled the call request"
-    });
+    // emitSocketEvent(req, callRequest.astrologerId.toString(), ChatEventsEnum.CALL_CANCELLED, {
+    //   requestId,
+    //   callRecordId: callRequest.callId,
+    //   sessionId: callRequest.sessionId,
+    //   cancelledAt: now,
+    //   message: "User cancelled the call request"
+    // });
 
     return res.status(200).json(
       new ApiResponse(200, { requestId, status: "CANCELLED" }, "Call request cancelled successfully")
@@ -820,9 +821,7 @@ export const cancelCallRequest = asyncHandler(async (req, res) => {
   }
 });
 
-import mongoose from "mongoose";
-import { CallSession } from "../../models/callapp/callSession.model.js";
-import User from "../../models/user.model.js";
+
 
 export const getAstrologerCallSessions = async (req, res) => {
   try {
