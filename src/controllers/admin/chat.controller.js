@@ -1,13 +1,14 @@
-import { CallSession } from "../../models/calllogs/callSession.js";
-import { User } from "../../models/user.js";
+import mongoose from 'mongoose';
+import { User } from '../../models/user.js';
+import { ChatSession } from '../../models/chatapp/chatSession.js';
 
-export const getAllAdminCalls = async (req, res) => {
-try {
+export const getAllAdminChat = async (req, res) => {
+  try {
     const {
       page = 1,
       limit = 20,
       search = '',
-      status = '', // REQUESTED, ACCEPTED, CONNECTED, COMPLETED, etc.
+      status = '', // REQUESTED, ACCEPTED, ACTIVE, COMPLETED, etc.
       dateRangeStart,
       dateRangeEnd,
       sortBy = 'requestedAt',
@@ -19,7 +20,7 @@ try {
     // Build filter
     const filter = {};
 
-    // Search by caller or astrologer name
+    // Search by user or astrologer name
     if (search) {
       const searchRegex = new RegExp(search, 'i');
       const [users, astrologers] = await Promise.all([
@@ -38,7 +39,7 @@ try {
 
     // Status filter
     if (status) {
-      filter.status = status;
+      filter.status = status.toUpperCase();
     }
 
     // Date range filter
@@ -49,17 +50,17 @@ try {
     }
 
     // Aggregate with populated names
-    const callsAgg = await CallSession.aggregate([
+    const chatsAgg = await ChatSession.aggregate([
       { $match: filter },
       {
         $lookup: {
           from: 'users',
           localField: 'userId',
           foreignField: '_id',
-          as: 'callerDetails',
+          as: 'userDetails',
         },
       },
-      { $unwind: { path: '$callerDetails', preserveNullAndEmptyArrays: true } },
+      { $unwind: { path: '$userDetails', preserveNullAndEmptyArrays: true } },
       {
         $lookup: {
           from: 'users',
@@ -73,9 +74,8 @@ try {
         $project: {
           _id: 1,
           sessionId: 1,
-          caller: '$callerDetails.fullName',
+          user: '$userDetails.fullName',
           astrologer: '$astrologerDetails.fullName',
-          callType: 1,
           duration: '$totalDuration',
           requestedAt: 1,
           totalCost: 1,
@@ -93,37 +93,46 @@ try {
     const todayEnd = new Date();
     todayEnd.setHours(23, 59, 59, 999);
 
-    const [totalCallsToday, ongoingCalls, avgDuration, revenueToday] = await Promise.all([
-      CallSession.countDocuments({ requestedAt: { $gte: todayStart, $lte: todayEnd } }),
-      CallSession.countDocuments({ status: 'CONNECTED' }),
-      CallSession.aggregate([
+    const yesterdayStart = new Date(todayStart);
+    yesterdayStart.setDate(todayStart.getDate() - 1);
+    const yesterdayEnd = new Date(todayEnd);
+    yesterdayEnd.setDate(todayEnd.getDate() - 1);
+
+    const [totalChatsToday, totalChatsYesterday, ongoingChats, avgDuration, revenueToday] = await Promise.all([
+      ChatSession.countDocuments({ requestedAt: { $gte: todayStart, $lte: todayEnd } }),
+      ChatSession.countDocuments({ requestedAt: { $gte: yesterdayStart, $lte: yesterdayEnd } }),
+      ChatSession.countDocuments({ status: { $in: ['ACTIVE', 'PAUSED'] } }),
+      ChatSession.aggregate([
         { $match: { status: 'COMPLETED', totalDuration: { $gt: 0 } } },
         { $group: { _id: null, avg: { $avg: '$totalDuration' } } },
       ]),
-      CallSession.aggregate([
+      ChatSession.aggregate([
         { $match: { status: 'COMPLETED', totalCost: { $gt: 0 } } },
         { $group: { _id: null, total: { $sum: '$totalCost' } } },
       ]),
     ]);
 
-    const avgDurationSeconds = avgDuration[0]?.avg || 0;
-    const avgDurationMin = Math.floor(avgDurationSeconds / 60);
-    const avgDurationSec = Math.floor(avgDurationSeconds % 60);
-    const formattedAvgDuration = `${avgDurationMin}:${avgDurationSec.toString().padStart(2, '0')}`;
+    const avgDurationMinutes = Math.floor((avgDuration[0]?.avg || 0) / 60);
+    const formattedAvgDuration = `${avgDurationMinutes} min`;
 
     const revenue = revenueToday[0]?.total || 0;
 
+    const chatsGrowthPercentage = totalChatsYesterday > 0
+      ? ((totalChatsToday - totalChatsYesterday) / totalChatsYesterday * 100).toFixed(1)
+      : '0.0';
+
     // Total count for pagination
-    const total = await CallSession.countDocuments(filter);
+    const total = await ChatSession.countDocuments(filter);
 
     res.json({
       stats: {
-        totalCallsToday,
-        ongoingCalls,
+        totalChatsToday,
+        ongoingChats,
         avgDuration: formattedAvgDuration,
         revenueToday: revenue,
+        chatsGrowthPercentage,
       },
-      calls: callsAgg,
+      chats: chatsAgg,
       pagination: {
         total,
         page: parseInt(page),
@@ -132,7 +141,7 @@ try {
       },
     });
   } catch (error) {
-    console.error('Get all call sessions error:', error);
+    console.error('Get all chat sessions error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 };
