@@ -30,6 +30,7 @@ import userRoute from "./routes/users/users.routes.js"
 import astro from './routes/astrologyRoutes/astrologyRoutes.js'
 import sendnotification from './routes/notification.routes.js'
 import adminRoute from "./routes/admin.routes.js"
+import kycroute from './routes/adminRoute/adminRoute.js'
 // import './cron/dailyHoroscope.cron.js'
 const app = express();
 dotenv.config({
@@ -101,6 +102,7 @@ app.use("/api/v1/call", callSession)
 app.use("/api/v1/Topastrologer", Topastrologer)
 app.use("/api/v1/users", userRoute)
 app.use("/api/v1/admin", adminRoute)
+app.use("/api/v1/kycroute", kycroute)
 
 app.use('/api/v1/wallet', walletRoutes);
 app.use('/api/v1/recharge', rechargeRoutes);
