@@ -13,21 +13,21 @@ const router = express.Router();
 router.get(
     "/astrologers/:astrologerId/verification",
     authMiddleware,
-    requireAdmin,
+    // requireAdmin,
     getAstrologerVerificationDetails
 );
 
 router.patch(
     "/astrologers/:astrologerId/kyc",
     authMiddleware,
-    requireAdmin,
+    // requireAdmin,
     updateAstrologerKYC
 );
 
 router.patch(
     "/astrologers/:astrologerId/bank",
     authMiddleware,
-    requireAdmin,
+    // requireAdmin,
     updateAstrologerBankDetails
 );
 

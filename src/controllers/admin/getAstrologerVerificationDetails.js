@@ -15,7 +15,7 @@ export const getAstrologerVerificationDetails = async (req, res) => {
             return res.status(400).json({ success: false, message: "Invalid astrologer ID" });
         }
 
-        const astrologer = await Astrologer.findById(astrologerId)
+        const astrologer = await Astrologer.findOne({ userId: astrologerId })
             .populate("userId", "fullName phone email")
             .lean();
 
