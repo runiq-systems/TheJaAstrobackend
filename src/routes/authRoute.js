@@ -11,7 +11,8 @@ router.post(
   "/auth/verify-otp",
   verifyOtpLimiter,
   verifyOtpController
-);router.post("/auth/logout",authMiddleware ,LogoutController)
+);
+router.post("/auth/logout",authMiddleware ,LogoutController)
 
 // Step-wise profile update
 router.patch("/profile/step/:step", authMiddleware, UpdateProfileStepController);
