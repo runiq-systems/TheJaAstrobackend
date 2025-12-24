@@ -20,6 +20,7 @@ import { getAdminWallet } from "../controllers/admin/wallet.controller.js";
 import {getAllAdminTransactions} from "../controllers/admin/transactions.controller.js"
 import { getAllAdminCalls } from "../controllers/admin/call.controller.js";
 import { getAllAdminChat } from "../controllers/admin/chat.controller.js";
+import { createManualPayout, getPayouts } from "../controllers/admin/payouts.controller.js";
 
 const router = express.Router();
 
@@ -39,6 +40,9 @@ router.get("/wallets/stats", getAdminWallet)
 router.get("/settings/app-settings", getAppSettings);
 router.patch("/settings/app-settings", updateAppSettings);
 router.get("/settings/commission", getGlobalCommission);
+
+router.get("/payouts/all", getPayouts)
+router.post("/payouts/manual/create", createManualPayout)
 
 router.get("/users/kundali-reports/:id", getUserKundaliReports);
 router.get("/users/kundali-matchings/:id", getUserKundaliMatchings);
