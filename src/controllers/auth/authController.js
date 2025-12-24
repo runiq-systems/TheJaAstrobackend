@@ -109,6 +109,98 @@ export async function registerController(req, res) {
   }
 }
 
+
+export async function adminregisterController(req, res) {
+  try {
+    const { phone, role } = req.body;
+
+    if (!phone) {
+      logger.warn("Phone number missing in request");
+      return res.status(400).json({
+        success: false,
+        message: "Phone number is required.",
+      });
+    }
+
+    const phoneRegex = /^[6-9]\d{9}$/;
+    if (!phoneRegex.test(phone)) {
+      logger.warn(`Invalid phone format: ${phone}`);
+      return res.status(400).json({
+        success: false,
+        message: "Invalid phone number format.",
+      });
+    }
+
+    const allowedRoles = ["admin"];
+    let finalRole = "admin"; // default
+
+    if (role) {
+      if (!allowedRoles.includes(role)) {
+        logger.warn(`Invalid role attempted: ${role}`);
+        return res.status(400).json({
+          success: false,
+          message: "Invalid role. Allowed: User, Astrologer",
+        });
+      }
+      finalRole = role;
+    }
+
+    let currentUser = await User.findOne({ phone });
+
+    const otp = generateOtp();
+    const otpExpires = new Date(Date.now() + 15 * 60 * 1000);
+
+    if (currentUser) {
+      currentUser.otp = otp;
+      currentUser.otpExpires = otpExpires;
+      await currentUser.save();
+
+      logger.info(`OTP resent to existing user: ${phone}`);
+    } else {
+      currentUser = await User.create({
+        phone,
+        role: finalRole,
+        otp: otp,
+        otpExpires,
+        isVerified: true,
+        userStatus: "Active",
+      });
+      await currentUser.save();
+
+      logger.info(`New user registered with role: ${finalRole}`);
+
+   
+    }
+
+
+    // const otpSent = await sendOtpMSG91(phone, otp);
+
+    // if (!otpSent) {
+    //   return res.status(500).json({
+    //     success: false,
+    //     message: "Failed to send OTP. Try again.",
+    //   });
+    // }
+
+    return res.status(200).json({
+      success: true,
+      message: "OTP sent successfully.",
+      data: {
+        phone: currentUser.phone,
+        role: currentUser.role,
+        userId: currentUser._id,
+        otpExpires: currentUser.otpExpires,
+      },
+    });
+  } catch (error) {
+    logger.error(`Error in registerController: ${error.message}`);
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error",
+    });
+  }
+}
+
 export const LogoutController = async (req, res) => {
   try {
     const userId = req.user.id;
