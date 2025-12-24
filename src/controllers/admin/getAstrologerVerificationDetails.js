@@ -48,7 +48,7 @@ export const updateAstrologerKYC = async (req, res) => {
         const { astrologerId } = req.params;
         const kycPayload = req.body;
 
-        const astrologer = await Astrologer.findById(astrologerId);
+        const astrologer = await Astrologer.findOne({ userId: astrologerId });
         if (!astrologer) {
             return res.status(404).json({ success: false, message: "Astrologer not found" });
         }
@@ -86,7 +86,7 @@ export const updateAstrologerBankDetails = async (req, res) => {
             });
         }
 
-        const astrologer = await Astrologer.findById(astrologerId);
+        const astrologer = await Astrologer.findOne({ userId: astrologerId });
         if (!astrologer) {
             return res.status(404).json({ success: false, message: "Astrologer not found" });
         }
@@ -112,7 +112,7 @@ export const approveOrRejectAstrologer = async (req, res) => {
         const { astrologerId } = req.params;
         const { action, rejectionReason } = req.body;
 
-        const astrologer = await Astrologer.findById(astrologerId);
+        const astrologer = await Astrologer.findOne({ userId: astrologerId });
         if (!astrologer) {
             return res.status(404).json({ success: false, message: "Astrologer not found" });
         }
