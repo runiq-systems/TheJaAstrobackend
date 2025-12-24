@@ -1,9 +1,10 @@
 import { startOfDay, endOfDay, subDays } from 'date-fns';
 import { User } from '../../models/user.js';
-import { Call } from '../../models/calllogs/call.js';
 import { Message } from '../../models/chatapp/message.js';
 import { Astrologer } from '../../models/astrologer.js';
-import { Chat } from '../../models/chatapp/chat.js';
+import { CallSession } from '../../models/calllogs/callSession.js';
+import { RechargeHistory } from '../../models/Wallet/AstroWallet.js';
+import { ChatSession } from '../../models/chatapp/chatSession.js';
 
 // Helper: Get start/end of today (IST)
 const getTodayRange = () => {
@@ -18,9 +19,11 @@ const getLast7Days = () => {
   const days = [];
   for (let i = 6; i >= 0; i--) {
     const date = subDays(new Date(), i);
+    const dateStr = date.toISOString().split('T')[0]; // "2025-12-18"
     days.push({
       name: date.toLocaleDateString('en-US', { weekday: 'short' }),
-      date: startOfDay(date),
+      date,
+      dateStr, // ← ADD THIS
     });
   }
   return days;
@@ -42,25 +45,33 @@ export const getDashboardStats = async (req, res) => {
     });
 
     // 3. Calls Today
-    const callsToday = await Call.countDocuments({
-      startTime: { $gte: today.start, $lte: today.end },
-      status: { $in: ['COMPLETED', 'CONNECTED'] },
+    const callsToday = await CallSession.countDocuments({
+      status: 'COMPLETED',
+      endedAt: { $gte: today.start, $lte: today.end },
     });
-
     // 4. Revenue Today (only completed calls)
-    const revenueTodayResult = await Call.aggregate([
+    const todayRecharges = await RechargeHistory.aggregate([
       {
         $match: {
-          startTime: { $gte: today.start, $lte: today.end },
-          status: 'COMPLETED',
+          status: 'SUCCESS',
+          $or: [
+            { completedAt: { $gte: today.start, $lte: today.end } },
+            { processedAt: { $gte: today.start, $lte: today.end } },
+            { updatedAt: { $gte: today.start, $lte: today.end } },
+            { createdAt: { $gte: today.start, $lte: today.end } },
+          ],
         },
       },
-      { $group: { _id: null, total: { $sum: '$totalAmount' } } },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: '$requestedAmount' },
+        },
+      },
     ]);
-    const revenueToday = revenueTodayResult[0]?.total || 0;
-
+    const revenueToday = todayRecharges[0]?.total || 0;
     // 5. Chats Today (messages sent today)
-    const chatsToday = await Message.countDocuments({
+    const chatsToday = await ChatSession.countDocuments({
       createdAt: { $gte: today.start, $lte: today.end },
     });
 
@@ -70,7 +81,7 @@ export const getDashboardStats = async (req, res) => {
       accountStatus: 'pending',
     });
 
-    // 7. Avg Response Time (last 100 messages, avg time between user msg & first astrologer reply)
+    // 7. Avg Response Time (last 60 messages, avg time between user msg & first astrologer reply)
     const responseTimes = await Message.aggregate([
     // Step 1: Get last 500 messages sorted by time
     { $sort: { createdAt: -1 } },
@@ -162,35 +173,63 @@ export const getDashboardStats = async (req, res) => {
     const avgResponseMin = responseTimes[0]?.avgResponseMinutes || 0;
 
     // 8. Active Sessions (active calls + active chats)
-    const activeCalls = await Call.countDocuments({
+    const activeCalls = await CallSession.countDocuments({
       status: 'CONNECTED',
       endTime: null,
     });
-    const activeChats = await Chat.countDocuments({}); // or use socket.io active users if you have it
+    const activeChats = await ChatSession.countDocuments({}); // or use socket.io active users if you have it
     const activeSessions = activeCalls + activeChats; // simplistic
 
     // Weekly Revenue & User Growth
     const last7Days = getLast7Days();
 
     // Revenue per day
-    const weeklyRevenue = await Call.aggregate([
+    const weeklyRechargeData = await RechargeHistory.aggregate([
       {
         $match: {
-          startTime: { $gte: subDays(new Date(), 6) },
-          status: 'COMPLETED',
+          status: 'SUCCESS',
+          $or: [
+            { completedAt: { $gte: subDays(new Date(), 6) } },
+            { processedAt: { $gte: subDays(new Date(), 6) } },
+            { updatedAt: { $gte: subDays(new Date(), 6) } },
+            { createdAt: { $gte: subDays(new Date(), 6) } },
+          ],
         },
       },
       {
         $group: {
-          _id: { $dateToString: { format: '%Y-%m-%d', date: '$startTime' } },
-          revenue: { $sum: '$totalAmount' },
+          _id: {
+            $dateToString: {
+              format: '%Y-%m-%d',
+              date: {
+                $cond: [
+                  { $ifNull: ['$completedAt', false] },
+                  '$completedAt',
+                  {
+                    $cond: [
+                      { $ifNull: ['$processedAt', false] },
+                      '$processedAt',
+                      {
+                        $cond: [
+                          { $ifNull: ['$updatedAt', false] },
+                          '$updatedAt',
+                          '$createdAt',
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+          revenue: { $sum: '$requestedAmount' },
         },
       },
       { $sort: { _id: 1 } },
     ]);
 
     const revenueData = last7Days.map((day) => {
-      const found = weeklyRevenue.find((r) => r._id === day.date.toISOString().split('T')[0]);
+      const found = weeklyRechargeData.find((r) => r._id === day.dateStr);
       return { name: day.name, revenue: found?.revenue || 0 };
     });
 

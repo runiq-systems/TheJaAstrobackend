@@ -559,7 +559,7 @@ export class WebRTCService {
 
   async handleCancelCall(socket, { callerId, receiverId, callRecordId }) {
     const callKey = this.generateCallKey(callerId, receiverId);
-
+    
     try {
       if (!callRecordId) callRecordId = this.getCallRecordId(callKey);
       if (!callRecordId) throw new Error("Call record ID not found");
