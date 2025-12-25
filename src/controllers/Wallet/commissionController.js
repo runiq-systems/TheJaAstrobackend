@@ -62,6 +62,145 @@ export const createCommissionRule = async (req, res) => {
     }
 };
 
+
+
+
+export const updateCommissionValue = async (req, res) => {
+    const session = await CommissionRule.startSession();
+    session.startTransaction();
+
+    try {
+        const { id } = req.params;
+        const { commissionValue, reason } = req.body;
+        const updatedBy = req.user.id;
+
+        if (commissionValue === undefined) {
+            await session.abortTransaction();
+            return res.status(400).json({
+                success: false,
+                message: 'commissionValue is required'
+            });
+        }
+
+        if (commissionValue < 0 || commissionValue > 100) {
+            await session.abortTransaction();
+            return res.status(400).json({
+                success: false,
+                message: 'commissionValue must be between 0 and 100'
+            });
+        }
+
+        const rule = await CommissionRule.findById(id).session(session);
+        if (!rule) {
+            await session.abortTransaction();
+            return res.status(404).json({
+                success: false,
+                message: 'Commission rule not found'
+            });
+        }
+
+        const oldValue = rule.commissionValue;
+
+        if (oldValue === commissionValue) {
+            await session.abortTransaction();
+            return res.status(400).json({
+                success: false,
+                message: 'commissionValue is already the same'
+            });
+        }
+
+        rule.commissionValue = commissionValue;
+        rule.updatedBy = updatedBy;
+        await rule.save({ session });
+
+        await CommissionAudit.create(
+            [{
+                action: 'RULE_UPDATE',
+                targetType: 'COMMISSION_RULE',
+                targetId: rule._id,
+                changes: [
+                    {
+                        field: 'commissionValue',
+                        oldValue,
+                        newValue: commissionValue
+                    }
+                ],
+                performedBy: updatedBy,
+                reason: reason || 'Commission value updated',
+                ipAddress: req.ip,
+                userAgent: req.get('User-Agent')
+            }],
+            { session }
+        );
+
+        await session.commitTransaction();
+
+        return res.json({
+            success: true,
+            message: 'Commission value updated successfully',
+            data: {
+                ruleId: rule._id,
+                oldCommissionValue: oldValue,
+                newCommissionValue: commissionValue
+            }
+        });
+
+    } catch (error) {
+        await session.abortTransaction();
+        console.error('Update commission value error:', error);
+
+        return res.status(500).json({
+            success: false,
+            message: 'Internal server error'
+        });
+    } finally {
+        session.endSession();
+    }
+};
+
+
+
+export const getAllCommissionValues = async (req, res) => {
+    try {
+        const rules = await CommissionRule.find(
+            { isActive: true },
+            {
+                name: 1,
+                commissionValue: 1,
+                'conditions.sessionType': 1,
+                calculationType: 1,
+                priority: 1,
+                isActive: 1
+            }
+        )
+            .sort({ priority: 1 })
+            .lean();
+
+        const formatted = rules.map(rule => ({
+            ruleId: rule._id,
+            name: rule.name,
+            sessionType: rule.conditions?.sessionType || ['GLOBAL'],
+            commissionValue: rule.commissionValue,
+            calculationType: rule.calculationType,
+            priority: rule.priority,
+            isActive: rule.isActive
+        }));
+
+        return res.json({
+            success: true,
+            data: formatted
+        });
+
+    } catch (error) {
+        console.error('Get commission values error:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Internal server error'
+        });
+    }
+};
+
+
 export const getCommissionRules = async (req, res) => {
     try {
         const { page = 1, limit = 20, isActive, calculationType } = req.query;

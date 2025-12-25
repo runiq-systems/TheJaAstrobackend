@@ -32,6 +32,10 @@ import sendnotification from './routes/notification.routes.js'
 import adminRoute from "./routes/admin.routes.js"
 import kycroute from './routes/adminRoute/adminRoute.js'
 // import './cron/dailyHoroscope.cron.js'
+
+import appSettingsRoutes from "./routes/appSettings.routes.js";
+
+
 const app = express();
 dotenv.config({
     path: "./.env",
@@ -112,6 +116,11 @@ app.use('/api/v1/payout', payoutRoute);
 app.use('/api/v1/commission', commissionRoutes);
 app.use('/api/v1/review', review);
 app.use('/api/v1/astro', astro);
+
+
+
+
+app.use("/api/v1/app-settings", appSettingsRoutes);
 
 app.use(errorHandler)
 export default httpserver;

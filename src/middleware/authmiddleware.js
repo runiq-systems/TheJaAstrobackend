@@ -108,7 +108,7 @@ export async function adminMiddleware(req, res, next) {
     }
 
 
-    if (user.role !== "user") {
+    if (user.role !== "admin") {
       logger.warn(
         `AdminAuth: User ${user._id} attempted admin access. Role = ${user.role}`
       );
@@ -145,7 +145,7 @@ export async function adminMiddleware(req, res, next) {
 
 // admin.middleware.js
 export const requireAdmin = (req, res, next) => {
-  if (req.user.role !== "ADMIN") {
+  if (req.user.role !== "admin") {
     return res.status(403).json({
       success: false,
       message: "Admin access required",

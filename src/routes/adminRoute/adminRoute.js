@@ -34,7 +34,7 @@ router.patch(
 router.patch(
     "/astrologers/:astrologerId/approval",
     authMiddleware,
-    requireAdmin,
+    // requireAdmin,
     approveOrRejectAstrologer
 );
 
