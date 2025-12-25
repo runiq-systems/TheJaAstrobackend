@@ -1,8 +1,9 @@
 import express from "express"
-import { adminregisterController, registerController, UpdateProfileStepController, UpdateProfileCompleteController, GetProfileController, LogoutController } from "../controllers/auth/authController.js"
+import { adminregisterController, registerController, UpdateProfileStepController, adminGetUserProfile, UpdateProfileCompleteController, GetProfileController, LogoutController, updateUserProfile } from "../controllers/auth/authController.js"
 import { verifyOtpController } from "../controllers/auth/verifyOtpController.js"
 import { authMiddleware } from "../middleware/authmiddleware.js"
 import { registerLimiter, verifyOtpLimiter } from "../middleware/ratelimiter.js"
+import { adminMiddleware } from "../middleware/authmiddleware.js"
 import multer from "multer"
 const router = express.Router()
 
@@ -36,6 +37,9 @@ const upload = multer({
 
 router.patch('/profile', authMiddleware, upload.single('file'), UpdateProfileCompleteController);
 router.get("/GetProfileController", authMiddleware, GetProfileController);
+
+router.get("/admin/adminGetUserProfile/:userId", adminMiddleware, adminGetUserProfile);
+router.put("/updateUserProfile/users", adminMiddleware, updateUserProfile);
 
 
 export default router

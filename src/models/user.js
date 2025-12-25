@@ -57,7 +57,7 @@ const userSchema = new mongoose.Schema(
     },
     isVerified: {
       type: Boolean,
-      default: false,
+      default: true,
     },
     isSuspend: {
       type: Boolean,
@@ -75,7 +75,7 @@ const userSchema = new mongoose.Schema(
     userStatus: {
       type: String,
       enum: ["Active", "InActive", "Blocked"],
-      default: "InActive",
+      default: "Active",
     },
     status: {
       type: String,

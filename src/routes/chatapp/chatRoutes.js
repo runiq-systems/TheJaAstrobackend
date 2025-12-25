@@ -20,9 +20,9 @@ import { upload } from "../../middleware/multer.js";
 const router = express.Router();
 
 // Apply JWT verification to all routes
+router.get("/all-users", getAllAstrologers);
 router.use(authMiddleware);
 
-router.get("/all-users", getAllAstrologers);
 router.get("/getRecentChats", getRecentChats);
 // Chat routes
 router.route("/one-on-one").post(createOrGetAOneOnOneChat);

@@ -3,6 +3,7 @@ import { User } from "../../models/user.js";
 import { generateOtp, sendOtpMSG91 } from "../../utils/generateOtp.js";
 import { Astrologer } from "../../models/astrologer.js";
 import { uploadToCloudinary } from "../../utils/uplodeimage.js";
+import mongoose from "mongoose";
 
 export async function registerController(req, res) {
   try {
@@ -56,8 +57,7 @@ export async function registerController(req, res) {
         role: finalRole,
         otp: otp,
         otpExpires,
-        isVerified: false,
-        userStatus: "InActive",
+        isVerified: true,
       });
       await currentUser.save();
 
@@ -169,7 +169,7 @@ export async function adminregisterController(req, res) {
 
       logger.info(`New user registered with role: ${finalRole}`);
 
-   
+
     }
 
 
@@ -428,5 +428,151 @@ export const GetProfileController = async (req, res) => {
       success: false,
       message: "Internal Server Error",
     });
+  }
+};
+
+
+
+/**
+ * Update User Profile (Enterprise Standard)
+ */
+export const updateUserProfile = async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
+    const requesterRole = req.user?.role; // user | admin
+
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid user ID",
+      });
+    }
+
+    /**
+     * Base fields allowed for all authenticated users
+     */
+    const userAllowedFields = [
+      "fullName",
+      "email",
+      "photo",
+      "gender",
+      "dateOfBirth",
+      "timeOfBirth",
+      "placeOfBirth",
+      "isAccurate",
+      "deviceToken",
+    ];
+
+    /**
+     * Admin-only sensitive fields
+     */
+    const adminOnlyFields = [
+      "userStatus",
+      "isSuspend",
+      "isVerified",
+    ];
+
+    const updatePayload = {};
+
+    /**
+     * Apply user-level fields
+     */
+    for (const field of userAllowedFields) {
+      if (req.body[field] !== undefined) {
+        updatePayload[field] = req.body[field];
+      }
+    }
+
+    /**
+     * Apply admin-only fields (strict gate)
+     */
+    if (requesterRole === "admin") {
+      for (const field of adminOnlyFields) {
+        if (req.body[field] !== undefined) {
+          updatePayload[field] = req.body[field];
+        }
+      }
+    }
+
+    if (Object.keys(updatePayload).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No valid fields provided for update",
+      });
+    }
+
+    /**
+     * Normalization
+     */
+    if (updatePayload.email) {
+      updatePayload.email = updatePayload.email.toLowerCase();
+    }
+
+    /**
+     * Atomic update
+     */
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { $set: updatePayload },
+      {
+        new: true,
+        runValidators: true,
+        projection: {
+          password: 0,
+          otp: 0,
+          otpExpires: 0,
+          refreshToken: 0,
+        },
+      }
+    ).lean();
+
+    if (!updatedUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "User profile updated successfully",
+      data: updatedUser,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+
+export const adminGetUserProfile = async (req, res, next) => {
+  try {
+    const targetUserId = req.params.userId;
+
+    if (!mongoose.Types.ObjectId.isValid(targetUserId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid user ID",
+      });
+    }
+
+    const user = await User.findById(targetUserId)
+      .select(
+        "-password -otp -otpExpires -refreshToken"
+      )
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: user,
+    });
+  } catch (error) {
+    next(error);
   }
 };

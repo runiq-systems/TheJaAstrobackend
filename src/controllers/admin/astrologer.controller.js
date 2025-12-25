@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import { User } from '../../models/user.js';
 import { Astrologer } from '../../models/astrologer.js';
- 
+
 export const getAllAdminAstrologers = async (req, res) => {
   try {
     const {
@@ -131,12 +131,12 @@ export const getAllAdminAstrologers = async (req, res) => {
     const totalCount = astrologersAgg.length < parseInt(limit)
       ? astrologersAgg.length + skip
       : await User.aggregate([
-          { $match: userFilter },
-          { $lookup: { from: 'astrologers', localField: '_id', foreignField: 'userId', as: 'astro' } },
-          { $unwind: '$astro' },
-          { $match: astroFilter },
-          { $count: 'total' },
-        ]).then(r => r[0]?.total || 0);
+        { $match: userFilter },
+        { $lookup: { from: 'astrologers', localField: '_id', foreignField: 'userId', as: 'astro' } },
+        { $unwind: '$astro' },
+        { $match: astroFilter },
+        { $count: 'total' },
+      ]).then(r => r[0]?.total || 0);
 
     res.json({
       stats: {
@@ -222,5 +222,179 @@ export const getAstrologerDetails = async (req, res) => {
   } catch (error) {
     console.error('Get astrologer details error:', error);
     res.status(500).json({ message: 'Server error' });
+  }
+};
+
+
+
+export const getAstrologerById = async (req, res) => {
+  try {
+    const { astrologerId } = req.params;
+
+    /* ============================
+       VALIDATION
+    ============================ */
+    if (!mongoose.Types.ObjectId.isValid(astrologerId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid astrologer ID",
+      });
+    }
+
+    /* ============================
+       DATABASE QUERY
+    ============================ */
+    const astrologer = await Astrologer.findOne({userId:astrologerId})
+      .populate({
+        path: "userId",
+        select: "fullName email phone photo gender isVerified",
+      })
+      .select("-__v") // Hide internal fields
+      .lean(); // Faster response, less memory
+
+    if (!astrologer) {
+      return res.status(404).json({
+        success: false,
+        message: "Astrologer not found",
+      });
+    }
+
+    /* ============================
+       RESPONSE
+    ============================ */
+    return res.status(200).json({
+      success: true,
+      message: "Astrologer details fetched successfully",
+      data: astrologer,
+    });
+  } catch (error) {
+    console.error("GET_ASTROLOGER_BY_ID_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+
+/**
+ * Update Astrologer By ID
+ * Enterprise Standard Controller
+ */
+export const updateAstrologerById = async (req, res) => {
+  try {
+    const { astrologerId } = req.params;
+    const requesterRole = req.user?.role || "user"; // user | admin | super_admin
+
+    /* ============================
+       VALIDATION
+    ============================ */
+    if (!mongoose.Types.ObjectId.isValid(astrologerId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid astrologer ID",
+      });
+    }
+
+    /* ============================
+       FIELD ALLOWLIST
+    ============================ */
+
+    // Fields astrologer/user can update
+    const userUpdatableFields = [
+      "photo",
+      "specialization",
+      "languages",
+      "bio",
+      "description",
+      "qualification",
+      "yearOfExpertise",
+      "yearOfExperience",
+      "bankDetails",
+    ];
+
+    // Admin-only sensitive fields
+    const adminUpdatableFields = [
+      "ratepermin",
+      "rank",
+      "astrologerApproved",
+      "accountStatus",
+      "isProfilecomplet",
+      "kyc",
+    ];
+
+    const allowedFields =
+      requesterRole === "admin" || requesterRole === "super_admin"
+        ? [...userUpdatableFields, ...adminUpdatableFields]
+        : userUpdatableFields;
+
+    /* ============================
+       BUILD SAFE UPDATE PAYLOAD
+    ============================ */
+    const updatePayload = {};
+
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        updatePayload[field] = req.body[field];
+      }
+    }
+
+    if (Object.keys(updatePayload).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No valid fields provided for update",
+      });
+    }
+
+    /* ============================
+       DATABASE UPDATE
+    ============================ */
+
+    const astrologer = await Astrologer.findOne({userId:astrologerId});
+    if (!astrologer) {
+      return res.status(404).json({
+        success: false,
+        message: "Astrologer not found",
+      });
+    }
+
+    const updatedAstrologer = await Astrologer.findByIdAndUpdate(
+      astrologer._id,
+      { $set: updatePayload },
+      {
+        new: true,
+        runValidators: true,
+      }
+    )
+      .populate({
+        path: "userId",
+        select: "fullName email phone photo isVerified",
+      })
+      .select("-__v")
+      .lean();
+
+    if (!updatedAstrologer) {
+      return res.status(404).json({
+        success: false,
+        message: "Astrologer not found",
+      });
+    }
+
+    /* ============================
+       RESPONSE
+    ============================ */
+    return res.status(200).json({
+      success: true,
+      message: "Astrologer updated successfully",
+      data: updatedAstrologer,
+    });
+  } catch (error) {
+    console.error("UPDATE_ASTROLOGER_BY_ID_ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
   }
 };
