@@ -1,5 +1,6 @@
 import { AppSettings } from "../models/appSettings.js";
 import { uploadOnCloudinary } from "../utils/cloudinary.js";
+import mongoose from "mongoose";
 // ==========================
 // GET / CREATE / UPDATE
 // ==========================
@@ -16,7 +17,7 @@ export const upsertAppSettings = async (req, res) => {
             newUserBonus: req.body.newUserBonus,
             minWalletBalance: req.body.minWalletBalance,
             maxWalletBalance: req.body.maxWalletBalance,
-            maintenanceMode: req.body.maintenanceMode,
+            maintenanceMode: req.body.maintenanceMode === 'true' || req.body.maintenanceMode === true,
             updatedBy: adminId,
         };
 
@@ -37,8 +38,13 @@ export const upsertAppSettings = async (req, res) => {
             updatePayload.homesecondpageBanner = upload.url;
         }
 
+        // Convert string numbers to actual numbers
+        updatePayload.newUserBonus = Number(updatePayload.newUserBonus);
+        updatePayload.minWalletBalance = Number(updatePayload.minWalletBalance);
+        updatePayload.maxWalletBalance = Number(updatePayload.maxWalletBalance);
+
         const settings = await AppSettings.findOneAndUpdate(
-            { _id: "APP_SETTINGS_SINGLETON" },
+            {},
             { $set: updatePayload },
             {
                 new: true,
@@ -57,9 +63,10 @@ export const upsertAppSettings = async (req, res) => {
         });
     } catch (error) {
         await session.abortTransaction();
+        console.error("Error updating app settings:", error);
         return res.status(500).json({
             success: false,
-            message: "Failed to update app settings",
+            message: error.message || "Failed to update app settings",
         });
     } finally {
         session.endSession();
