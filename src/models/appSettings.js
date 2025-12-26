@@ -2,6 +2,15 @@
 import mongoose from "mongoose";
 const AppSettingsSchema = new mongoose.Schema(
   {
+    homefirstpageBanner: {
+      type: String,
+      default: '',
+    },
+    homesecondpageBanner: {
+      type: String,
+      default: '',
+    },
+
     supportEmail: {
       type: String,
       default: 'info@thejaastro.com',
@@ -15,6 +24,11 @@ const AppSettingsSchema = new mongoose.Schema(
       type: String,
       default: '+91 98765 43210',
       trim: true,
+    },
+    newUserBonus: {
+      type: Number,
+      default: 50,
+      min: 0,
     },
     minWalletBalance: {
       type: Number,

@@ -1,47 +1,68 @@
-import AppSettings from "../models/AppSettings.model.js";
-
+import { AppSettings } from "../models/appSettings.js";
+import { uploadOnCloudinary } from "../utils/cloudinary.js";
 // ==========================
 // GET / CREATE / UPDATE
 // ==========================
 export const upsertAppSettings = async (req, res) => {
-    try {
-        const {
-            supportEmail,
-            supportPhone,
-            minWalletBalance,
-            maxWalletBalance,
-            maintenanceMode,
-        } = req.body;
+    const session = await mongoose.startSession();
+    session.startTransaction();
 
-        const adminId = req.user?._id; // if admin auth middleware exists
+    try {
+        const adminId = req.user?._id;
+
+        const updatePayload = {
+            supportEmail: req.body.supportEmail,
+            supportPhone: req.body.supportPhone,
+            newUserBonus: req.body.newUserBonus,
+            minWalletBalance: req.body.minWalletBalance,
+            maxWalletBalance: req.body.maxWalletBalance,
+            maintenanceMode: req.body.maintenanceMode,
+            updatedBy: adminId,
+        };
+
+        // Banner uploads (optional)
+        if (req.files?.homefirstpageBanner?.[0]) {
+            const upload = await uploadOnCloudinary(
+                req.files.homefirstpageBanner[0].path,
+                "app_settings/banners"
+            );
+            updatePayload.homefirstpageBanner = upload.url;
+        }
+
+        if (req.files?.homesecondpageBanner?.[0]) {
+            const upload = await uploadOnCloudinary(
+                req.files.homesecondpageBanner[0].path,
+                "app_settings/banners"
+            );
+            updatePayload.homesecondpageBanner = upload.url;
+        }
 
         const settings = await AppSettings.findOneAndUpdate(
-            {}, // no condition = singleton
-            {
-                supportEmail,
-                supportPhone,
-                minWalletBalance,
-                maxWalletBalance,
-                maintenanceMode,
-                updatedBy: adminId,
-            },
+            { _id: "APP_SETTINGS_SINGLETON" },
+            { $set: updatePayload },
             {
                 new: true,
-                upsert: true, // 🔥 CREATE if not exists
+                upsert: true,
+                session,
+                setDefaultsOnInsert: true,
             }
         );
 
+        await session.commitTransaction();
+
         return res.status(200).json({
             success: true,
-            message: "App settings updated successfully",
+            message: "App settings updated",
             data: settings,
         });
     } catch (error) {
-        console.error("App settings update error:", error);
+        await session.abortTransaction();
         return res.status(500).json({
             success: false,
             message: "Failed to update app settings",
         });
+    } finally {
+        session.endSession();
     }
 };
 

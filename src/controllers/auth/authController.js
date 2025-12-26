@@ -5,6 +5,7 @@ import { Astrologer } from "../../models/astrologer.js";
 import { uploadToCloudinary } from "../../utils/uplodeimage.js";
 import mongoose from "mongoose";
 
+
 export async function registerController(req, res) {
   try {
     const { phone, role } = req.body;

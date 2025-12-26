@@ -2,8 +2,9 @@ import { JWT_SECRET_KEY } from "../../config/constants.js";
 import { User } from "../../models/user.js";
 import logger from "../../utils/logger.js";
 import jwt from "jsonwebtoken";
-import { Wallet ,WalletHistory,WalletAudit} from "../../models/Wallet/AstroWallet.js";
+import { Wallet, WalletHistory, WalletAudit } from "../../models/Wallet/AstroWallet.js";
 import admin from "../../utils/firabse.js";
+import { AppSettings } from "../../models/appSettings.js";
 
 export async function verifyOtpController(req, res) {
   const { phone, otp, deviceToken } = req.body;
@@ -61,14 +62,25 @@ export async function verifyOtpController(req, res) {
     // 🟢 CREATE WALLET IF NOT EXISTS (Default ₹100)
     // -------------------------
     let wallet = await Wallet.findOne({ userId: currentUser._id });
-
+    // let appSettings = await AppSettings.findOne();
     if (!wallet) {
+
+      // Fetch global settings (read-only)
+      const appSettings = await AppSettings.findOne().lean();
+
+      // Decide amount based on role
+      const creditAmount =
+        currentUser.role === "astrologer"
+          ? 0
+          : appSettings?.newuserbonus ?? 0;
+
+
       wallet = new Wallet({
         userId: currentUser._id,
         balances: [
           {
             currency: "INR",
-            available: 100,   // default ₹100
+            available: creditAmount,   // default ₹100
             bonus: 0,
             locked: 0,
             pendingIncoming: 0,
@@ -83,12 +95,12 @@ export async function verifyOtpController(req, res) {
         userId: currentUser._id,
         date: new Date(),
         openingBalance: 0,
-        closingBalance: 100,
-        totalCredit: 100,
+        closingBalance: creditAmount,
+        totalCredit: creditAmount,
         totalDebit: 0,
       });
 
-      logger.info(`💰 Default wallet created with ₹100 for user ${currentUser.phone}`);
+      logger.info(`💰 Default wallet created with ₹${creditAmount} for user ${currentUser.phone}`);
     }
     // -------------------------
 
