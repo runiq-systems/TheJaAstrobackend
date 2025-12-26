@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import logger from "../../utils/logger.js";
 const { Schema } = mongoose;
 
 // ==================== MODEL REGISTRATION HELPER ====================
@@ -957,7 +958,7 @@ export const calculateCommission = async (
         { effectiveTo: { $gte: now } }
       ],
     }).sort({ priority: 1 });
-
+    logger.info('Commission Rule Found:', commissionRule);
     const baseCommission = commissionRule
       ? commissionRule.commissionValue
       : 20;
