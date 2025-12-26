@@ -1,55 +1,65 @@
 import mongoose from "mongoose";
 import { Payout, PayoutAccount } from "../../models/Wallet/AstroWallet.js";
-import {User} from "../../models/user.js"
-
+import { User } from "../../models/user.js"
 export const getPayouts = async (req, res) => {
   try {
-    const { 
-      status, 
-      astrologerId, 
-      startDate, 
-      endDate, 
-      page = 1, 
-      limit = 20 
+    const {
+      status,
+      astrologerId,
+      startDate,
+      endDate,
+      page = '1',
+      limit = '20',
+      export: shouldExport = 'false'
     } = req.query;
 
     const query = {};
 
-    if (status && status !== 'ALL') {
-      query.status = status;
-    }
-
+    if (status && status !== 'ALL') query.status = status;
     if (astrologerId && mongoose.isValidObjectId(astrologerId)) {
       query.astrologerId = astrologerId;
     }
-
-    if (startDate) {
-      query.createdAt = { ...query.createdAt, $gte: new Date(startDate) };
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) query.createdAt.$gte = new Date(startDate);
+      if (endDate) query.createdAt.$lte = new Date(endDate);
     }
 
-    if (endDate) {
-      query.createdAt = { ...query.createdAt, $lte: new Date(endDate) };
+    if (shouldExport === 'true') {
+      // Export mode - get all matching records without pagination
+      const payouts = await Payout.find(query)
+        .populate('astrologerId', 'fullName phone email')
+        .populate('payoutAccount')
+        .sort({ createdAt: -1 })
+        .lean();
+
+      return res.json({ success: true, data: payouts });
     }
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    // Normal paginated response
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
 
-    const payouts = await Payout.find(query)
-      .populate('astrologerId', 'name phone email')
-      .populate('payoutAccount')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(parseInt(limit));
-
-    const total = await Payout.countDocuments(query);
+    const [payouts, total] = await Promise.all([
+      Payout.find(query)
+        .populate('astrologerId', 'name phone email')
+        .populate('payoutAccount')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      Payout.countDocuments(query)
+    ]);
 
     res.json({
       success: true,
       data: payouts,
       pagination: {
         total,
-        page: parseInt(page),
-        pages: Math.ceil(total / limit),
-        limit: parseInt(limit)
+        page: pageNum,
+        pages: Math.ceil(total / limitNum),
+        limit: limitNum
       }
     });
   } catch (error) {
