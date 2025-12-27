@@ -41,7 +41,7 @@ router.get("/GetProfileController", authMiddleware, GetProfileController);
 router.get("/admin/adminGetUserProfile/:userId", adminMiddleware, adminGetUserProfile);
 router.put("/updateUserProfile/users", adminMiddleware, updateUserProfile);
 // routes/astrologer.routes.js
-router.get("/kyc/status", adminMiddleware, CheckKyc);
+router.get("/kyc/status", authMiddleware, CheckKyc);
 
 
 export default router
