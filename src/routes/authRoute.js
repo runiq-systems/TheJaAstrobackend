@@ -42,7 +42,7 @@ router.get("/admin/adminGetUserProfile/:userId", adminMiddleware, adminGetUserPr
 router.put("/updateUserProfile/users", adminMiddleware, updateUserProfile);
 // routes/astrologer.routes.js
 router.get("/kyc/status", authMiddleware, CheckKyc);
-router.get("/updateDeviceToken", authMiddleware, updateDeviceToken);
+router.post("/updateDeviceToken", authMiddleware, updateDeviceToken);
 
 
 export default router
