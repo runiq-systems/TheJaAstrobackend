@@ -1,5 +1,5 @@
 import express from "express"
-import { adminregisterController, registerController, UpdateProfileStepController, adminGetUserProfile, UpdateProfileCompleteController, GetProfileController, LogoutController, updateUserProfile } from "../controllers/auth/authController.js"
+import { CheckKyc, adminregisterController, registerController, UpdateProfileStepController, adminGetUserProfile, UpdateProfileCompleteController, GetProfileController, LogoutController, updateUserProfile } from "../controllers/auth/authController.js"
 import { verifyOtpController } from "../controllers/auth/verifyOtpController.js"
 import { authMiddleware } from "../middleware/authmiddleware.js"
 import { registerLimiter, verifyOtpLimiter } from "../middleware/ratelimiter.js"
@@ -40,6 +40,8 @@ router.get("/GetProfileController", authMiddleware, GetProfileController);
 
 router.get("/admin/adminGetUserProfile/:userId", adminMiddleware, adminGetUserProfile);
 router.put("/updateUserProfile/users", adminMiddleware, updateUserProfile);
+// routes/astrologer.routes.js
+router.get("/kyc/status", adminMiddleware, CheckKyc);
 
 
 export default router

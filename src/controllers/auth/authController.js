@@ -577,3 +577,84 @@ export const adminGetUserProfile = async (req, res, next) => {
     next(error);
   }
 };
+
+
+/**
+ * Check Astrologer KYC Status
+ * Enterprise-grade controller
+ */
+
+export const CheckKyc = async (req, res) => {
+  try {
+    const userId = req.user?._id;
+
+    /* -------------------- VALIDATION -------------------- */
+    if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or missing user ID",
+      });
+    }
+
+    /* -------------------- USER CHECK -------------------- */
+    const user = await User.findById(userId).select("role isSuspend userStatus");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    if (user.role !== "astrologer") {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. Not an astrologer account",
+      });
+    }
+
+    if (user.isSuspend || user.userStatus === "Blocked") {
+      return res.status(403).json({
+        success: false,
+        message: "Account is suspended or blocked",
+      });
+    }
+
+    /* -------------------- ASTROLOGER PROFILE -------------------- */
+    const astrologer = await Astrologer.findOne({ userId })
+      .select("kyc accountStatus astrologerApproved isProfilecomplet")
+      .lean();
+
+    if (!astrologer) {
+      return res.status(404).json({
+        success: false,
+        message: "Astrologer profile not found",
+      });
+    }
+
+    /* -------------------- KYC LOGIC -------------------- */
+    const hasKyc = !!astrologer.kyc;
+
+    const kycStatus = {
+      submitted: hasKyc,
+      verified: astrologer.accountStatus === "approved",
+      rejected: astrologer.accountStatus === "rejected",
+    };
+
+    /* -------------------- RESPONSE -------------------- */
+    return res.status(200).json({
+      success: true,
+      kyc: kycStatus,
+      accountStatus: astrologer.accountStatus,
+      astrologerApproved: astrologer.astrologerApproved,
+      isProfileComplete: astrologer.isProfilecomplet,
+    });
+  } catch (error) {
+    console.error("CheckKyc Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
