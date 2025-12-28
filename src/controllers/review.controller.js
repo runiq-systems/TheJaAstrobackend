@@ -1,6 +1,6 @@
 import { reviewService } from "../services/review.service.js";
-import { ChatRequest } from "../models/chatapp/chatRequest.js";
-import { CallRequest } from "../models/calllogs/callRequest.js";
+import { ChatSession } from "../models/chatapp/chatSession.js";
+import { CallSession } from "../models/calllogs/callSession.js";
 
 export const ReviewController = {
     // ⭐ Create review
@@ -63,15 +63,6 @@ export const ReviewController = {
     },
 };
 
-
-
-
-
-/**
- * GET TOTAL COMPLETED CHAT + CALL REQUEST COUNT
- * @route GET /api/v1/astro/completed-request-count
- * @access Private (Astrologer)
- */
 export const getCompletedRequestCountController = async (req, res) => {
     try {
         const { astrologerId } = req.params;
@@ -79,13 +70,13 @@ export const getCompletedRequestCountController = async (req, res) => {
 
         const [completedChats, completedCalls] = await Promise.all([
             // ✅ Completed Chats
-            ChatRequest.countDocuments({
+            ChatSession.countDocuments({
                 astrologerId,
                 status: "COMPLETED",
             }),
 
             // ✅ Completed Calls
-            CallRequest.countDocuments({
+            CallSession.countDocuments({
                 astrologerId,
                 status: "COMPLETED",
             }),
