@@ -201,6 +201,7 @@ export const requestChatSession = asyncHandler(async (req, res) => {
             requestId,
             sessionId,
             userId,
+            chatId: chat._id,
             userInfo: req.user,
             userMessage,
             ratePerMinute,
@@ -1699,23 +1700,40 @@ const notifyAstrologerAboutRequest = async (req, astrologerId, requestData) => {
         userId: astrologerId,
         title: "New Chat Request",
         message: `${requestData.userInfo.fullName} wants to chat with you`,
-
+        type: "chat_request",                 // ← new distinct type
+        channelId: "chat_channel",
         data: {
-            screen: "Chat", // ✅ HERE
-            type: "chat_message",
+            requestId,
+            sessionId,
+            userId: astrologerId,                     // who is requesting
+            chatId: requestData.chatId,
+            participant: {                      // very important!
+                _id: astrologerId,
+                fullName: requestData.userInfo.fullName,
+                avatar: requestData.userInfo.photo || null,
+                // phone: requestData.userInfo.phone
+            },
+            screen: "Chat"
 
-            requestId: requestData.requestId,
-            sessionId: requestData.sessionId,
-            userId: requestData.userId,
-            ratePerMinute: requestData.ratePerMinute
         }
     });
-};
+}
 
 // Export billing timers for external management
 // export { billingTimers };
 
-
+/**
+ * Sends a push notification using Firebase Cloud Messaging (FCM)
+ * @param {Object} options - Notification options
+ * @param {string} options.userId - Recipient user ID (to fetch device token)
+ * @param {string} options.title - Notification title
+ * @param {string} options.message - Notification body message
+ * @param {string} [options.type="chat_message"] - Type of notification (chat_message, chat_request, incoming_call, etc.)
+ * @param {string} [options.channelId="chat_channel"] - Android notification channel ID
+ * @param {Object} [options.data={}] - Custom data payload (will be stringified where needed)
+ * @param {string} [options.clickAction="FLUTTER_NOTIFICATION_CLICK"] - Android click action
+ * @returns {Promise<Object|null>} FCM response or null on failure
+ */
 export async function sendNotification({
     userId,
     title,
@@ -1725,70 +1743,73 @@ export async function sendNotification({
     data = {},
 }) {
     try {
-        // 1️⃣ Fetch user device token(s)
-        const user = await User.findById(userId).select("deviceToken fullName");
+        // 1. Fetch recipient's device token
+        const user = await User.findById(userId)
+            .select("deviceToken fullName")
+            .lean();
+
         if (!user || !user.deviceToken) {
-            console.warn(`⚠️ No device token for user: ${userId}`);
-            return;
+            console.warn(`⚠️ No valid device token found for user: ${userId}`);
+            return null;
         }
 
+        // 2. Prepare custom data – ensure everything is string (FCM requirement)
+        const stringifiedData = Object.keys(data).reduce((acc, key) => {
+            const value = data[key];
 
+            if (value === null || value === undefined) {
+                acc[key] = "";
+            } else if (typeof value === "object") {
+                // Objects (like participant) should be JSON stringified
+                acc[key] = JSON.stringify(value);
+            } else {
+                acc[key] = String(value);
+            }
 
-        // 2️⃣ Build payload (SAME channelId everywhere)
+            return acc;
+        }, {});
+
+        // 3. Build complete FCM payload
         const payload = {
             token: user.deviceToken,
 
             notification: {
-                title,
-                body: message,
+                title: title || "Notification",
+                body: message || "You have a new notification",
             },
 
             data: {
-                type,
+                type,              // Very important: chat_message / chat_request / incoming_call etc.
                 channelId,
-                ...Object.keys(data).reduce((acc, key) => {
-                    acc[key] = String(data[key]);
-                    return acc;
-                }, {}),
+                ...stringifiedData,
             },
 
             android: {
                 priority: "high",
-                notification: {
-                    channelId, // ✅ SAME channel used for chat request & chat message
-                    sound: "default",
-                    clickAction: "FLUTTER_NOTIFICATION_CLICK",
-                },
+          
             },
 
-            apns: {
-                headers: {
-                    "apns-priority": "10",
-                },
-                payload: {
-                    aps: {
-                        alert: {
-                            title,
-                            body: message,
-                        },
-                        sound: "default",
-                        contentAvailable: true,
-                    },
-                },
-            },
+           
         };
 
-        // 3️⃣ Send notification
+        // 4. Send the notification
         const response = await admin.messaging().send(payload);
 
         console.log(
-            `✅ Notification sent to ${user.fullName || userId} via ${channelId}`,
+            `✅ Notification sent successfully to ${user.fullName || userId} | Type: ${type} | Response:`,
             response
         );
 
         return response;
     } catch (error) {
-        console.error("❌ Error sending notification:", error);
+        console.error("❌ Failed to send notification:", {
+            userId,
+            title,
+            type,
+            error: error.message,
+            stack: error.stack,
+        });
+        return null;
     }
 }
 
