@@ -1722,18 +1722,7 @@ const notifyAstrologerAboutRequest = async (req, astrologerId, requestData) => {
 // Export billing timers for external management
 // export { billingTimers };
 
-/**
- * Sends a push notification using Firebase Cloud Messaging (FCM)
- * @param {Object} options - Notification options
- * @param {string} options.userId - Recipient user ID (to fetch device token)
- * @param {string} options.title - Notification title
- * @param {string} options.message - Notification body message
- * @param {string} [options.type="chat_message"] - Type of notification (chat_message, chat_request, incoming_call, etc.)
- * @param {string} [options.channelId="chat_channel"] - Android notification channel ID
- * @param {Object} [options.data={}] - Custom data payload (will be stringified where needed)
- * @param {string} [options.clickAction="FLUTTER_NOTIFICATION_CLICK"] - Android click action
- * @returns {Promise<Object|null>} FCM response or null on failure
- */
+
 export async function sendNotification({
     userId,
     title,
@@ -1743,73 +1732,70 @@ export async function sendNotification({
     data = {},
 }) {
     try {
-        // 1. Fetch recipient's device token
-        const user = await User.findById(userId)
-            .select("deviceToken fullName")
-            .lean();
-
+        // 1️⃣ Fetch user device token(s)
+        const user = await User.findById(userId).select("deviceToken fullName");
         if (!user || !user.deviceToken) {
-            console.warn(`⚠️ No valid device token found for user: ${userId}`);
-            return null;
+            console.warn(`⚠️ No device token for user: ${userId}`);
+            return;
         }
 
-        // 2. Prepare custom data – ensure everything is string (FCM requirement)
-        const stringifiedData = Object.keys(data).reduce((acc, key) => {
-            const value = data[key];
 
-            if (value === null || value === undefined) {
-                acc[key] = "";
-            } else if (typeof value === "object") {
-                // Objects (like participant) should be JSON stringified
-                acc[key] = JSON.stringify(value);
-            } else {
-                acc[key] = String(value);
-            }
 
-            return acc;
-        }, {});
-
-        // 3. Build complete FCM payload
+        // 2️⃣ Build payload (SAME channelId everywhere)
         const payload = {
             token: user.deviceToken,
 
             notification: {
-                title: title || "Notification",
-                body: message || "You have a new notification",
+                title,
+                body: message,
             },
 
             data: {
-                type,              // Very important: chat_message / chat_request / incoming_call etc.
+                type,
                 channelId,
-                ...stringifiedData,
+                ...Object.keys(data).reduce((acc, key) => {
+                    acc[key] = String(data[key]);
+                    return acc;
+                }, {}),
             },
 
             android: {
                 priority: "high",
-          
+                notification: {
+                    channelId, // ✅ SAME channel used for chat request & chat message
+                    sound: "default",
+                    clickAction: "FLUTTER_NOTIFICATION_CLICK",
+                },
             },
 
-           
+            apns: {
+                headers: {
+                    "apns-priority": "10",
+                },
+                payload: {
+                    aps: {
+                        alert: {
+                            title,
+                            body: message,
+                        },
+                        sound: "default",
+                        contentAvailable: true,
+                    },
+                },
+            },
         };
 
-        // 4. Send the notification
+        // 3️⃣ Send notification
         const response = await admin.messaging().send(payload);
 
         console.log(
-            `✅ Notification sent successfully to ${user.fullName || userId} | Type: ${type} | Response:`,
+            `✅ Notification sent to ${user.fullName || userId} via ${channelId}`,
             response
         );
 
         return response;
     } catch (error) {
-        console.error("❌ Failed to send notification:", {
-            userId,
-            title,
-            type,
-            error: error.message,
-            stack: error.stack,
-        });
-        return null;
+        console.error("❌ Error sending notification:", error);
     }
 }
 
