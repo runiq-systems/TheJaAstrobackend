@@ -201,7 +201,6 @@ export const requestChatSession = asyncHandler(async (req, res) => {
             requestId,
             sessionId,
             userId,
-            chatId: chat._id,
             userInfo: req.user,
             userMessage,
             ratePerMinute,
@@ -915,8 +914,8 @@ export const endChatSession = asyncHandler(async (req, res) => {
         };
 
         emitSocketEvent(req, chatSession.userId.toString(), ChatEventsEnum.SESSION_ENDED_EVENT, payload);
-        // emitSocketEvent(req, chatSession.astrologerId.toString(), ChatEventsEnum.SESSION_ENDED_EVENT, payload);
-        await new Promise(resolve => setTimeout(resolve, 100));
+        emitSocketEvent(req, chatSession.astrologerId.toString(), ChatEventsEnum.SESSION_ENDED_EVENT, payload);
+
         // ✅ 11️⃣ Return API response
         return res
             .status(200)
@@ -1700,24 +1699,18 @@ const notifyAstrologerAboutRequest = async (req, astrologerId, requestData) => {
         userId: astrologerId,
         title: "New Chat Request",
         message: `${requestData.userInfo.fullName} wants to chat with you`,
-        type: "chat_request",                 // ← new distinct type
-        channelId: "chat_channel",
-        data: {
-            requestId,
-            sessionId,
-            userId: astrologerId,                     // who is requesting
-            chatId: requestData.chatId,
-            participant: {                      // very important!
-                _id: astrologerId,
-                fullName: requestData.userInfo.fullName,
-                avatar: requestData.userInfo.photo || null,
-                // phone: requestData.userInfo.phone
-            },
-            screen: "Chat"
 
+        data: {
+            screen: "Chat", // ✅ HERE
+            type: "chat_message",
+
+            requestId: requestData.requestId,
+            sessionId: requestData.sessionId,
+            userId: requestData.userId,
+            ratePerMinute: requestData.ratePerMinute
         }
     });
-}
+};
 
 // Export billing timers for external management
 // export { billingTimers };
