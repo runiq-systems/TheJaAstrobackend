@@ -221,6 +221,20 @@ chatSessionSchema.statics.markExpiredSessions = async function () {
     }
 };
 
+
+chatSessionSchema.methods.shouldBeExpired = function () {
+    // Only REQUESTED sessions can expire
+    if (this.status !== "REQUESTED") return false;
+
+    if (!this.expiresAt) return false;
+
+    return new Date() > this.expiresAt;
+};
+
+chatSessionSchema.methods.isExpired = function () {
+    return this.expiresAt && new Date() > this.expiresAt;
+};
+
 // Instance Methods
 chatSessionSchema.methods.calculateCurrentCost = function () {
     const billedMinutes = Math.ceil(this.billedDuration / 60);
