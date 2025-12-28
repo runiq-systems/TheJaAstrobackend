@@ -624,52 +624,92 @@ export const cancelChatRequest = asyncHandler(async (req, res) => {
  */
 export const rejectChatRequest = asyncHandler(async (req, res) => {
     const { requestId } = req.params;
-    const astrologerId = req.user.id; // Changed from req.astrologer._id to req.user.id
+    const astrologerId = req.user.id;
 
     // Verify user is an astrologer
     if (req.user.role !== "astrologer") {
         throw new ApiError(403, "Only astrologers can reject chat requests");
     }
 
+    // Find chat request with correct status
     const chatRequest = await ChatRequest.findOne({
         requestId,
         astrologerId,
-        status: "PENDING"
     });
 
     if (!chatRequest) {
         throw new ApiError(404, "Chat request not found or already processed");
     }
 
-    if (chatRequest.isExpired()) {
-        await ChatRequest.findByIdAndUpdate(chatRequest._id, { status: "EXPIRED" });
+    // Check if chat session should be expired
+    const chatSession = await ChatSession.findById(chatRequest.sessionId);
+
+    if (!chatSession) {
+        throw new ApiError(404, "Associated chat session not found");
+    }
+
+    // Check if session should be expired
+    if (chatSession.shouldBeExpired()) {
+        // Mark as expired instead of rejected
+        await ChatSession.findByIdAndUpdate(chatSession._id, {
+            status: "EXPIRED",
+            endedAt: new Date(),
+            lastActivityAt: new Date(),
+            autoExpired: true
+        });
+
+        await ChatRequest.findByIdAndUpdate(chatRequest._id, {
+            status: "EXPIRED",
+            respondedAt: new Date()
+        });
+
+        // Notify user about expiration
+        emitSocketEvent(req, chatRequest.userId.toString(), ChatEventsEnum.SESSION_EXPIRED_EVENT, {
+            requestId: chatRequest.requestId,
+            sessionId: chatSession.sessionId,
+            astrologerId: astrologerId
+        });
+
         throw new ApiError(400, "Chat request has expired");
     }
 
-    // Update request and session
+    // If session is already expired, return appropriate response
+    if (chatSession.status === "EXPIRED") {
+        throw new ApiError(400, "Chat request has already expired");
+    }
+
+    // Only allow rejection if status is REQUESTED
+    if (chatSession.status !== "REQUESTED") {
+        throw new ApiError(400, `Cannot reject a session with status: ${chatSession.status}`);
+    }
+
+    // Update request and session to REJECTED
     await ChatRequest.findByIdAndUpdate(chatRequest._id, {
         status: "REJECTED",
         respondedAt: new Date()
     });
 
     await ChatSession.findByIdAndUpdate(chatRequest.sessionId, {
-        status: "REJECTED"
+        status: "REJECTED",
+        endedAt: new Date(),
+        lastActivityAt: new Date()
     });
 
-    // Notify user
+    // Notify user about rejection
     emitSocketEvent(req, chatRequest.userId.toString(), ChatEventsEnum.CHAT_REJECTED_EVENT, {
         requestId: chatRequest.requestId,
+        sessionId: chatSession.sessionId,
         astrologerId: astrologerId
     });
 
     return res.status(200).json(
         new ApiResponse(200, {
             requestId: chatRequest.requestId,
+            sessionId: chatSession.sessionId,
             status: "REJECTED"
         }, "Chat request rejected successfully")
     );
 });
-
 /**
  * @desc    Enhanced session end with proper settlement
  */
@@ -736,9 +776,7 @@ export const endChatSession = asyncHandler(async (req, res) => {
         const platformEarnings = Math.round(totalCost * 0.20);
         const astrologerEarnings = totalCost - platformEarnings;
 
-        console.log(`[END CHAT] ${isAstrologer ? "Astrologer" : "User"} ended session ${sessionId}`);
-        console.log(`[BILL] Duration: ${totalSeconds}s (${(totalSeconds / 60).toFixed(2)} min)`);
-        console.log(`[BILL] Total Cost: ₹${totalCost}`);
+
 
         // 6️⃣ Update ChatSession document
         chatSession.status = "COMPLETED";
