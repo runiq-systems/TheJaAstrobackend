@@ -1,6 +1,6 @@
 // models/chatapp/chatSession.js
 import mongoose from "mongoose";
-
+import { CommissionRule } from "../Wallet/AstroWallet.js";
 const chatSessionSchema = new mongoose.Schema(
     {
         sessionId: {
@@ -56,7 +56,7 @@ const chatSessionSchema = new mongoose.Schema(
                 "CANCELLED",      // User cancelled
                 "FAILED",          // Payment failed
                 "AUTO_ENDED"
-                
+
             ],
             default: "REQUESTED",
             index: true
@@ -184,6 +184,43 @@ chatSessionSchema.statics.findActiveSession = function (userId, astrologerId) {
     });
 };
 
+
+// Find expired sessions that need to be marked
+chatSessionSchema.statics.findExpiredSessions = function () {
+    const now = new Date();
+    return this.find({
+        expiresAt: { $lt: now },
+        status: { $in: ["REQUESTED"] },
+        autoExpired: { $ne: true } // Only get sessions not already marked as auto-expired
+    });
+};
+
+// Mark session as expired (to be called by a cron job or similar)
+chatSessionSchema.statics.markExpiredSessions = async function () {
+    try {
+        const expiredSessions = await this.findExpiredSessions();
+
+        const result = await this.updateMany(
+            {
+                _id: { $in: expiredSessions.map(s => s._id) }
+            },
+            {
+                $set: {
+                    status: "EXPIRED",
+                    endedAt: new Date(),
+                    autoExpired: true,
+                    lastActivityAt: new Date()
+                }
+            }
+        );
+
+        return result;
+    } catch (error) {
+        console.error("Error marking expired sessions:", error);
+        throw error;
+    }
+};
+
 // Instance Methods
 chatSessionSchema.methods.calculateCurrentCost = function () {
     const billedMinutes = Math.ceil(this.billedDuration / 60);
@@ -249,9 +286,18 @@ chatSessionSchema.methods.completeSession = async function () {
     // Calculate final billing (use active duration for billing)
     const billedMinutes = Math.ceil(this.billedDuration / 60);
     this.totalCost = Math.max(this.minimumCharge, billedMinutes * this.ratePerMinute);
+    // Simple commission fetch - just get the first active chat commission rule
+    const commissionRule = await CommissionRule.findOne({
+        isActive: true,
+        $or: [
+            { "conditions.sessionType": "CHAT" },
+            { "conditions.sessionType": { $size: 0 } } // Or rules that apply to all session types
+        ]
+    }).lean();
 
-    // Calculate earnings (20% platform commission + 18% GST)
-    const commissionRate = 0.20;
+    // Set commission rate (default to 20% if no rule found)
+    const commissionRate = commissionRule ?
+        Number(commissionRule.commissionValue) / 100 : 0.20;
     const taxRate = 0.18;
 
     const baseAmount = this.totalCost;

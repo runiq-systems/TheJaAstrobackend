@@ -164,22 +164,22 @@ export const approveOrRejectAstrologer = async (req, res) => {
         /* ===================== NOTIFICATIONS ===================== */
 
         // 🔔 Firebase Push
-        await sendPushNotification({
-            token: user.deviceToken,
-            title: pushTitle,
-            body: pushBody,
-            data: {
-                type: "ASTROLOGER_STATUS",
-                status: astrologer.accountStatus,
-            },
-        });
+        // await sendPushNotification({
+        //     token: user.deviceToken,
+        //     title: pushTitle,
+        //     body: pushBody,
+        //     data: {
+        //         type: "ASTROLOGER_STATUS",
+        //         status: astrologer.accountStatus,
+        //     },
+        // });
 
-        // 📧 Email
-        await sendEmail({
-            to: user.email,
-            subject: emailSubject,
-            html: emailHtml,
-        });
+        // // 📧 Email
+        // await sendEmail({
+        //     to: user.email,
+        //     subject: emailSubject,
+        //     html: emailHtml,
+        // });
 
         return res.json({
             success: true,

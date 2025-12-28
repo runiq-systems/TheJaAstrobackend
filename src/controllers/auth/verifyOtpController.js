@@ -135,6 +135,38 @@ export async function verifyOtpController(req, res) {
 }
 
 
+export const updateDeviceToken = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { deviceToken } = req.body;
+
+    if (!deviceToken) {
+      return res.status(400).json({
+        success: false,
+        message: 'Device token missing',
+      });
+    }
+
+    await User.findByIdAndUpdate(
+      userId,
+      { deviceToken },
+      { new: true }
+    );
+
+    res.json({
+      success: true,
+      message: 'Device token updated',
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update device token',
+    });
+  }
+};
+
+
+
 
 
 export async function sendNotification(req, res) {

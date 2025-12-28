@@ -1,6 +1,6 @@
 import express from "express"
 import { CheckKyc, adminregisterController, registerController, UpdateProfileStepController, adminGetUserProfile, UpdateProfileCompleteController, GetProfileController, LogoutController, updateUserProfile } from "../controllers/auth/authController.js"
-import { verifyOtpController } from "../controllers/auth/verifyOtpController.js"
+import { verifyOtpController, updateDeviceToken } from "../controllers/auth/verifyOtpController.js"
 import { authMiddleware } from "../middleware/authmiddleware.js"
 import { registerLimiter, verifyOtpLimiter } from "../middleware/ratelimiter.js"
 import { adminMiddleware } from "../middleware/authmiddleware.js"
@@ -42,6 +42,7 @@ router.get("/admin/adminGetUserProfile/:userId", adminMiddleware, adminGetUserPr
 router.put("/updateUserProfile/users", adminMiddleware, updateUserProfile);
 // routes/astrologer.routes.js
 router.get("/kyc/status", authMiddleware, CheckKyc);
+router.post("/updateDeviceToken", authMiddleware, updateDeviceToken);
 
 
 export default router
