@@ -914,8 +914,8 @@ export const endChatSession = asyncHandler(async (req, res) => {
         };
 
         emitSocketEvent(req, chatSession.userId.toString(), ChatEventsEnum.SESSION_ENDED_EVENT, payload);
-        emitSocketEvent(req, chatSession.astrologerId.toString(), ChatEventsEnum.SESSION_ENDED_EVENT, payload);
-
+        // emitSocketEvent(req, chatSession.astrologerId.toString(), ChatEventsEnum.SESSION_ENDED_EVENT, payload);
+        await new Promise(resolve => setTimeout(resolve, 100));
         // ✅ 11️⃣ Return API response
         return res
             .status(200)
