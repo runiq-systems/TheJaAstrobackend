@@ -1805,7 +1805,6 @@ export async function sendNotification({
       return;
     }
 
-    // 2️⃣ Build payload (SAME channelId everywhere)
     const payload = {
       token: user.deviceToken,
 
