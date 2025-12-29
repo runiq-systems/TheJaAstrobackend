@@ -198,33 +198,33 @@ export const requestChatSession = asyncHandler(async (req, res) => {
       { path: "astrologerId", select: "fullName phone avatar chatRate" },
     ]);
 
-    await sendNotification({
-      userId: astrologerId,
-      title: "New Chat Request",
-      message: `${req.user.fullName} wants to chat with you`,
-      type: "chat_request", // ← very important!
-      channelId: "chat_channel",
-      data: {
-        screen: "ChatRequestScreen", // ← or whatever your screen name is
-        targetTab: "Chat", // if you have bottom tabs → optional
-        requestId,
-        sessionId,
-        userId, // the one who sent request
-        ratePerMinute,
-        chatType,
-        chatId: chat._id,
-        // You can also add: chatId if already known
-      },
-    });
-    await notifyAstrologerAboutRequest(req, astrologerId, {
-      requestId,
-      sessionId,
-      userId,
-      userInfo: req.user,
-      userMessage,
-      ratePerMinute,
-      expiresAt: newExpires,
-    });
+        await sendNotification({
+            userId: astrologerId,
+            title: "New Chat Request",
+            message: `${req.user.fullName} wants to chat with you`,
+            type: "chat_request",                      // ← very important!
+            channelId: "chat_channel",
+            data: {
+                screen: "Chat",             // ← or whatever your screen name is
+                targetTab: "Chat",                    // if you have bottom tabs → optional
+                requestId,
+                sessionId,
+                userId,                                  // the one who sent request
+                ratePerMinute,
+                chatType,
+                chatId: chat._id
+                // You can also add: chatId if already known
+            },
+        });
+        await notifyAstrologerAboutRequest(req, astrologerId, {
+            requestId,
+            sessionId,
+            userId,
+            userInfo: req.user,
+            userMessage,
+            ratePerMinute,
+            expiresAt: newExpires
+        });
 
     return res.status(201).json(
       new ApiResponse(201, {
@@ -1808,42 +1808,42 @@ export async function sendNotification({
       return null;
     }
 
-    const payload = {
-      token: user.deviceToken,
-      notification: {
-        title,
-        body: message,
-      },
-      data: {
-        type, // very important!
-        channelId,
-        click_action: "FLUTTER_NOTIFICATION_CLICK", // still useful for some setups
-        screen: "ChatRequestScreen", // ← most important field for navigation
-        // You can also add: targetTab: "Chat" if you use bottom tabs
-        ...Object.fromEntries(
-          Object.entries(data).map(([k, v]) => [k, String(v)])
-        ),
-      },
-      android: {
-        priority: "high",
-        notification: {
-          channelId,
-          sound: "default",
-          clickAction: "FLUTTER_NOTIFICATION_CLICK",
-          tag: `chat_request_${data.requestId || Date.now()}`, // prevent stacking
-        },
-      },
-      apns: {
-        headers: { "apns-priority": "10" },
-        payload: {
-          aps: {
-            alert: { title, body: message },
-            sound: "default",
-            contentAvailable: true,
-          },
-        },
-      },
-    };
+        const payload = {
+            token: user.deviceToken,
+            notification: {
+                title,
+                body: message,
+            },
+            data: {
+                type,                        // very important!
+                channelId,
+                // click_action: "FLUTTER_NOTIFICATION_CLICK", // still useful for some setups
+                screen: "Chat", // ← most important field for navigation
+                // You can also add: targetTab: "Chat" if you use bottom tabs
+                ...Object.fromEntries(
+                    Object.entries(data).map(([k, v]) => [k, String(v)])
+                ),
+            },
+            android: {
+                priority: "high",
+                notification: {
+                    channelId,
+                    sound: "default",
+                    clickAction: "FLUTTER_NOTIFICATION_CLICK",
+                    tag: `chat_request_${data.requestId || Date.now()}`, // prevent stacking
+                },
+            },
+            apns: {
+                headers: { "apns-priority": "10" },
+                payload: {
+                    aps: {
+                        alert: { title, body: message },
+                        sound: "default",
+                        contentAvailable: true,
+                    },
+                },
+            },
+        };
 
     const response = await admin.messaging().send(payload);
     console.log(
