@@ -13,13 +13,14 @@ import mongoose from "mongoose";
 import admin from "../../utils/firabse.js";
 import { Astrologer } from "../../models/astrologer.js";
 
-import { Reservation, calculateCommission, generateTxId } from "../../models/Wallet/AstroWallet.js";
+import {
+    Reservation,
+    calculateCommission,
+    generateTxId,
+} from "../../models/Wallet/AstroWallet.js";
 // Global billing timers map
 const billingTimers = new Map();
 
-/**
- * @desc    Enhanced chat request with better validation and flow
- */
 export const requestChatSession = asyncHandler(async (req, res) => {
     const session = await mongoose.startSession();
 
@@ -38,8 +39,8 @@ export const requestChatSession = asyncHandler(async (req, res) => {
         }
 
         const astro = await Astrologer.findOne({
-            userId: astrologerId
-        })
+            userId: astrologerId,
+        });
         // -----------------------------------------
         // 🌟 Validate astrologer
         // -----------------------------------------
@@ -47,7 +48,7 @@ export const requestChatSession = asyncHandler(async (req, res) => {
             _id: astrologerId,
             role: "astrologer",
             userStatus: "Active",
-            isSuspend: false
+            isSuspend: false,
         })
             .session(session)
             .select("fullName phone avatar chatRate isOnline");
@@ -71,7 +72,7 @@ export const requestChatSession = asyncHandler(async (req, res) => {
         const existingSession = await ChatSession.findOne({
             userId,
             astrologerId,
-            status: { $in: ["REQUESTED", "ACTIVE"] }
+            status: { $in: ["REQUESTED", "ACTIVE"] },
         }).session(session);
 
         if (existingSession) {
@@ -98,7 +99,7 @@ export const requestChatSession = asyncHandler(async (req, res) => {
                     sessionId: existingSession.sessionId,
                     status: existingSession.status,
                     expiresAt: newExpires,
-                    message: "Existing session expiry extended"
+                    message: "Existing session expiry extended",
                 })
             );
         }
@@ -109,7 +110,7 @@ export const requestChatSession = asyncHandler(async (req, res) => {
         const existingPending = await ChatRequest.findOne({
             userId,
             astrologerId,
-            status: "PENDING"
+            status: "PENDING",
         }).session(session);
 
         if (existingPending) {
@@ -126,7 +127,7 @@ export const requestChatSession = asyncHandler(async (req, res) => {
                 new ApiResponse(200, {
                     requestId: existingPending.requestId,
                     expiresAt: newExpires,
-                    message: "Existing request expiry extended"
+                    message: "Existing request expiry extended",
                 })
             );
         }
@@ -153,9 +154,9 @@ export const requestChatSession = asyncHandler(async (req, res) => {
                     expiresAt: newExpires,
                     meta: {
                         chatId: chat._id,
-                        ratePerMinute
-                    }
-                }
+                        ratePerMinute,
+                    },
+                },
             ],
             { session }
         );
@@ -175,9 +176,9 @@ export const requestChatSession = asyncHandler(async (req, res) => {
                         request_Id: request[0]._id,
                         requestId: request[0].requestId,
                         chatId: chat._id,
-                        chatType
-                    }
-                }
+                        chatType,
+                    },
+                },
             ],
             { session }
         );
@@ -194,8 +195,9 @@ export const requestChatSession = asyncHandler(async (req, res) => {
         // Populate final response
         await chatSession[0].populate([
             { path: "userId", select: "fullName phone avatar" },
-            { path: "astrologerId", select: "fullName phone avatar chatRate" }
+            { path: "astrologerId", select: "fullName phone avatar chatRate" },
         ]);
+
 
         await sendNotification({
             userId: astrologerId,
@@ -211,6 +213,7 @@ export const requestChatSession = asyncHandler(async (req, res) => {
                 userId,                                  // the one who sent request
                 ratePerMinute,
                 chatType,
+                chatId: chat._id
                 // You can also add: chatId if already known
             },
         });
@@ -235,10 +238,9 @@ export const requestChatSession = asyncHandler(async (req, res) => {
                     fullName: astrologer.fullName,
                     phone: astrologer.phone,
                     chatRate: astrologer.chatRate || astro.ratepermin || 10,
-                }
+                },
             })
         );
-
     } catch (error) {
         await session.abortTransaction();
         throw error;
@@ -246,7 +248,6 @@ export const requestChatSession = asyncHandler(async (req, res) => {
         session.endSession();
     }
 });
-
 
 /**
  * @desc    Enhanced session start with better validation
@@ -277,9 +278,7 @@ export const startChatSession = asyncHandler(async (req, res) => {
             throw new ApiError(403, "Only the user can start the chat session");
         }
 
-        const astro = await Astrologer.findOne({
-
-        })
+        const astro = await Astrologer.findOne({});
 
         // Estimate initial cost
         const estimatedMinutes = 10;
@@ -311,43 +310,50 @@ export const startChatSession = asyncHandler(async (req, res) => {
             estimatedCost,
             {
                 sessionId: chatSession.sessionId,
-                estimatedMinutes: estimatedMinutes
+                estimatedMinutes: estimatedMinutes,
             }
         );
 
-        console.log(`💰 Creating reservation for session: ${sessionId}, Amount: ${estimatedCost}`);
+        console.log(
+            `💰 Creating reservation for session: ${sessionId}, Amount: ${estimatedCost}`
+        );
 
-        const reservation = await Reservation.create([{
-            reservationId: generateTxId("RES"),
-            userId: chatSession.userId,
-            astrologerId: chatSession.astrologerId,
-            sessionType: "CHAT",
-            ratePerMinute: chatSession.ratePerMinute,
-            currency: "INR",
-            commissionPercent: commissionDetails.finalCommissionPercent,
-            lockedAmount: estimatedCost,
-            totalCost: estimatedCost,
-            platformEarnings: commissionDetails.platformAmount,
-            astrologerEarnings: commissionDetails.astrologerAmount,
-            status: "RESERVED",
-            startAt: new Date(),
-            expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
-            commissionDetails: {
-                baseCommissionPercent: commissionDetails.baseCommissionPercent,
-                appliedOverrideId: commissionDetails.overrideId,
-                finalCommissionPercent: commissionDetails.finalCommissionPercent,
-                commissionRuleId: commissionDetails.appliedRuleId,
-                commissionAmount: commissionDetails.commissionAmount,
-                platformAmount: commissionDetails.platformAmount,
-                astrologerAmount: commissionDetails.astrologerAmount
-            },
-            meta: {
-                sessionId: chatSession.sessionId,
-                chatId: chatSession.chatId,
-                estimatedMinutes: estimatedMinutes,
-                chatSessionId: chatSession._id
-            }
-        }], { session });
+        const reservation = await Reservation.create(
+            [
+                {
+                    reservationId: generateTxId("RES"),
+                    userId: chatSession.userId,
+                    astrologerId: chatSession.astrologerId,
+                    sessionType: "CHAT",
+                    ratePerMinute: chatSession.ratePerMinute,
+                    currency: "INR",
+                    commissionPercent: commissionDetails.finalCommissionPercent,
+                    lockedAmount: estimatedCost,
+                    totalCost: estimatedCost,
+                    platformEarnings: commissionDetails.platformAmount,
+                    astrologerEarnings: commissionDetails.astrologerAmount,
+                    status: "RESERVED",
+                    startAt: new Date(),
+                    expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
+                    commissionDetails: {
+                        baseCommissionPercent: commissionDetails.baseCommissionPercent,
+                        appliedOverrideId: commissionDetails.overrideId,
+                        finalCommissionPercent: commissionDetails.finalCommissionPercent,
+                        commissionRuleId: commissionDetails.appliedRuleId,
+                        commissionAmount: commissionDetails.commissionAmount,
+                        platformAmount: commissionDetails.platformAmount,
+                        astrologerAmount: commissionDetails.astrologerAmount,
+                    },
+                    meta: {
+                        sessionId: chatSession.sessionId,
+                        chatId: chatSession.chatId,
+                        estimatedMinutes: estimatedMinutes,
+                        chatSessionId: chatSession._id,
+                    },
+                },
+            ],
+            { session }
+        );
 
         console.log(`📝 Reservation created: ${reservation[0]._id}`);
 
@@ -402,8 +408,6 @@ export const startChatSession = asyncHandler(async (req, res) => {
             }
         );
 
-
-
         // Also notify via user's personal room for reliability
         emitSocketEvent(
             req,
@@ -412,23 +416,27 @@ export const startChatSession = asyncHandler(async (req, res) => {
             {
                 sessionId: chatSession.sessionId,
                 status: "ACTIVE",
-                startedAt: new Date()
+                startedAt: new Date(),
             }
         );
 
         return res.status(200).json(
-            new ApiResponse(200, {
-                sessionId: chatSession.sessionId,
-                chatId: chatSession.chatId,
-                status: "ACTIVE",
-                startedAt: chatSession.startedAt,
-                ratePerMinute: chatSession.ratePerMinute,
-                estimatedCost,
-                reservedForMinutes: estimatedMinutes,
-                reservationId: reservation[0]._id,
-                reservationNumber: reservation[0].reservationId,
-                message: "Chat session started successfully",
-            }, "Chat session started successfully")
+            new ApiResponse(
+                200,
+                {
+                    sessionId: chatSession.sessionId,
+                    chatId: chatSession.chatId,
+                    status: "ACTIVE",
+                    startedAt: chatSession.startedAt,
+                    ratePerMinute: chatSession.ratePerMinute,
+                    estimatedCost,
+                    reservedForMinutes: estimatedMinutes,
+                    reservationId: reservation[0]._id,
+                    reservationNumber: reservation[0].reservationId,
+                    message: "Chat session started successfully",
+                },
+                "Chat session started successfully"
+            )
         );
     } catch (error) {
         await session.abortTransaction();
@@ -460,7 +468,7 @@ export const acceptChatRequest = asyncHandler(async (req, res) => {
         const chatRequest = await ChatRequest.findOne({
             requestId,
             astrologerId,
-            status: "PENDING"
+            status: "PENDING",
         }).session(session);
 
         if (!chatRequest) {
@@ -477,7 +485,9 @@ export const acceptChatRequest = asyncHandler(async (req, res) => {
         }
 
         // Find associated session
-        const chatSession = await ChatSession.findById(chatRequest.sessionId).session(session);
+        const chatSession = await ChatSession.findById(
+            chatRequest.sessionId
+        ).session(session);
         if (!chatSession) {
             throw new ApiError(404, "Chat session not found");
         }
@@ -489,7 +499,7 @@ export const acceptChatRequest = asyncHandler(async (req, res) => {
             chatRequest._id,
             {
                 status: "ACCEPTED",
-                respondedAt: now
+                respondedAt: now,
             },
             { session }
         );
@@ -498,40 +508,52 @@ export const acceptChatRequest = asyncHandler(async (req, res) => {
             chatSession._id,
             {
                 status: "ACCEPTED",
-                acceptedAt: now
+                acceptedAt: now,
             },
             { session }
         );
 
         await session.commitTransaction();
 
-        console.log(`✅ Chat request accepted: ${requestId} -> session: ${chatSession.sessionId}`);
+        console.log(
+            `✅ Chat request accepted: ${requestId} -> session: ${chatSession.sessionId}`
+        );
 
         // ✅ CRITICAL: Notify user via socket in chat room AND personal room
-        emitSocketEvent(req, chatSession.chatId.toString(), ChatEventsEnum.CHAT_ACCEPTED_EVENT, {
-            requestId: chatRequest.requestId,
-            sessionId: chatSession.sessionId,
-            astrologerId: astrologerId,
-            astrologerInfo: {
-                fullName: req.user.fullName,
-                phone: req.user.phone,
-                avatar: req.user.avatar
-            },
-            acceptedAt: now
-        });
+        emitSocketEvent(
+            req,
+            chatSession.chatId.toString(),
+            ChatEventsEnum.CHAT_ACCEPTED_EVENT,
+            {
+                requestId: chatRequest.requestId,
+                sessionId: chatSession.sessionId,
+                astrologerId: astrologerId,
+                astrologerInfo: {
+                    fullName: req.user.fullName,
+                    phone: req.user.phone,
+                    avatar: req.user.avatar,
+                },
+                acceptedAt: now,
+            }
+        );
 
         // Also send to user's personal room for reliability
-        emitSocketEvent(req, chatRequest.userId.toString(), ChatEventsEnum.CHAT_ACCEPTED_EVENT, {
-            requestId: chatRequest.requestId,
-            sessionId: chatSession.sessionId,
-            astrologerId: astrologerId,
-            astrologerInfo: {
-                fullName: req.user.fullName,
-                phone: req.user.phone,
-                avatar: req.user.avatar
-            },
-            acceptedAt: now
-        });
+        emitSocketEvent(
+            req,
+            chatRequest.userId.toString(),
+            ChatEventsEnum.CHAT_ACCEPTED_EVENT,
+            {
+                requestId: chatRequest.requestId,
+                sessionId: chatSession.sessionId,
+                astrologerId: astrologerId,
+                astrologerInfo: {
+                    fullName: req.user.fullName,
+                    phone: req.user.phone,
+                    avatar: req.user.avatar,
+                },
+                acceptedAt: now,
+            }
+        );
 
         // Send push notification to user
         await sendNotification({
@@ -543,19 +565,22 @@ export const acceptChatRequest = asyncHandler(async (req, res) => {
                 requestId: chatRequest.requestId,
                 sessionId: chatSession.sessionId,
                 astrologerId: astrologerId,
-                chatId: chatSession.chatId
-            }
+                chatId: chatSession.chatId,
+            },
         });
 
         return res.status(200).json(
-            new ApiResponse(200, {
-                requestId: chatRequest.requestId,
-                sessionId: chatSession.sessionId,
-                status: "ACCEPTED",
-                chatId: chatSession.chatId
-            }, "Chat request accepted successfully")
+            new ApiResponse(
+                200,
+                {
+                    requestId: chatRequest.requestId,
+                    sessionId: chatSession.sessionId,
+                    status: "ACCEPTED",
+                    chatId: chatSession.chatId,
+                },
+                "Chat request accepted successfully"
+            )
         );
-
     } catch (error) {
         await session.abortTransaction();
         throw error;
@@ -563,7 +588,6 @@ export const acceptChatRequest = asyncHandler(async (req, res) => {
         session.endSession();
     }
 });
-
 
 /**
  * @desc    Get session details
@@ -576,22 +600,26 @@ export const getSessionDetails = asyncHandler(async (req, res) => {
 
     const chatSession = await ChatSession.findOne({
         sessionId,
-        $or: [{ userId }, { astrologerId: userId }]
+        $or: [{ userId }, { astrologerId: userId }],
     }).populate([
         { path: "userId", select: "fullName phone avatar" },
-        { path: "astrologerId", select: "fullName phone avatar" }
+        { path: "astrologerId", select: "fullName phone avatar" },
     ]);
 
     if (!chatSession) {
         throw new ApiError(404, "Chat session not found");
     }
 
-    return res.status(200).json(
-        new ApiResponse(200, chatSession, "Session details retrieved successfully")
-    );
+    return res
+        .status(200)
+        .json(
+            new ApiResponse(
+                200,
+                chatSession,
+                "Session details retrieved successfully"
+            )
+        );
 });
-
-
 
 /**
  * @desc    User cancels chat request
@@ -605,7 +633,7 @@ export const cancelChatRequest = asyncHandler(async (req, res) => {
     const chatRequest = await ChatRequest.findOne({
         requestId,
         userId,
-        status: "PENDING"
+        status: "PENDING",
     });
 
     if (!chatRequest) {
@@ -614,27 +642,35 @@ export const cancelChatRequest = asyncHandler(async (req, res) => {
 
     // Update request and session
     await ChatRequest.findByIdAndUpdate(chatRequest._id, {
-        status: "CANCELLED"
+        status: "CANCELLED",
     });
 
     await ChatSession.findByIdAndUpdate(chatRequest.sessionId, {
-        status: "CANCELLED"
+        status: "CANCELLED",
     });
 
     // Notify astrologer
-    emitSocketEvent(req, chatRequest.astrologerId.toString(), ChatEventsEnum.CHAT_CANCELLED_EVENT, {
-        requestId: chatRequest.requestId,
-        userId: userId
-    });
+    emitSocketEvent(
+        req,
+        chatRequest.astrologerId.toString(),
+        ChatEventsEnum.CHAT_CANCELLED_EVENT,
+        {
+            requestId: chatRequest.requestId,
+            userId: userId,
+        }
+    );
 
     return res.status(200).json(
-        new ApiResponse(200, {
-            requestId: chatRequest.requestId,
-            status: "CANCELLED"
-        }, "Chat request cancelled successfully")
+        new ApiResponse(
+            200,
+            {
+                requestId: chatRequest.requestId,
+                status: "CANCELLED",
+            },
+            "Chat request cancelled successfully"
+        )
     );
 });
-
 
 /**
  * @desc    Astrologer rejects chat request
@@ -679,7 +715,7 @@ export const rejectChatRequest = asyncHandler(async (req, res) => {
 
         await ChatRequest.findByIdAndUpdate(chatRequest._id, {
             status: "EXPIRED",
-            respondedAt: new Date()
+            respondedAt: new Date(),
         });
 
         emitSocketEvent(
@@ -704,44 +740,52 @@ export const rejectChatRequest = asyncHandler(async (req, res) => {
 
     // Only allow rejection if status is REQUESTED
     if (chatSession.status !== "REQUESTED") {
-        throw new ApiError(400, `Cannot reject a session with status: ${chatSession.status}`);
+        throw new ApiError(
+            400,
+            `Cannot reject a session with status: ${chatSession.status}`
+        );
     }
 
     // Update request and session to REJECTED
     await ChatRequest.findByIdAndUpdate(chatRequest._id, {
         status: "REJECTED",
-        respondedAt: new Date()
+        respondedAt: new Date(),
     });
 
     await ChatSession.findByIdAndUpdate(chatRequest.sessionId, {
         status: "REJECTED",
         endedAt: new Date(),
-        lastActivityAt: new Date()
+        lastActivityAt: new Date(),
     });
 
     // Notify user about rejection
-    emitSocketEvent(req, chatRequest.userId.toString(), ChatEventsEnum.CHAT_REJECTED_EVENT, {
-        requestId: chatRequest.requestId,
-        sessionId: chatSession.sessionId,
-        astrologerId: astrologerId
-    });
-
-    return res.status(200).json(
-        new ApiResponse(200, {
+    emitSocketEvent(
+        req,
+        chatRequest.userId.toString(),
+        ChatEventsEnum.CHAT_REJECTED_EVENT,
+        {
             requestId: chatRequest.requestId,
             sessionId: chatSession.sessionId,
-            status: "REJECTED"
-        }, "Chat request rejected successfully")
+            astrologerId: astrologerId,
+        }
+    );
+
+    return res.status(200).json(
+        new ApiResponse(
+            200,
+            {
+                requestId: chatRequest.requestId,
+                sessionId: chatSession.sessionId,
+                status: "REJECTED",
+            },
+            "Chat request rejected successfully"
+        )
     );
 });
 /**
  * @desc    Enhanced session end with proper settlement
  */
 // In controllers/chatapp/chatController.js → Replace endChatSession
-
-
-
-
 
 export const endChatSession = asyncHandler(async (req, res) => {
     const { sessionId } = req.params;
@@ -775,7 +819,8 @@ export const endChatSession = asyncHandler(async (req, res) => {
         }
 
         // 3️⃣ Determine who ended
-        const isAstrologer = requesterId.toString() === chatSession.astrologerId.toString();
+        const isAstrologer =
+            requesterId.toString() === chatSession.astrologerId.toString();
         const isUser = requesterId.toString() === chatSession.userId.toString();
         if (!isAstrologer && !isUser) {
             throw new ApiError(403, "You are not part of this session");
@@ -797,10 +842,8 @@ export const endChatSession = asyncHandler(async (req, res) => {
         const totalCost = billedMinutes * ratePerMinute;
 
         // Platform & astrologer split (80/20)
-        const platformEarnings = Math.round(totalCost * 0.20);
+        const platformEarnings = Math.round(totalCost * 0.2);
         const astrologerEarnings = totalCost - platformEarnings;
-
-
 
         // 6️⃣ Update ChatSession document
         chatSession.status = "COMPLETED";
@@ -817,7 +860,9 @@ export const endChatSession = asyncHandler(async (req, res) => {
         // 8️⃣ Handle reservation settlement (wallet-based)
         if (chatSession.reservationId) {
             try {
-                const reservation = await Reservation.findById(chatSession.reservationId).session(session);
+                const reservation = await Reservation.findById(
+                    chatSession.reservationId
+                ).session(session);
                 if (reservation) {
                     const reservedAmount = reservation.lockedAmount || 0;
                     const usedAmount = totalCost;
@@ -932,23 +977,32 @@ export const endChatSession = asyncHandler(async (req, res) => {
             message: settlementMessage,
         };
 
-        emitSocketEvent(req, chatSession.userId.toString(), ChatEventsEnum.SESSION_ENDED_EVENT, payload);
-        emitSocketEvent(req, chatSession.astrologerId.toString(), ChatEventsEnum.SESSION_ENDED_EVENT, payload);
+        emitSocketEvent(
+            req,
+            chatSession.userId.toString(),
+            ChatEventsEnum.SESSION_ENDED_EVENT,
+            payload
+        );
+        emitSocketEvent(
+            req,
+            chatSession.astrologerId.toString(),
+            ChatEventsEnum.SESSION_ENDED_EVENT,
+            payload
+        );
 
         // ✅ 11️⃣ Return API response
         return res
             .status(200)
             .json(new ApiResponse(200, payload, "Chat session ended successfully"));
     } catch (error) {
-        if (!hasCommitted && session.inTransaction()) await session.abortTransaction();
+        if (!hasCommitted && session.inTransaction())
+            await session.abortTransaction();
         console.error("[endChatSession ERROR]", error);
         throw error;
     } finally {
         session.endSession();
     }
 });
-
-
 
 /**
  * Manual payment retry for failed sessions
@@ -977,14 +1031,16 @@ export const retrySessionPayment = asyncHandler(async (req, res) => {
 
         let paymentResult;
         try {
-            paymentResult = await WalletService.processSessionPayment(chatSession.reservationId);
+            paymentResult = await WalletService.processSessionPayment(
+                chatSession.reservationId
+            );
         } catch (paymentError) {
             // Update session with failure details
             chatSession.paymentError = {
                 message: paymentError.message,
                 code: paymentError.statusCode || 500,
                 timestamp: new Date(),
-                retryAttempt: (chatSession.paymentError?.retryAttempt || 0) + 1
+                retryAttempt: (chatSession.paymentError?.retryAttempt || 0) + 1,
             };
             await chatSession.save({ session });
             await session.commitTransaction();
@@ -1002,13 +1058,18 @@ export const retrySessionPayment = asyncHandler(async (req, res) => {
 
         console.log(`✅ Manual payment retry successful for session: ${sessionId}`);
 
-        return res.status(200).json(new ApiResponse(200, {
-            sessionId: chatSession.sessionId,
-            paymentStatus: "PAID",
-            astrologerEarnings: chatSession.astrologerEarnings,
-            totalCost: paymentResult.totalCost
-        }, "Payment processed successfully"));
-
+        return res.status(200).json(
+            new ApiResponse(
+                200,
+                {
+                    sessionId: chatSession.sessionId,
+                    paymentStatus: "PAID",
+                    astrologerEarnings: chatSession.astrologerEarnings,
+                    totalCost: paymentResult.totalCost,
+                },
+                "Payment processed successfully"
+            )
+        );
     } catch (error) {
         await session.abortTransaction();
         console.error("❌ Manual payment retry failed:", error);
@@ -1034,7 +1095,7 @@ export const pauseChatSession = asyncHandler(async (req, res) => {
     const chatSession = await ChatSession.findOne({
         sessionId,
         astrologerId,
-        status: "ACTIVE"
+        status: "ACTIVE",
     });
 
     if (!chatSession) {
@@ -1048,16 +1109,25 @@ export const pauseChatSession = asyncHandler(async (req, res) => {
     stopBillingTimer(sessionId);
 
     // Notify both parties
-    emitSocketEvent(req, chatSession.chatId.toString(), ChatEventsEnum.SESSION_PAUSED_EVENT, {
-        sessionId: chatSession.sessionId,
-        pausedAt: new Date()
-    });
+    emitSocketEvent(
+        req,
+        chatSession.chatId.toString(),
+        ChatEventsEnum.SESSION_PAUSED_EVENT,
+        {
+            sessionId: chatSession.sessionId,
+            pausedAt: new Date(),
+        }
+    );
 
     return res.status(200).json(
-        new ApiResponse(200, {
-            sessionId: chatSession.sessionId,
-            status: "PAUSED"
-        }, "Chat session paused successfully")
+        new ApiResponse(
+            200,
+            {
+                sessionId: chatSession.sessionId,
+                status: "PAUSED",
+            },
+            "Chat session paused successfully"
+        )
     );
 });
 
@@ -1078,7 +1148,7 @@ export const resumeChatSession = asyncHandler(async (req, res) => {
     const chatSession = await ChatSession.findOne({
         sessionId,
         astrologerId,
-        status: "PAUSED"
+        status: "PAUSED",
     });
 
     if (!chatSession) {
@@ -1089,19 +1159,32 @@ export const resumeChatSession = asyncHandler(async (req, res) => {
     await chatSession.resumeSession();
 
     // Start billing timer again
-    await startBillingTimer(chatSession.sessionId, chatSession.chatId, chatSession.ratePerMinute);
+    await startBillingTimer(
+        chatSession.sessionId,
+        chatSession.chatId,
+        chatSession.ratePerMinute
+    );
 
     // Notify both parties
-    emitSocketEvent(req, chatSession.chatId.toString(), ChatEventsEnum.SESSION_RESUMED_EVENT, {
-        sessionId: chatSession.sessionId,
-        resumedAt: new Date()
-    });
+    emitSocketEvent(
+        req,
+        chatSession.chatId.toString(),
+        ChatEventsEnum.SESSION_RESUMED_EVENT,
+        {
+            sessionId: chatSession.sessionId,
+            resumedAt: new Date(),
+        }
+    );
 
     return res.status(200).json(
-        new ApiResponse(200, {
-            sessionId: chatSession.sessionId,
-            status: "ACTIVE"
-        }, "Chat session resumed successfully")
+        new ApiResponse(
+            200,
+            {
+                sessionId: chatSession.sessionId,
+                status: "ACTIVE",
+            },
+            "Chat session resumed successfully"
+        )
     );
 });
 
@@ -1114,8 +1197,10 @@ export const getSessionBilling = asyncHandler(async (req, res) => {
 
     const chatSession = await ChatSession.findOne({
         sessionId,
-        $or: [{ userId }, { astrologerId: userId }]
-    }).select("sessionId ratePerMinute billedDuration totalCost status startedAt lastActivityAt");
+        $or: [{ userId }, { astrologerId: userId }],
+    }).select(
+        "sessionId ratePerMinute billedDuration totalCost status startedAt lastActivityAt"
+    );
 
     if (!chatSession) {
         throw new ApiError(404, "Chat session not found");
@@ -1130,15 +1215,19 @@ export const getSessionBilling = asyncHandler(async (req, res) => {
         totalCost: chatSession.totalCost,
         status: chatSession.status,
         sessionStart: chatSession.startedAt,
-        lastActivity: chatSession.lastActivityAt
+        lastActivity: chatSession.lastActivityAt,
     };
 
-    return res.status(200).json(
-        new ApiResponse(200, billingDetails, "Billing details retrieved successfully")
-    );
+    return res
+        .status(200)
+        .json(
+            new ApiResponse(
+                200,
+                billingDetails,
+                "Billing details retrieved successfully"
+            )
+        );
 });
-
-
 
 /**
  * Get all chat sessions for astrologer with filtering
@@ -1155,7 +1244,7 @@ export const getAstrologerSessions = async (req, res) => {
             dateTo,
             sortBy = "createdAt",
             sortOrder = "desc",
-            search
+            search,
         } = req.query;
 
         // Build filter object
@@ -1185,15 +1274,15 @@ export const getAstrologerSessions = async (req, res) => {
         // Search filter - Handle search by sessionId OR user details
         if (search && search.trim()) {
             const searchTerm = search.trim();
-            const searchRegex = new RegExp(searchTerm, 'i');
+            const searchRegex = new RegExp(searchTerm, "i");
 
             // Create an OR condition for multiple search fields
             query = ChatSession.find({
                 ...filter,
                 $or: [
                     { sessionId: { $regex: searchRegex } },
-                    { 'meta.requestId': { $regex: searchRegex } }
-                ]
+                    { "meta.requestId": { $regex: searchRegex } },
+                ],
             });
 
             // For user details, we need a different approach
@@ -1202,11 +1291,11 @@ export const getAstrologerSessions = async (req, res) => {
                 $or: [
                     { fullName: { $regex: searchRegex } },
                     { email: { $regex: searchRegex } },
-                    { phone: { $regex: searchRegex } }
-                ]
-            }).select('_id');
+                    { phone: { $regex: searchRegex } },
+                ],
+            }).select("_id");
 
-            const matchingUserIds = matchingUsers.map(user => user._id);
+            const matchingUserIds = matchingUsers.map((user) => user._id);
 
             // If we found users, search by their IDs
             if (matchingUserIds.length > 0) {
@@ -1214,9 +1303,9 @@ export const getAstrologerSessions = async (req, res) => {
                     ...filter,
                     $or: [
                         { sessionId: { $regex: searchRegex } },
-                        { 'meta.requestId': { $regex: searchRegex } },
-                        { userId: { $in: matchingUserIds } }
-                    ]
+                        { "meta.requestId": { $regex: searchRegex } },
+                        { userId: { $in: matchingUserIds } },
+                    ],
                 });
             } else if (searchTerm.length > 0) {
                 // If no users found but search term exists, ensure we still filter
@@ -1225,8 +1314,8 @@ export const getAstrologerSessions = async (req, res) => {
                     ...filter,
                     $or: [
                         { sessionId: { $regex: searchRegex } },
-                        { 'meta.requestId': { $regex: searchRegex } }
-                    ]
+                        { "meta.requestId": { $regex: searchRegex } },
+                    ],
                 });
             }
         }
@@ -1251,7 +1340,7 @@ export const getAstrologerSessions = async (req, res) => {
         const total = await countQuery.countDocuments();
 
         // Format response
-        const formattedSessions = sessions.map(session => ({
+        const formattedSessions = sessions.map((session) => ({
             _id: session._id,
             sessionId: session.sessionId,
             requestId: session.meta?.requestId,
@@ -1269,7 +1358,7 @@ export const getAstrologerSessions = async (req, res) => {
             userRating: session.userRating,
             paymentStatus: session.paymentStatus,
             createdAt: session.createdAt,
-            updatedAt: session.updatedAt
+            updatedAt: session.updatedAt,
         }));
 
         const totalPages = Math.ceil(total / limitNum);
@@ -1283,20 +1372,18 @@ export const getAstrologerSessions = async (req, res) => {
                 totalSessions: total,
                 hasNext: pageNum < totalPages,
                 hasPrev: pageNum > 1,
-                limit: limitNum
-            }
+                limit: limitNum,
+            },
         });
-
     } catch (error) {
         console.error("Get sessions error:", error);
         res.status(500).json({
             success: false,
             message: "Failed to fetch sessions",
-            error: error.message
+            error: error.message,
         });
     }
 };
-
 
 /**
  * Get session statistics for astrologer
@@ -1312,29 +1399,25 @@ export const getSessionStats = async (req, res) => {
             {
                 $match: {
                     astrologerId: new mongoose.Types.ObjectId(astrologerId),
-                    createdAt: dateFilter
-                }
+                    createdAt: dateFilter,
+                },
             },
             {
                 $group: {
                     _id: null,
                     totalSessions: { $sum: 1 },
                     completedSessions: {
-                        $sum: { $cond: [{ $eq: ["$status", "COMPLETED"] }, 1, 0] }
+                        $sum: { $cond: [{ $eq: ["$status", "COMPLETED"] }, 1, 0] },
                     },
                     activeSessions: {
                         $sum: {
-                            $cond: [
-                                { $in: ["$status", ["ACTIVE", "PAUSED"]] },
-                                1,
-                                0
-                            ]
-                        }
+                            $cond: [{ $in: ["$status", ["ACTIVE", "PAUSED"]] }, 1, 0],
+                        },
                     },
                     totalEarnings: { $sum: "$astrologerEarnings" },
                     totalDuration: { $sum: "$activeDuration" },
-                    averageRating: { $avg: "$userRating.stars" }
-                }
+                    averageRating: { $avg: "$userRating.stars" },
+                },
             },
             {
                 $project: {
@@ -1344,9 +1427,9 @@ export const getSessionStats = async (req, res) => {
                     activeSessions: 1,
                     totalEarnings: { $round: ["$totalEarnings", 2] },
                     totalDuration: 1,
-                    averageRating: { $round: ["$averageRating", 1] }
-                }
-            }
+                    averageRating: { $round: ["$averageRating", 1] },
+                },
+            },
         ]);
 
         // Get session status distribution
@@ -1354,15 +1437,15 @@ export const getSessionStats = async (req, res) => {
             {
                 $match: {
                     astrologerId: new mongoose.Types.ObjectId(astrologerId),
-                    createdAt: dateFilter
-                }
+                    createdAt: dateFilter,
+                },
             },
             {
                 $group: {
                     _id: "$status",
-                    count: { $sum: 1 }
-                }
-            }
+                    count: { $sum: 1 },
+                },
+            },
         ]);
 
         const defaultStats = {
@@ -1371,7 +1454,7 @@ export const getSessionStats = async (req, res) => {
             activeSessions: 0,
             totalEarnings: 0,
             totalDuration: 0,
-            averageRating: 0
+            averageRating: 0,
         };
 
         res.json({
@@ -1379,16 +1462,15 @@ export const getSessionStats = async (req, res) => {
             data: {
                 overview: stats[0] || defaultStats,
                 statusDistribution,
-                period
-            }
+                period,
+            },
         });
-
     } catch (error) {
         console.error("Get session stats error:", error);
         res.status(500).json({
             success: false,
             message: "Failed to fetch session statistics",
-            error: error.message
+            error: error.message,
         });
     }
 };
@@ -1418,16 +1500,22 @@ function getDateFilter(period) {
     return { $gte: startDate, $lte: now };
 }
 
-
-
 // Enhanced billing timer with proper session duration calculation
-const startBillingTimer = async (sessionId, chatId, ratePerMinute, reservationId, estimatedMinutes = 10) => {
+const startBillingTimer = async (
+    sessionId,
+    chatId,
+    ratePerMinute,
+    reservationId,
+    estimatedMinutes = 10
+) => {
     if (billingTimers.has(sessionId)) {
         console.log(`Billing already active for session: ${sessionId}`);
         return;
     }
 
-    console.log(`Starting billing timer for session: ${sessionId}, Estimated: ${estimatedMinutes} mins`);
+    console.log(
+        `Starting billing timer for session: ${sessionId}, Estimated: ${estimatedMinutes} mins`
+    );
 
     // Clear any existing timer first
     stopBillingTimer(sessionId);
@@ -1452,7 +1540,7 @@ const startBillingTimer = async (sessionId, chatId, ratePerMinute, reservationId
         try {
             const session = await ChatSession.findOne({
                 sessionId,
-                status: { $in: ["ACTIVE", "PAUSED"] }
+                status: { $in: ["ACTIVE", "PAUSED"] },
             });
 
             if (!session || session.status !== "ACTIVE") {
@@ -1465,7 +1553,7 @@ const startBillingTimer = async (sessionId, chatId, ratePerMinute, reservationId
                 session._id,
                 {
                     $inc: { billedDuration: 60 }, // Add 60 seconds
-                    lastActivityAt: new Date()
+                    lastActivityAt: new Date(),
                 },
                 { new: true }
             );
@@ -1481,27 +1569,26 @@ const startBillingTimer = async (sessionId, chatId, ratePerMinute, reservationId
 
             // Update reservation with actual cost
             if (reservationId) {
-                await Reservation.findByIdAndUpdate(
-                    reservationId,
-                    {
-                        $set: {
-                            totalCost: currentCost,
-                            billedMinutes: billedMinutes,
-                            totalDurationSec: updateResult.billedDuration,
-                            status: "ONGOING"
-                        }
-                    }
-                );
+                await Reservation.findByIdAndUpdate(reservationId, {
+                    $set: {
+                        totalCost: currentCost,
+                        billedMinutes: billedMinutes,
+                        totalDurationSec: updateResult.billedDuration,
+                        status: "ONGOING",
+                    },
+                });
             }
 
             // Calculate time remaining
-            const elapsedMs = (billedMinutes * 60 * 1000);
+            const elapsedMs = billedMinutes * 60 * 1000;
             const remainingMs = Math.max(0, sessionDurationMs - elapsedMs);
             const minutesRemaining = Math.ceil(remainingMs / (60 * 1000));
 
             // Check if session needs to be auto-ended (if no time left)
             if (remainingMs <= 0) {
-                console.log(`Session ${sessionId} time limit reached, triggering auto-end`);
+                console.log(
+                    `Session ${sessionId} time limit reached, triggering auto-end`
+                );
                 await handleSessionAutoEnd(sessionId, chatId, reservationId);
                 return;
             }
@@ -1523,22 +1610,19 @@ const startBillingTimer = async (sessionId, chatId, ratePerMinute, reservationId
             }
 
             // Notify clients about billing update
-            emitSocketEventGlobal(
-                chatId,
-                ChatEventsEnum.BILLING_UPDATE_EVENT,
-                {
-                    sessionId,
-                    billedDuration: updateResult.billedDuration,
-                    billedMinutes: billedMinutes,
-                    currentCost,
-                    ratePerMinute,
-                    minutesRemaining,
-                    nextBillingIn: 60
-                }
+            emitSocketEventGlobal(chatId, ChatEventsEnum.BILLING_UPDATE_EVENT, {
+                sessionId,
+                billedDuration: updateResult.billedDuration,
+                billedMinutes: billedMinutes,
+                currentCost,
+                ratePerMinute,
+                minutesRemaining,
+                nextBillingIn: 60,
+            });
+
+            console.log(
+                `Billed session ${sessionId}: ${updateResult.billedDuration}s, ${billedMinutes}m, ₹${currentCost}, ${minutesRemaining} min remaining`
             );
-
-            console.log(`Billed session ${sessionId}: ${updateResult.billedDuration}s, ${billedMinutes}m, ₹${currentCost}, ${minutesRemaining} min remaining`);
-
         } catch (error) {
             console.error(`Billing error for session ${sessionId}:`, error);
             stopBillingTimer(sessionId);
@@ -1551,23 +1635,19 @@ const startBillingTimer = async (sessionId, chatId, ratePerMinute, reservationId
         startedAt,
         reservationId,
         chatId,
-        ratePerMinute
+        ratePerMinute,
     });
 
     // Immediately send first billing update
-    emitSocketEventGlobal(
-        chatId,
-        ChatEventsEnum.BILLING_UPDATE_EVENT,
-        {
-            sessionId,
-            billedDuration: 0,
-            billedMinutes: 0,
-            currentCost: 0,
-            ratePerMinute,
-            minutesRemaining: estimatedMinutes,
-            nextBillingIn: 60
-        }
-    );
+    emitSocketEventGlobal(chatId, ChatEventsEnum.BILLING_UPDATE_EVENT, {
+        sessionId,
+        billedDuration: 0,
+        billedMinutes: 0,
+        currentCost: 0,
+        ratePerMinute,
+        minutesRemaining: estimatedMinutes,
+        nextBillingIn: 60,
+    });
 };
 
 // Helper function to handle session auto-end
@@ -1597,17 +1677,11 @@ const handleSessionAutoEnd = async (sessionId, chatId, reservationId) => {
             }
         }
         // Notify both parties
-        emitSocketEventGlobal(
-            chatId,
-            ChatEventsEnum.INSUFFICIENT_BALANCE_WARNING,
-            {
-                sessionId,
-                status: "AUTO_ENDED",
-                message: "Session auto-ended due to time limit"
-            }
-        );
-
-
+        emitSocketEventGlobal(chatId, ChatEventsEnum.INSUFFICIENT_BALANCE_WARNING, {
+            sessionId,
+            status: "AUTO_ENDED",
+            message: "Session auto-ended due to time limit",
+        });
 
         emitSocketEventGlobal(
             session.astrologerId.toString(),
@@ -1616,14 +1690,11 @@ const handleSessionAutoEnd = async (sessionId, chatId, reservationId) => {
                 sessionId: session.sessionId,
                 status: "COMPLETED",
                 reason: "AUTO_ENDED",
-                message: "Chat session auto-ended due to time limit."
+                message: "Chat session auto-ended due to time limit.",
             }
         );
 
-
-
         console.log(`Auto-ended session: ${sessionId}`);
-
     } catch (error) {
         console.error(`Failed to auto-end session ${sessionId}:`, error);
     }
@@ -1638,18 +1709,16 @@ const sendSessionReminder = async (sessionId, chatId, minutesRemaining) => {
 
         if (!session) return;
 
-        emitSocketEventGlobal(
-            chatId,
-            ChatEventsEnum.RESERVATION_ENDING_SOON,
-            {
-                sessionId,
-                minutesRemaining,
-                message: `Your chat session will end in ${minutesRemaining} minute${minutesRemaining > 1 ? 's' : ''}.`
-            }
+        emitSocketEventGlobal(chatId, ChatEventsEnum.RESERVATION_ENDING_SOON, {
+            sessionId,
+            minutesRemaining,
+            message: `Your chat session will end in ${minutesRemaining} minute${minutesRemaining > 1 ? "s" : ""
+                }.`,
+        });
+
+        console.log(
+            `Sent ${minutesRemaining} min reminder for session: ${sessionId}`
         );
-
-        console.log(`Sent ${minutesRemaining} min reminder for session: ${sessionId}`);
-
     } catch (error) {
         console.error(`Failed to send reminder:`, error);
     }
@@ -1663,7 +1732,7 @@ const setupSessionReminders = (sessionId, chatId, estimatedMinutes) => {
     // Set reminders at 5, 2, and 1 minute marks
     const reminderTimes = [5, 2, 1];
 
-    reminderTimes.forEach(minutes => {
+    reminderTimes.forEach((minutes) => {
         if (estimatedMinutes > minutes) {
             const reminderTimeMs = (estimatedMinutes - minutes) * 60 * 1000;
             const timer = setTimeout(() => {
@@ -1685,7 +1754,7 @@ const clearReminders = (sessionId) => {
     });
 
     // Clear reminder sent flags
-    ['5min', '2min', '1min'].forEach(min => {
+    ["5min", "2min", "1min"].forEach((min) => {
         reminderSent.delete(`${sessionId}_${min}`);
     });
 };
@@ -1707,11 +1776,15 @@ const stopBillingTimer = (sessionId) => {
     }
 };
 
-
 // Utility function to notify astrologer
 const notifyAstrologerAboutRequest = async (req, astrologerId, requestData) => {
     // Socket notification
-    emitSocketEvent(req, astrologerId.toString(), ChatEventsEnum.CHAT_REQUEST_EVENT, requestData);
+    emitSocketEvent(
+        req,
+        astrologerId.toString(),
+        ChatEventsEnum.CHAT_REQUEST_EVENT,
+        requestData
+    );
 
     // Push notification
 
@@ -1720,7 +1793,7 @@ const notifyAstrologerAboutRequest = async (req, astrologerId, requestData) => {
 // Export billing timers for external management
 // export { billingTimers };
 
-
+// Recommended version (cleaner + better consistency)
 // Recommended version (cleaner + better consistency)
 export async function sendNotification({
     userId,
