@@ -1783,6 +1783,12 @@ const notifyAstrologerAboutRequest = async (req, astrologerId, requestData) => {
       sessionId: requestData.sessionId,
       userId: requestData.userId,
       ratePerMinute: requestData.ratePerMinute,
+      event: "chatRequest",
+
+      // ✅ Expiry info
+      expiresAt:
+        requestData.expiresAt?.toString() ||
+        new Date(Date.now() + 5 * 60 * 1000).toString(),
     },
   });
 };
@@ -1809,12 +1815,6 @@ export async function sendNotification({
     // 2️⃣ Build payload (SAME channelId everywhere)
     const payload = {
       token: user.deviceToken,
-
-      notification: {
-        title,
-        body: message,
-      },
-
       data: {
         title, // Add these for frontend use
         body: message,
@@ -1830,11 +1830,6 @@ export async function sendNotification({
 
       android: {
         priority: "high",
-        notification: {
-          channelId, // ✅ SAME channel used for chat request & chat message
-          sound: "default",
-          clickAction: "FLUTTER_NOTIFICATION_CLICK",
-        },
       },
 
       apns: {
@@ -1843,12 +1838,13 @@ export async function sendNotification({
         },
         payload: {
           aps: {
+            // ✅ Use data fields for alert, not separate notification
             alert: {
-              title,
+              title: title,
               body: message,
             },
             sound: "default",
-            contentAvailable: true,
+            "content-available": 1, // ✅ Wake iOS app (like call notification)
           },
         },
       },
