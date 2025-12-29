@@ -197,6 +197,23 @@ export const requestChatSession = asyncHandler(async (req, res) => {
             { path: "astrologerId", select: "fullName phone avatar chatRate" }
         ]);
 
+        await sendNotification({
+            userId: astrologerId,
+            title: "New Chat Request",
+            message: `${req.user.fullName} wants to chat with you`,
+            type: "chat_request",                      // ← very important!
+            channelId: "chat_channel",
+            data: {
+                screen: "ChatRequestScreen",             // ← or whatever your screen name is
+                targetTab: "Chat",                    // if you have bottom tabs → optional
+                requestId,
+                sessionId,
+                userId,                                  // the one who sent request
+                ratePerMinute,
+                chatType,
+                // You can also add: chatId if already known
+            },
+        });
         await notifyAstrologerAboutRequest(req, astrologerId, {
             requestId,
             sessionId,
@@ -384,6 +401,8 @@ export const startChatSession = asyncHandler(async (req, res) => {
                 reservationId: reservation[0].reservationId
             }
         );
+
+
 
         // Also notify via user's personal room for reliability
         emitSocketEvent(
@@ -1695,82 +1714,59 @@ const notifyAstrologerAboutRequest = async (req, astrologerId, requestData) => {
     emitSocketEvent(req, astrologerId.toString(), ChatEventsEnum.CHAT_REQUEST_EVENT, requestData);
 
     // Push notification
-    await sendNotification({
-        userId: astrologerId,
-        title: "New Chat Request",
-        message: `${requestData.userInfo.fullName} wants to chat with you`,
 
-        data: {
-            screen: "Chat", // ✅ HERE
-            type: "chat_message",
-
-            requestId: requestData.requestId,
-            sessionId: requestData.sessionId,
-            userId: requestData.userId,
-            ratePerMinute: requestData.ratePerMinute
-        }
-    });
 };
 
 // Export billing timers for external management
 // export { billingTimers };
 
 
+// Recommended version (cleaner + better consistency)
 export async function sendNotification({
     userId,
     title,
     message,
-    type = "chat_message",
+    type = "chat_request",           // ← default changed
     channelId = "chat_channel",
     data = {},
 }) {
     try {
-        // 1️⃣ Fetch user device token(s)
         const user = await User.findById(userId).select("deviceToken fullName");
-        if (!user || !user.deviceToken) {
-            console.warn(`⚠️ No device token for user: ${userId}`);
-            return;
+        if (!user?.deviceToken) {
+            console.warn(`No device token for user: ${userId}`);
+            return null;
         }
 
-
-
-        // 2️⃣ Build payload (SAME channelId everywhere)
         const payload = {
             token: user.deviceToken,
-
             notification: {
                 title,
                 body: message,
             },
-
             data: {
-                type,
+                type,                        // very important!
                 channelId,
-                ...Object.keys(data).reduce((acc, key) => {
-                    acc[key] = String(data[key]);
-                    return acc;
-                }, {}),
+                click_action: "FLUTTER_NOTIFICATION_CLICK", // still useful for some setups
+                screen: "ChatRequestScreen", // ← most important field for navigation
+                // You can also add: targetTab: "Chat" if you use bottom tabs
+                ...Object.fromEntries(
+                    Object.entries(data).map(([k, v]) => [k, String(v)])
+                ),
             },
-
             android: {
                 priority: "high",
                 notification: {
-                    channelId, // ✅ SAME channel used for chat request & chat message
+                    channelId,
                     sound: "default",
                     clickAction: "FLUTTER_NOTIFICATION_CLICK",
+                    tag: `chat_request_${data.requestId || Date.now()}`, // prevent stacking
                 },
             },
-
             apns: {
-                headers: {
-                    "apns-priority": "10",
-                },
+                headers: { "apns-priority": "10" },
                 payload: {
                     aps: {
-                        alert: {
-                            title,
-                            body: message,
-                        },
+                        alert: { title, body: message },
                         sound: "default",
                         contentAvailable: true,
                     },
@@ -1778,19 +1774,14 @@ export async function sendNotification({
             },
         };
 
-        // 3️⃣ Send notification
         const response = await admin.messaging().send(payload);
-
-        console.log(
-            `✅ Notification sent to ${user.fullName || userId} via ${channelId}`,
-            response
-        );
+        console.log(`Notification sent → ${user.fullName || userId} [${type}]`, response);
 
         return response;
     } catch (error) {
-        console.error("❌ Error sending notification:", error);
+        console.error("Error sending FCM notification:", error);
+        return null;
     }
 }
-
 
 
