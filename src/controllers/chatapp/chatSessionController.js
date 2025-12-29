@@ -684,35 +684,35 @@ export const rejectChatRequest = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Associated chat session not found");
   }
 
-  // Check if session should be expired
-  if (chatSession.shouldBeExpired()) {
-    // Mark as expired instead of rejected
-    await ChatSession.findByIdAndUpdate(chatSession._id, {
-      status: "EXPIRED",
-      endedAt: new Date(),
-      lastActivityAt: new Date(),
-      autoExpired: true,
-    });
+    // Check if session should be expired
+    // Check if session should be expired
+    if (chatSession.shouldBeExpired()) {
+        await ChatSession.findByIdAndUpdate(chatSession._id, {
+            status: "EXPIRED",
+            endedAt: new Date(),
+            lastActivityAt: new Date(),
+            autoExpired: true
+        });
 
     await ChatRequest.findByIdAndUpdate(chatRequest._id, {
       status: "EXPIRED",
       respondedAt: new Date(),
     });
 
-    // Notify user about expiration
-    emitSocketEvent(
-      req,
-      chatRequest.userId.toString(),
-      ChatEventsEnum.SESSION_EXPIRED_EVENT,
-      {
-        requestId: chatRequest.requestId,
-        sessionId: chatSession.sessionId,
-        astrologerId: astrologerId,
-      }
-    );
+        emitSocketEvent(
+            req,
+            chatRequest.userId.toString(),
+            ChatEventsEnum.SESSION_EXPIRED_EVENT,
+            {
+                requestId: chatRequest.requestId,
+                sessionId: chatSession.sessionId,
+                astrologerId
+            }
+        );
 
-    throw new ApiError(400, "Chat request has expired");
-  }
+        throw new ApiError(400, "Chat request has expired");
+    }
+
 
   // If session is already expired, return appropriate response
   if (chatSession.status === "EXPIRED") {

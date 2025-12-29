@@ -72,7 +72,7 @@ export async function verifyOtpController(req, res) {
       const creditAmount =
         currentUser.role === "astrologer"
           ? 0
-          : appSettings?.newuserbonus ?? 0;
+          : appSettings?.newUserBonus ?? 0;
 
 
       wallet = new Wallet({
