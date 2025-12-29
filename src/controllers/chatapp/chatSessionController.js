@@ -1828,7 +1828,7 @@ export async function sendNotification({
 
             data: {
                 type, // chat_request / chat_message
-                screen: "AstrologerChat",
+                screen: "Chat",
                 title: String(title), // needed by Notifee
                 body: String(message),
 
