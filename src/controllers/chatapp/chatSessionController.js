@@ -198,33 +198,33 @@ export const requestChatSession = asyncHandler(async (req, res) => {
       { path: "astrologerId", select: "fullName phone avatar chatRate" },
     ]);
 
-    // await sendNotification({
-    //   userId: astrologerId,
-    //   title: "New Chat Request",
-    //   message: `${req.user.fullName} wants to chat with you`,
-    //   type: "chat_request", // ← very important!
-    //   channelId: "chat_channel",
-    //   data: {
-    //     screen: "Chat", // ← or whatever your screen name is
-    //     targetTab: "Chat", // if you have bottom tabs → optional
-    //     requestId,
-    //     sessionId,
-    //     userId, // the one who sent request
-    //     ratePerMinute,
-    //     chatType,
-    //     chatId: chat._id,
-    //     // You can also add: chatId if already known
-    //   },
-    // });
-    await notifyAstrologerAboutRequest(req, astrologerId, {
-      requestId,
-      sessionId,
-      userId,
-      userInfo: req.user,
-      userMessage,
-      ratePerMinute,
-      expiresAt: newExpires,
-    });
+        await sendNotification({
+            userId: astrologerId,
+            title: "New Chat Request",
+            message: `${req.user.fullName} wants to chat with you`,
+            type: "chat_request",                      // ← very important!
+            channelId: "chat_channel",
+            data: {
+                screen: "Chat",             // ← or whatever your screen name is
+                targetTab: "Chat",                    // if you have bottom tabs → optional
+                requestId,
+                sessionId,
+                userId,                                  // the one who sent request
+                ratePerMinute,
+                chatType,
+                chatId: chat._id
+                // You can also add: chatId if already known
+            },
+        });
+        await notifyAstrologerAboutRequest(req, astrologerId, {
+            requestId,
+            sessionId,
+            userId,
+            userInfo: req.user,
+            userMessage,
+            ratePerMinute,
+            expiresAt: newExpires
+        });
 
     return res.status(201).json(
       new ApiResponse(201, {
@@ -555,18 +555,18 @@ export const acceptChatRequest = asyncHandler(async (req, res) => {
     );
 
     // Send push notification to user
-    // await sendNotification({
-    //   userId: chatRequest.userId,
-    //   title: "Chat Request Accepted",
-    //   message: `${req.user.fullName} has accepted your chat request`,
-    //   type: "chat_accepted",
-    //   data: {
-    //     requestId: chatRequest.requestId,
-    //     sessionId: chatSession.sessionId,
-    //     astrologerId: astrologerId,
-    //     chatId: chatSession.chatId,
-    //   },
-    // });
+    await sendNotification({
+      userId: chatRequest.userId,
+      title: "Chat Request Accepted",
+      message: `${req.user.fullName} has accepted your chat request`,
+      type: "chat_accepted",
+      data: {
+        requestId: chatRequest.requestId,
+        sessionId: chatSession.sessionId,
+        astrologerId: astrologerId,
+        chatId: chatSession.chatId,
+      },
+    });
 
     return res.status(200).json(
       new ApiResponse(
@@ -1777,82 +1777,83 @@ const stopBillingTimer = (sessionId) => {
 
 // Utility function to notify astrologer
 const notifyAstrologerAboutRequest = async (req, astrologerId, requestData) => {
-  try {
-    // 1️⃣ Socket event (best-effort)
-    emitSocketEvent(
-      req,
-      astrologerId.toString(),
-      ChatEventsEnum.CHAT_REQUEST_EVENT,
-      requestData
-    );
+  // Socket notification
+  emitSocketEvent(
+    req,
+    astrologerId.toString(),
+    ChatEventsEnum.CHAT_REQUEST_EVENT,
+    requestData
+  );
 
-    await sendNotification({
-      userId: astrologerId,
-      title: "New Chat Request",
-      message: `${requestData.userInfo.fullName} wants to chat with you`,
-      type: "chat_request",
-
-      data: {
-        requestId: requestData.requestId,
-        sessionId: requestData.sessionId,
-        userId: requestData.userId,
-        ratePerMinute: requestData.ratePerMinute,
-        expiresAt: requestData.expiresAt,
-      },
-    });
-  } catch (err) {
-    // 🚨 NEVER crash the API for notification failure
-    console.error("⚠️ Failed to notify astrologer about chat request:", err);
-  }
+  // Push notification
 };
 
+// Export billing timers for external management
+// export { billingTimers };
+
+// Recommended version (cleaner + better consistency)
+// Recommended version (cleaner + better consistency)
 export async function sendNotification({
   userId,
   title,
   message,
-  type = "chat_request",
+  type = "chat_request", // ← default changed
+  channelId = "chat_channel",
   data = {},
 }) {
   try {
     const user = await User.findById(userId).select("deviceToken fullName");
-
     if (!user?.deviceToken) {
-      console.warn(`⚠️ No device token for user: ${userId}`);
+      console.warn(`No device token for user: ${userId}`);
       return null;
     }
 
-    const payload = {
-      token: user.deviceToken,
-
-      // 🚫 NO notification block (VERY IMPORTANT)
-      // Notification UI will be built by Notifee on frontend
-
-      data: {
-        type, // chat_request / chat_message
-        screen: "Chat", // used for navigation
-        title: String(title), // needed by Notifee
-        body: String(message),
-
-        ...Object.fromEntries(
-          Object.entries(data).map(([k, v]) => [k, String(v)])
-        ),
-      },
-
-      android: {
-        priority: "high", // REQUIRED for background delivery
-      },
-    };
+        const payload = {
+            token: user.deviceToken,
+            notification: {
+                title,
+                body: message,
+            },
+            data: {
+                type,                        // very important!
+                channelId,
+                click_action: "FLUTTER_NOTIFICATION_CLICK", // still useful for some setups
+                screen: "ChatRequestScreen", // ← most important field for navigation
+                // You can also add: targetTab: "Chat" if you use bottom tabs
+                ...Object.fromEntries(
+                    Object.entries(data).map(([k, v]) => [k, String(v)])
+                ),
+            },
+            android: {
+                priority: "high",
+                notification: {
+                    channelId,
+                    sound: "default",
+                    clickAction: "FLUTTER_NOTIFICATION_CLICK",
+                    tag: `chat_request_${data.requestId || Date.now()}`, // prevent stacking
+                },
+            },
+            apns: {
+                headers: { "apns-priority": "10" },
+                payload: {
+                    aps: {
+                        alert: { title, body: message },
+                        sound: "default",
+                        contentAvailable: true,
+                    },
+                },
+            },
+        };
 
     const response = await admin.messaging().send(payload);
-
     console.log(
-      `✅ Chat notification sent → ${user.fullName || userId} [${type}]`,
+      `Notification sent → ${user.fullName || userId} [${type}]`,
       response
     );
 
     return response;
   } catch (error) {
-    console.error("❌ sendNotification error:", error);
+    console.error("Error sending FCM notification:", error);
     return null;
   }
 }
