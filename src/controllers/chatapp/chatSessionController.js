@@ -684,34 +684,35 @@ export const rejectChatRequest = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Associated chat session not found");
   }
 
-  // Check if session should be expired
-  // Check if session should be expired
-  if (chatSession.shouldBeExpired()) {
-    await ChatSession.findByIdAndUpdate(chatSession._id, {
-      status: "EXPIRED",
-      endedAt: new Date(),
-      lastActivityAt: new Date(),
-      autoExpired: true,
-    });
+    // Check if session should be expired
+    // Check if session should be expired
+    if (chatSession.shouldBeExpired()) {
+        await ChatSession.findByIdAndUpdate(chatSession._id, {
+            status: "EXPIRED",
+            endedAt: new Date(),
+            lastActivityAt: new Date(),
+            autoExpired: true
+        });
 
     await ChatRequest.findByIdAndUpdate(chatRequest._id, {
       status: "EXPIRED",
       respondedAt: new Date(),
     });
 
-    emitSocketEvent(
-      req,
-      chatRequest.userId.toString(),
-      ChatEventsEnum.SESSION_EXPIRED_EVENT,
-      {
-        requestId: chatRequest.requestId,
-        sessionId: chatSession.sessionId,
-        astrologerId,
-      }
-    );
+        emitSocketEvent(
+            req,
+            chatRequest.userId.toString(),
+            ChatEventsEnum.SESSION_EXPIRED_EVENT,
+            {
+                requestId: chatRequest.requestId,
+                sessionId: chatSession.sessionId,
+                astrologerId
+            }
+        );
 
-    throw new ApiError(400, "Chat request has expired");
-  }
+        throw new ApiError(400, "Chat request has expired");
+    }
+
 
   // If session is already expired, return appropriate response
   if (chatSession.status === "EXPIRED") {
@@ -1772,23 +1773,15 @@ const notifyAstrologerAboutRequest = async (req, astrologerId, requestData) => {
     userId: astrologerId,
     title: "New Chat Request",
     message: `${requestData.userInfo.fullName} wants to chat with you`,
-    type: "chatRequest", // ✅ Consistent with above
 
     data: {
-      screen: "MainTab", // ✅ HERE
-      targetTab: "Chat",
-      type: "chatRequest",
+      screen: "Chat", // ✅ HERE
+      type: "chat_message",
 
       requestId: requestData.requestId,
       sessionId: requestData.sessionId,
       userId: requestData.userId,
       ratePerMinute: requestData.ratePerMinute,
-      event: "chatRequest",
-
-      // ✅ Expiry info
-      expiresAt:
-        requestData.expiresAt?.toString() ||
-        new Date(Date.now() + 5 * 60 * 1000).toString(),
     },
   });
 };
@@ -1800,7 +1793,7 @@ export async function sendNotification({
   userId,
   title,
   message,
-  type = "chatRequest",
+  type = "chat_message",
   channelId = "chat_channel",
   data = {},
 }) {
@@ -1815,13 +1808,18 @@ export async function sendNotification({
     // 2️⃣ Build payload (SAME channelId everywhere)
     const payload = {
       token: user.deviceToken,
+
+      notification: {
+        title,
+        body: message,
+      },
+
       data: {
         title, // Add these for frontend use
         body: message,
         type,
         channelId,
-        screen: "MainTab",
-        targetTab: "Chat",
+        screen: "Chat",
         ...Object.keys(data).reduce((acc, key) => {
           acc[key] = String(data[key]);
           return acc;
@@ -1830,6 +1828,11 @@ export async function sendNotification({
 
       android: {
         priority: "high",
+        notification: {
+          channelId, // ✅ SAME channel used for chat request & chat message
+          sound: "default",
+          clickAction: "FLUTTER_NOTIFICATION_CLICK",
+        },
       },
 
       apns: {
@@ -1838,13 +1841,12 @@ export async function sendNotification({
         },
         payload: {
           aps: {
-            // ✅ Use data fields for alert, not separate notification
             alert: {
-              title: title,
+              title,
               body: message,
             },
             sound: "default",
-            "content-available": 1, // ✅ Wake iOS app (like call notification)
+            contentAvailable: true,
           },
         },
       },
