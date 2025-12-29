@@ -206,7 +206,7 @@ export const requestChatSession = asyncHandler(async (req, res) => {
             type: "chat_request",                      // ← very important!
             channelId: "chat_channel",
             data: {
-                screen: "ChatRequestScreen",             // ← or whatever your screen name is
+                screen: "Chat",             // ← or whatever your screen name is
                 targetTab: "Chat",                    // if you have bottom tabs → optional
                 requestId,
                 sessionId,
@@ -1819,8 +1819,8 @@ export async function sendNotification({
             data: {
                 type,                        // very important!
                 channelId,
-                click_action: "FLUTTER_NOTIFICATION_CLICK", // still useful for some setups
-                screen: "ChatRequestScreen", // ← most important field for navigation
+                // click_action: "FLUTTER_NOTIFICATION_CLICK", // still useful for some setups
+                screen: "Chat", // ← most important field for navigation
                 // You can also add: targetTab: "Chat" if you use bottom tabs
                 ...Object.fromEntries(
                     Object.entries(data).map(([k, v]) => [k, String(v)])
