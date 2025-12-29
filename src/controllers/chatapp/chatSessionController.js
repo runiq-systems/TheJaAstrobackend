@@ -1802,10 +1802,7 @@ const notifyAstrologerAboutRequest = async (req, astrologerId, requestData) => {
     });
   } catch (err) {
     // 🚨 NEVER crash the API for notification failure
-    console.error(
-      "⚠️ Failed to notify astrologer about chat request:",
-      err
-    );
+    console.error("⚠️ Failed to notify astrologer about chat request:", err);
   }
 };
 
@@ -1843,16 +1840,6 @@ export async function sendNotification({
 
       android: {
         priority: "high", // REQUIRED for background delivery
-      },
-
-      apns: {
-        payload: {
-          aps: {
-            sound: "default",
-            badge: 1,
-            "content-available": 1,
-          },
-        },
       },
     };
 
