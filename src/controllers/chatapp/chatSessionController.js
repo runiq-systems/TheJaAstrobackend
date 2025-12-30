@@ -203,11 +203,11 @@ export const requestChatSession = asyncHandler(async (req, res) => {
             userId: astrologerId,
             title: "New Chat Request",
             message: `${req.user.fullName} wants to chat with you`,
-            type: "chat_request",                      // ← very important!
+            type: "chat_message",                      // ← very important!
             channelId: "chat_channel",
             data: {
-                screen: "ChatRequestScreen",             // ← or whatever your screen name is
-                targetTab: "Chat",                    // if you have bottom tabs → optional
+                screen: "AstrologerChat",             // ← or whatever your screen name is
+                targetTab: "AstrologerChat",                    // if you have bottom tabs → optional
                 requestId,
                 sessionId,
                 userId,                                  // the one who sent request
@@ -1799,7 +1799,7 @@ export async function sendNotification({
     userId,
     title,
     message,
-    type = "chat_request",           // ← default changed
+    type = "chat_message",           // ← default changed
     channelId = "chat_channel",
     data = {},
 }) {
@@ -1820,7 +1820,7 @@ export async function sendNotification({
                 type,                        // very important!
                 channelId,
                 click_action: "FLUTTER_NOTIFICATION_CLICK", // still useful for some setups
-                screen: "Chat", // ← most important field for navigation
+                screen: "AstrologerChat", // ← most important field for navigation
                 // You can also add: targetTab: "Chat" if you use bottom tabs
                 ...Object.fromEntries(
                     Object.entries(data).map(([k, v]) => [k, String(v)])
