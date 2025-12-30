@@ -1827,24 +1827,19 @@ export async function sendNotification({
                 ),
             },
             android: {
-                priority: "high",
-                notification: {
-                    channelId,
-                    sound: "default",
-                    clickAction: "FLUTTER_NOTIFICATION_CLICK",
-                    tag: `chat_request_${data.requestId || Date.now()}`, // prevent stacking
-                },
+                priority: "high",  // Ensures high-priority delivery for data-only messages
             },
+
             apns: {
-                headers: { "apns-priority": "10" },
                 payload: {
                     aps: {
-                        alert: { title, body: message },
                         sound: "default",
-                        contentAvailable: true,
+                        badge: 1,
+                        'content-available': 1,  // Helps wake iOS app for background handling
                     },
                 },
             },
+
         };
 
         const response = await admin.messaging().send(payload);
