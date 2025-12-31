@@ -5,23 +5,21 @@ export const rateLimiter = rateLimit({
   max: 5000,
   message: {
     success: false,
-    message: "Too many requests from this source. Please try again after 10 minutes.",
+    message:
+      "Too many requests from this source. Please try again after 10 minutes.",
   },
 });
 
 /**
  * Generic factory (reusable)
  */
-const createRateLimiter = ({
-  windowMs,
-  max,
-  message,
-}) =>
+const createRateLimiter = ({ windowMs, max, message }) =>
   rateLimit({
     windowMs,
     max,
-    standardHeaders: true,   // Return RateLimit-* headers
-    legacyHeaders: false,    // Disable X-RateLimit-* headers
+    keyGenerator: (req) => ipKeyGenerator(req), // ✅ safe
+    standardHeaders: true, // Return RateLimit-* headers
+    legacyHeaders: false, // Disable X-RateLimit-* headers
     message: {
       success: false,
       message,
@@ -34,9 +32,8 @@ const createRateLimiter = ({
  */
 export const registerLimiter = createRateLimiter({
   windowMs: 10 * 60 * 1000, // 10 min
-  max: 5,                  // 5 attempts per IP
-  message:
-    "Too many registration attempts. Please try again after 10 minutes.",
+  max: 5, // 5 attempts per IP
+  message: "Too many registration attempts. Please try again after 10 minutes.",
 });
 
 /**
@@ -45,7 +42,7 @@ export const registerLimiter = createRateLimiter({
  */
 export const verifyOtpLimiter = createRateLimiter({
   windowMs: 10 * 60 * 1000, // 10 min
-  max: 10,                 // 10 OTP attempts
+  max: 10, // 10 OTP attempts
   message:
     "Too many OTP verification attempts. Please wait before trying again.",
 });
@@ -55,11 +52,9 @@ export const verifyOtpLimiter = createRateLimiter({
  */
 export const authActionLimiter = createRateLimiter({
   windowMs: 1 * 60 * 1000, // 1 min
-  max: 60,                // 60 req/min
-  message:
-    "Too many requests. Slow down.",
+  max: 60, // 60 req/min
+  message: "Too many requests. Slow down.",
 });
-
 
 /**
  * 10 requests per user/IP for astrology APIs
@@ -68,14 +63,14 @@ export const astrologyRateLimiter = rateLimit({
   windowMs: 24 * 60 * 60 * 1000, // 24 hours
   max: 1,
 
-keyGenerator: (req) => {
+  keyGenerator: (req) => {
     // Prefer authenticated user
     if (req.user?._id) {
       return `user:${req.user._id}`;
     }
 
     // Safe fallback to IP with IPv6 protection
-    return `ip:${ipKeyGenerator(req.ip)}`;  // <-- This fixes the error
+    return `ip:${ipKeyGenerator(req.ip)}`; // <-- This fixes the error
   },
 
   handler: (req, res) => {
