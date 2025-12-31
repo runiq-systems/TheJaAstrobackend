@@ -16,7 +16,6 @@ import {
 } from "../../controllers/chatapp/messageController.js";
 import { authMiddleware } from "../../middleware/authmiddleware.js";
 import { upload } from "../../middleware/multer.js";
-import { testSendNotification } from "../../controllers/chatapp/chatSessionController.js";
 
 const router = express.Router();
 
@@ -45,7 +44,5 @@ router
 router.route("/messages/:messageId").delete(deleteMessage);
 
 router.route("/messages/:messageId/react").put(reactToMessage);
-
-router.post("/test/notification", testSendNotification)
 
 export default router;

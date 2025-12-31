@@ -68,14 +68,14 @@ export const astrologyRateLimiter = rateLimit({
   windowMs: 24 * 60 * 60 * 1000, // 24 hours
   max: 1,
 
-  keyGenerator: (req) => {
-    // ✅ Prefer authenticated user
+keyGenerator: (req) => {
+    // Prefer authenticated user
     if (req.user?._id) {
       return `user:${req.user._id}`;
     }
 
-    // ⚠️ Fallback to IP
-    return `ip:${req.ip}`;
+    // Safe fallback to IP with IPv6 protection
+    return `ip:${ipKeyGenerator(req.ip)}`;  // <-- This fixes the error
   },
 
   handler: (req, res) => {
