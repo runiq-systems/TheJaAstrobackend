@@ -356,7 +356,7 @@ export const getKundliMatch = async (req, res) => {
     if (!person1_name || !person1_dob || !person1_tob || !person1_latitude || !person1_longitude) {
       errors.push('Person 1 details incomplete');
     }
-    if (!person2_name || !person2_dob || !person2_tob || !person1_latitude || !person1_longitude) {
+    if (!person2_name || !person2_dob || !person2_tob || !person2_latitude || !person2_longitude) {
       errors.push('Person 2 details incomplete');
     }
 
