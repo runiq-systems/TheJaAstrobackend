@@ -1,7 +1,7 @@
 // services/prokerala/kundaliMatchingCache.js
 import axios from "axios";
 import mongoose from "mongoose";
-import { toRFC3340 } from "../../utils/dateFormatter.js";
+import { toRFC3340 } from "../../controllers/Astrologycontroller/astrologyController.js";
 import { KundaliMatching } from "../../models/kundaliMatching.js";
 import { getAccessToken } from "./prokeralaToken.services.js";
 
