@@ -48,6 +48,7 @@ app.set('trust proxy', 1)
 
 
 const io = new Server(httpserver, {
+    transports: ["websocket"],   // 🔥 IMPORTANT
     pingTimeout: 60000,      // 60 sec tak wait kare
     pingInterval: 25000,     // har 25 sec me heartbeat bheje
     connectTimeout: 20000,   // connect time window
