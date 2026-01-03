@@ -162,22 +162,52 @@ function toRFC3339(dob, tob) {
   // ✅ This format works 99% of the time with Prokerala
   return `${yyyy}-${mm}-${dd}T${hh}:${mmTime}:00+05:30`;
 }
-export const toRFC3340 = (dob, tob) => {
-  // dob: "YYYY-MM-DD"
-  // tob: "HH:MM" (24-hour format)
-  const [year, month, day] = dob.split('-').map(Number);
-  let [hour, minute, second = 0] = tob.includes(':') ? tob.split(':').map(Number) : [0, 0];
+// utils/dateFormatter.js
+export const toRFC3340 = (dob, tob, timezoneOffset = '+05:30') => {
+  try {
+    // Clean inputs
+    const cleanDob = dob.trim();
+    const cleanTob = tob.trim();
 
-  // Ensure always HH:MM:SS
-  const yyyy = year.toString().padStart(4, '0');
-  const mm = month.toString().padStart(2, '0');
-  const dd = day.toString().padStart(2, '0');
-  const hh = hour.toString().padStart(2, '0');
-  const min = minute.toString().padStart(2, '0');
-  const sec = second.toString().padStart(2, '0');
+    // Parse date
+    const [year, month, day] = cleanDob.split('-').map(num => parseInt(num, 10));
 
-  // Exact format: YYYY-MM-DDTHH:MM:SS+05:30 (no milliseconds, no space)
-  return `${yyyy}-${mm}-${dd}T${hh}:${min}:${sec}+05:30`;
+    // Parse time - handle various formats
+    let hour = 0, minute = 0, second = 0;
+
+    if (cleanTob.includes(':')) {
+      const timeParts = cleanTob.split(':').map(num => parseInt(num, 10));
+      hour = timeParts[0] || 0;
+      minute = timeParts[1] || 0;
+      second = timeParts[2] || 0;
+    } else if (cleanTob.length === 4) {
+      // Handle "HHMM" format
+      hour = parseInt(cleanTob.substring(0, 2), 10) || 0;
+      minute = parseInt(cleanTob.substring(2, 4), 10) || 0;
+    }
+
+    // Validate ranges
+    if (hour < 0 || hour > 23) hour = 0;
+    if (minute < 0 || minute > 59) minute = 0;
+    if (second < 0 || second > 59) second = 0;
+
+    // Create ISO string with timezone
+    const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+
+    // Format manually to ensure correct format
+    const yyyy = date.getUTCFullYear().toString().padStart(4, '0');
+    const mm = (date.getUTCMonth() + 1).toString().padStart(2, '0');
+    const dd = date.getUTCDate().toString().padStart(2, '0');
+    const hh = date.getUTCHours().toString().padStart(2, '0');
+    const min = date.getUTCMinutes().toString().padStart(2, '0');
+    const ss = date.getUTCSeconds().toString().padStart(2, '0');
+
+    return `${yyyy}-${mm}-${dd}T${hh}:${min}:${ss}${timezoneOffset}`;
+  } catch (error) {
+    console.error('Date formatting error:', error);
+    // Fallback to simple format
+    return `${dob}T${tob.includes(':') ? tob : '00:00'}${timezoneOffset}`;
+  }
 };
 
 // export const getAdvancedKundaliReport = async (req, res) => {
@@ -351,13 +381,46 @@ export const getKundliMatch = async (req, res) => {
 
     const userId = req.user.id;
 
-    // Validate
+    // Validate required fields
     const errors = [];
     if (!person1_name || !person1_dob || !person1_tob || !person1_latitude || !person1_longitude) {
       errors.push('Person 1 details incomplete');
     }
     if (!person2_name || !person2_dob || !person2_tob || !person2_latitude || !person2_longitude) {
       errors.push('Person 2 details incomplete');
+    }
+
+    // Validate date formats
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (person1_dob && !dateRegex.test(person1_dob)) {
+      errors.push('Person 1 date of birth must be in YYYY-MM-DD format');
+    }
+    if (person2_dob && !dateRegex.test(person2_dob)) {
+      errors.push('Person 2 date of birth must be in YYYY-MM-DD format');
+    }
+
+    // Validate time formats
+    const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$/;
+    if (person1_tob && !timeRegex.test(person1_tob)) {
+      errors.push('Person 1 time of birth must be in HH:MM or HH:MM:SS format (24-hour)');
+    }
+    if (person2_tob && !timeRegex.test(person2_tob)) {
+      errors.push('Person 2 time of birth must be in HH:MM or HH:MM:SS format (24-hour)');
+    }
+
+    // Validate coordinates
+    const coordRegex = /^-?\d+(\.\d+)?$/;
+    if (person1_latitude && !coordRegex.test(person1_latitude)) {
+      errors.push('Person 1 latitude must be a valid number');
+    }
+    if (person1_longitude && !coordRegex.test(person1_longitude)) {
+      errors.push('Person 1 longitude must be a valid number');
+    }
+    if (person2_latitude && !coordRegex.test(person2_latitude)) {
+      errors.push('Person 2 latitude must be a valid number');
+    }
+    if (person2_longitude && !coordRegex.test(person2_longitude)) {
+      errors.push('Person 2 longitude must be a valid number');
     }
 
     if (errors.length > 0) {
@@ -367,29 +430,28 @@ export const getKundliMatch = async (req, res) => {
       });
     }
 
-    // Prepare person objects
+    // Prepare person objects with validation
     const person1 = {
-      name: person1_name,
-      dob: person1_dob,
-      tob: person1_tob,
-      place: person1_places,
+      name: person1_name.trim(),
+      dob: person1_dob.trim(),
+      tob: person1_tob.trim(),
+      place: person1_places?.trim() || '',
       coordinates: {
-        latitude: Number(person1_latitude),
-        longitude: Number(person1_longitude),
+        latitude: parseFloat(Number(person1_latitude).toFixed(6)),
+        longitude: parseFloat(Number(person1_longitude).toFixed(6)),
       },
     };
 
     const person2 = {
-      name: person2_name,
-      dob: person2_dob,
-      tob: person2_tob,
-      place: person2_places,
+      name: person2_name.trim(),
+      dob: person2_dob.trim(),
+      tob: person2_tob.trim(),
+      place: person2_places?.trim() || '',
       coordinates: {
-        latitude: Number(person2_latitude),
-        longitude: Number(person2_longitude),
+        latitude: parseFloat(Number(person2_latitude).toFixed(6)),
+        longitude: parseFloat(Number(person2_longitude).toFixed(6)),
       },
     };
-
 
     // Get match report
     const result = await getOrCreateKundliMatch(
@@ -400,8 +462,6 @@ export const getKundliMatch = async (req, res) => {
       language
     );
 
-    console.log(result.data)
-
     return res.json({
       success: true,
       source: result.source,
@@ -409,13 +469,29 @@ export const getKundliMatch = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Kundli Matching Error:', error);
+    console.error('Kundli Matching Controller Error:', {
+      message: error.message,
+      stack: error.stack
+    });
 
-    return res.status(500).json({
+    // Handle specific error types
+    let statusCode = 500;
+    let errorMessage = 'Internal server error';
+
+    if (error.message.includes('API Error') || error.message.includes('Prokerala')) {
+      statusCode = 400;
+      errorMessage = error.message.replace('Prokerala API Error: ', '');
+    } else if (error.message.includes('timeout')) {
+      statusCode = 408;
+      errorMessage = 'Request timeout. Please try again.';
+    } else if (error.message.includes('validation') || error.message.includes('Invalid')) {
+      statusCode = 400;
+      errorMessage = error.message;
+    }
+
+    return res.status(statusCode).json({
       success: false,
-      message: error.message.includes('API')
-        ? 'Failed to fetch from astrology service. Please try again later.'
-        : 'Internal server error'
+      message: errorMessage
     });
   }
 };
