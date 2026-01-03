@@ -1,38 +1,95 @@
 import { KundaliReport } from "../../models/kunadliReport.js";
 
-export const getCachedKundaliReport = async (userId, dob, tob, place) => {
+// export const getCachedKundaliReport = async (userId, dob, tob, place) => {
+//   return await KundaliReport.findOne({
+//     userId,
+//     dob,
+//     tob,
+//     place,
+//     // generatedAt: { $gte: dayUTC }
+//   });
+// };
+
+export const getCachedKundaliReport = async (
+  userId,
+  dob,
+  tob,
+  place,
+  coordinates
+) => {
   return await KundaliReport.findOne({
     userId,
     dob,
     tob,
     place,
-    // generatedAt: { $gte: dayUTC }
+    "coordinates.latitude": coordinates.latitude,
+    "coordinates.longitude": coordinates.longitude,
   });
 };
 
+
+// export const storeKundaliReport = async (userId, input, reportData) => {
+//   const { name, dob, tob, place, coordinates, ayanamsa = 1, language = 'en' } = input;
+
+//   return await KundaliReport.findOneAndUpdate(
+//     { userId, dob, tob, place },
+//     {
+//       userId,
+//       name,
+//       dob,
+//       tob,
+//       place,
+//       coordinates: {
+//         latitude: coordinates.latitude,
+//         longitude: coordinates.longitude
+//       },
+//       report: reportData,
+//       ayanamsa,
+//       language,
+//       generatedAt: new Date()
+//     },
+//     { upsert: true, new: true }
+//   );
+// };
+
+
 export const storeKundaliReport = async (userId, input, reportData) => {
-  const { name, dob, tob, place, coordinates, ayanamsa = 1, language = 'en' } = input;
+  const {
+    name,
+    dob,
+    tob,
+    coordinates,
+    place,
+    ayanamsa = 1,
+    language = "en",
+  } = input;
 
   return await KundaliReport.findOneAndUpdate(
-    { userId, dob, tob, place },
+    {
+      userId,
+      dob,
+      tob,
+      place,
+      "coordinates.latitude": coordinates.latitude,
+      "coordinates.longitude": coordinates.longitude,
+    },
     {
       userId,
       name,
       dob,
       tob,
       place,
-      coordinates: {
-        latitude: coordinates.latitude,
-        longitude: coordinates.longitude
-      },
+      coordinates,
       report: reportData,
       ayanamsa,
       language,
-      generatedAt: new Date()
+      generatedAt: new Date(),
     },
     { upsert: true, new: true }
   );
 };
+
+
 
 export const getExistingKundaliReportAll = async ({
   userId,

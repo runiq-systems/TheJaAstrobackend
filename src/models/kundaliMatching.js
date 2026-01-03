@@ -32,7 +32,7 @@ const kundliMatchReportSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  
+
   // Person details (we don't need to differentiate girl/boy in schema)
   person1: {
     type: personSchema,
@@ -42,19 +42,19 @@ const kundliMatchReportSchema = new mongoose.Schema({
     type: personSchema,
     required: true
   },
-  
+
   // The complete API response stored as-is
   matchingReport: {
     type: mongoose.Schema.Types.Mixed, // or Object
     required: true
   },
-  
+
   // Derived fields for quick access
   result: {
     type: String,
     enum: ['Excellent', 'Very Good', 'Good', 'Average', 'Poor', 'Very Poor'],
     default: 'Average'
-  },  
+  },
   // Technical fields
   ayanamsa: {
     type: Number,
@@ -71,14 +71,14 @@ const kundliMatchReportSchema = new mongoose.Schema({
     enum: ['api', 'database'],
     default: 'api'
   },
-  
+
   // Unique hash for deduplication
   match_hash: {
     type: String,
     unique: true,
     index: true
   },
-  
+
   // Timestamps
   generatedAt: {
     type: Date,
@@ -99,7 +99,7 @@ const kundliMatchReportSchema = new mongoose.Schema({
 });
 
 // Pre-save hook to calculate hash and derived fields
-kundliMatchReportSchema.pre('save', function(next) {
+kundliMatchReportSchema.pre('save', function (next) {
   // Calculate derived fields from matchingReport
   if (this.matchingReport) {
     // Extract total guna points
@@ -108,14 +108,14 @@ kundliMatchReportSchema.pre('save', function(next) {
     } else if (this.matchingReport.guna_milan?.total_points !== undefined) {
       this.totalGuna = this.matchingReport.guna_milan.total_points;
     }
-    
+
     // Determine result category
     this.result = determineResult(this.totalGuna);
-    
+
     // Set compatibility flag (you can customize this logic)
     this.isCompatible = this.totalGuna >= 18; // Average or above
   }
-  
+
   next();
 });
 
@@ -128,5 +128,15 @@ function determineResult(totalPoints) {
   if (totalPoints >= 12) return 'Poor';
   return 'Very Poor';
 }
+
+kundliMatchReportSchema.index(
+  { "person1.coordinates": "2dsphere" },
+  { sparse: true }
+);
+
+kundliMatchReportSchema.index(
+  { "person2.coordinates": "2dsphere" },
+  { sparse: true }
+);
 
 export const KundaliMatching = mongoose.model('KundliMatching', kundliMatchReportSchema);

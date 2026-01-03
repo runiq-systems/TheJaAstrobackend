@@ -180,67 +180,163 @@ export const toRFC3340 = (dob, tob) => {
   return `${yyyy}-${mm}-${dd}T${hh}:${min}:${sec}+05:30`;
 };
 
+// export const getAdvancedKundaliReport = async (req, res) => {
+//   try {
+//     const userId = req.user.id || req.user._id;
+//     console.log(userId)
+//     const { name, dob, tob, latitude, longitude, ayanamsa = 1, la = "en" } = req.body;
+
+//     if (!name || !dob || !tob || !place) {
+//       return res.status(400).json({ success: false, message: "Missing required fields" });
+//     }
+
+//     // 1. Check cache
+//     let cached = userId ? await getCachedKundaliReport(userId, dob, tob, place) : null;
+//     if (cached) {
+//       return res.json({ success: true, source: "db", data: cached.report, saved: true });
+//     }
+
+//     // 2. Fetch from Prokerala
+//     const datetime = toRFC3339(dob, tob);
+
+
+//     const token = await getAccessToken();
+//     const response = await axios.get("https://api.prokerala.com/v2/astrology/kundli/advanced", {
+//       params: {
+//         datetime,
+//         coordinates: `${latitude},${longitude}`,
+//         ayanamsa,
+//         language: la
+//       },
+//       headers: { Authorization: `Bearer ${token}` },
+//       timeout: 8000
+//     });
+
+//     const reportData = response.data.data;
+
+//     // 3. Store in DB
+//     if (userId) {
+//       await storeKundaliReport(userId, {
+//         name, dob, tob, place, coordinates: geo, ayanamsa, language: la
+//       }, reportData);
+//     }
+
+//     return res.json({ success: true, source: "api_cached", data: reportData });
+//   } catch (err) {
+//     console.error("Kundali error:", err);
+//     return res.status(500).json({
+//       success: false,
+//       message: "Failed to generate Kundali",
+//       details: err.response?.data || err.message
+//     });
+//   }
+// };
+
+
+
 export const getAdvancedKundaliReport = async (req, res) => {
   try {
-    const userId = req.user.id || req.user._id;
-    console.log(userId)
-    const { name, dob, tob, place, ayanamsa = 1, la = "en" } = req.body;
+    const userId = req.user?.id || req.user?._id;
 
-    if (!name || !dob || !tob || !place) {
-      return res.status(400).json({ success: false, message: "Missing required fields" });
-    }
+    const {
+      name,
+      dob,
+      tob,
+      latitude,
+      longitude,
+      place,
+      ayanamsa = 1,
+      la = "en",
+    } = req.body;
 
-    // 1. Check cache
-    let cached = userId ? await getCachedKundaliReport(userId, dob, tob, place) : null;
-    if (cached) {
-      return res.json({ success: true, source: "db", data: cached.report, saved: true });
-    }
-
-    // 2. Fetch from Prokerala
-    const datetime = toRFC3339(dob, tob);
-    let geo;
-
-    try {
-      geo = await getCoordinates(place);
-    } catch (err) {
-      console.error("Location error:", err.message);
-
+    // -------------------------
+    // VALIDATION
+    // -------------------------
+    if (!name || !dob || !tob || latitude == null || longitude == null) {
       return res.status(400).json({
         success: false,
-        message: "Invalid or unsupported place name"
+        message: "name, dob, tob, latitude, longitude are required",
       });
     }
 
-    if (!geo) return res.status(400).json({ success: false, message: "Invalid place" });
+    const coordinates = {
+      latitude: Number(latitude),
+      longitude: Number(longitude),
+    };
 
+    // -------------------------
+    // CACHE CHECK
+    // -------------------------
+    let cached = null;
+    if (userId) {
+      cached = await getCachedKundaliReport(
+        userId,
+        dob,
+        tob,
+        place,
+        coordinates
+      );
+    }
+
+    if (cached) {
+      return res.json({
+        success: true,
+        source: "db",
+        saved: true,
+        data: cached.report,
+      });
+    }
+
+    // -------------------------
+    // API CALL
+    // -------------------------
+    const datetime = toRFC3339(dob, tob);
     const token = await getAccessToken();
-    const response = await axios.get("https://api.prokerala.com/v2/astrology/kundli/advanced", {
-      params: {
-        datetime,
-        coordinates: `${geo.latitude},${geo.longitude}`,
-        ayanamsa,
-        language: la
-      },
-      headers: { Authorization: `Bearer ${token}` },
-      timeout: 8000
-    });
+
+    const response = await axios.get(
+      "https://api.prokerala.com/v2/astrology/kundli/advanced",
+      {
+        params: {
+          datetime,
+          coordinates: `${coordinates.latitude},${coordinates.longitude}`,
+          ayanamsa,
+          language: la,
+        },
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 8000,
+      }
+    );
 
     const reportData = response.data.data;
 
-    // 3. Store in DB
+    // -------------------------
+    // STORE CACHE
+    // -------------------------
     if (userId) {
       await storeKundaliReport(userId, {
-        name, dob, tob, place, coordinates: geo, ayanamsa, language: la
+        name,
+        dob,
+        tob,
+        place,
+        coordinates,
+        ayanamsa,
+        language: la,
       }, reportData);
     }
 
-    return res.json({ success: true, source: "api_cached", data: reportData });
+    return res.json({
+      success: true,
+      source: "api",
+      saved: false,
+      data: reportData,
+    });
+
   } catch (err) {
     console.error("Kundali error:", err);
     return res.status(500).json({
       success: false,
       message: "Failed to generate Kundali",
-      details: err.response?.data || err.message
+      details: err.response?.data || err.message,
     });
   }
 };
@@ -248,8 +344,8 @@ export const getAdvancedKundaliReport = async (req, res) => {
 export const getKundliMatch = async (req, res) => {
   try {
     const {
-      person1_name, person1_dob, person1_tob, person1_place,
-      person2_name, person2_dob, person2_tob, person2_place,
+      person1_name, person1_dob, person1_tob, person1_latitude, person1_longitude, person1_places,
+      person2_name, person2_dob, person2_tob, person2_latitude, person2_longitude, person2_places,
       ayanamsa = 1, language = 'en'
     } = req.body;
 
@@ -257,10 +353,10 @@ export const getKundliMatch = async (req, res) => {
 
     // Validate
     const errors = [];
-    if (!person1_name || !person1_dob || !person1_tob || !person1_place) {
+    if (!person1_name || !person1_dob || !person1_tob || !person1_latitude || !person1_longitude) {
       errors.push('Person 1 details incomplete');
     }
-    if (!person2_name || !person2_dob || !person2_tob || !person2_place) {
+    if (!person2_name || !person2_dob || !person2_tob || !person1_latitude || !person1_longitude) {
       errors.push('Person 2 details incomplete');
     }
 
@@ -276,15 +372,24 @@ export const getKundliMatch = async (req, res) => {
       name: person1_name,
       dob: person1_dob,
       tob: person1_tob,
-      place: person1_place
+      place: person1_places,
+      coordinates: {
+        latitude: Number(person1_latitude),
+        longitude: Number(person1_longitude),
+      },
     };
 
     const person2 = {
       name: person2_name,
       dob: person2_dob,
       tob: person2_tob,
-      place: person2_place
+      place: person2_places,
+      coordinates: {
+        latitude: Number(person2_latitude),
+        longitude: Number(person2_longitude),
+      },
     };
+
 
     // Get match report
     const result = await getOrCreateKundliMatch(
