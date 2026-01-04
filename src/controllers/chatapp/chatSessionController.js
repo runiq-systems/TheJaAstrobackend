@@ -977,11 +977,12 @@ export const endChatSession = asyncHandler(async (req, res) => {
             message: settlementMessage,
         };
 
-        const sessionRoom = `chat_session:${sessionId}`;
-        socket.join(sessionRoom);
-
-        emitSocketEvent(req, sessionRoom, ChatEventsEnum.SESSION_ENDED_EVENT, payload);
-
+        emitSocketEvent(
+            req,
+            chatSession.userId.toString(),
+            ChatEventsEnum.SESSION_ENDED_EVENT,
+            payload
+        );
 
         // ✅ 11️⃣ Return API response
         return res
