@@ -262,7 +262,7 @@
 
 
 
-  
+
 // socketServer.js
 import cookie from "cookie";
 import jwt from "jsonwebtoken";
@@ -473,10 +473,18 @@ export const initializeSocketIO = (io) => {
       mountChatSessionEvents(socket);
       // logger.info(`Socket connected: (${socket.user})`);
       /* ------------------------------- Disconnect event ----------------------------- */
-      socket.on(ChatEventsEnum.DISCONNECT_EVENT, () => {
-        console.log(`🔴 User disconnected: ${socket.user?.username} (${socket.user?._id})`);
-        socket.leave(socket.user._id.toString());
+      // socket.on(ChatEventsEnum.DISCONNECT_EVENT, () => {
+      //   console.log(`🔴 User disconnected: ${socket.user?.username} (${socket.user?._id})`);
+      //   socket.leave(socket.user._id.toString());
+      // });
+
+      socket.on(ChatEventsEnum.DISCONNECT_EVENT, (reason) => {
+        logger.warn("Socket disconnected", {
+          userId: socket.user?._id,
+          reason
+        });
       });
+
 
     } catch (error) {
       console.error("❌ Socket connection error:", error.message);
