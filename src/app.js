@@ -34,7 +34,8 @@ import kycroute from './routes/adminRoute/adminRoute.js'
 // import './cron/dailyHoroscope.cron.js'
 import astrologeradmin from './routes/adminRoute/Astrologer.js'
 import appSettingsRoutes from "./routes/appSettings.routes.js";
-
+import { createClient } from "redis";
+import { createAdapter } from "@socket.io/redis-adapter";
 
 const app = express();
 dotenv.config({
@@ -62,6 +63,32 @@ global.io = io;
 
 app.set("io", io);
 
+
+if (process.env.USE_REDIS === "true") {
+    const pubClient = createClient({
+        url: process.env.REDIS_URL || "redis://127.0.0.1:6379",
+    });
+
+    const subClient = pubClient.duplicate();
+
+    pubClient.on("error", (err) => {
+        console.error("❌ Redis Pub Error", err.message);
+    });
+
+    subClient.on("error", (err) => {
+        console.error("❌ Redis Sub Error", err.message);
+    });
+
+    await pubClient.connect();
+    await subClient.connect();
+
+    io.adapter(createAdapter(pubClient, subClient));
+
+    console.log("✅ Redis adapter enabled");
+    console.log("Socket adapter:", io.of("/").adapter.constructor.name);
+} else {
+    console.log("⚠️ Redis adapter disabled (local development)");
+}
 
 initializeSocketIO(io);
 // Setup WebRTC service
