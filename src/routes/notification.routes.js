@@ -2,6 +2,12 @@
 import express from "express";
 import { User } from "../models/user.js";
 import { sendNotification } from "../controllers/chatapp/chatSessionController.js";
+import {
+  adminMiddleware,
+  authMiddleware,
+} from "../middleware/authmiddleware.js";
+import { createNotification, deleteNotification, getAllNotifications, getUnreadCount, getUserNotifications, markAllAsRead, markAsRead, updateNotification } from "../controllers/notification.controller.js";
+
 const router = express.Router();
 
 // router.post("/send-notification", sendNotification);
@@ -63,7 +69,11 @@ const router = express.Router();
 // e.g., in routes/test.routes.js or directly in your main server file
 
 router.post("/test-chat-notification", async (req, res) => {
-  const { userId = "68fa7bc46d095190ea7269bb", title = "New Message", message = "You have a new chat message" } = req.body;
+  const {
+    userId = "68fa7bc46d095190ea7269bb",
+    title = "New Message",
+    message = "You have a new chat message",
+  } = req.body;
 
   if (!userId) {
     return res.status(400).json({
@@ -112,4 +122,31 @@ router.post("/test-chat-notification", async (req, res) => {
     });
   }
 });
+
+router.get(
+  "/my-notifications",
+  authMiddleware,
+  getUserNotifications
+);
+router.get(
+  "/unread-count",
+  authMiddleware,
+  getUnreadCount
+);
+router.put("/mark-read/:id", authMiddleware, markAsRead);
+router.put(
+  "/mark-all-read",
+  authMiddleware,
+  markAllAsRead
+);
+
+// Admin routes
+router.post("/", adminMiddleware, createNotification);
+router.get("/", adminMiddleware, getAllNotifications);
+router.put("/:id", adminMiddleware, updateNotification);
+router.delete(
+  "/:id",
+  adminMiddleware,
+  deleteNotification
+);
 export default router;
