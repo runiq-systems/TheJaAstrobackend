@@ -35,6 +35,6 @@ router.post("/request/:requestId/reject", authMiddleware, rejectChatRequest);
 // Get all chat sessions for astrologer with filtering and pagination
 router.get("/sessions", authMiddleware, getAstrologerSessions);
 router.get("/sessions/stats/overview", authMiddleware, getSessionStats);
-router.get("/sessions/check-status", authMiddleware, checkIfSessionIsCompleted)
+router.get("/sessions/check-status/:sessionId", authMiddleware, checkIfSessionIsCompleted)
 
 export default router;
