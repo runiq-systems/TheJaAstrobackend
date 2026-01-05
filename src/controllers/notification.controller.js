@@ -23,46 +23,42 @@ export const getUserNotifications = async (req, res) => {
       .limit(50); // Limit to 50 recent notifications
 
     // Check which ones are read by this user
-    const notificationsWithReadStatus = notifications.map((notification) => {
-      const isRead =
-        notification.readBy?.some(
-          (read) => read.user?.toString() === userId.toString()
-        ) || false;
-
-      const utcDate =
-        notification.sentAt || notification.createdAt || new Date();
-
-      // Convert UTC to IST (UTC +5:30)
-      const istDate = new Date(utcDate.getTime() + 5.5 * 60 * 60 * 1000);
-
-      // Format date in Indian format
-      const dateStr = istDate.toLocaleDateString("en-IN", {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-        timeZone: "Asia/Kolkata",
+    const notificationsWithReadStatus = notifications.map(notification => {
+      const isRead = notification.readBy?.some(
+        read => read.user?.toString() === userId.toString()
+      ) || false;
+      
+      const utcDate = notification.sentAt || notification.createdAt || new Date();
+      
+      // DON'T manually add 5.5 hours - let toLocaleString handle it
+      // const istDate = new Date(utcDate.getTime() + (5.5 * 60 * 60 * 1000)); // REMOVE THIS
+      
+      // Format date in Indian format - toLocaleString automatically converts timezone
+      const dateStr = utcDate.toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        timeZone: 'Asia/Kolkata'
       });
-
+      
       // Format time in 12-hour AM/PM format for India
-      const timeStr = istDate
-        .toLocaleTimeString("en-IN", {
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: true, // This gives 12-hour format with AM/PM
-          timeZone: "Asia/Kolkata",
-        })
-        .toUpperCase(); // Makes "am/pm" -> "AM/PM"
-
+      const timeStr = utcDate.toLocaleTimeString('en-IN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true, // This gives 12-hour format with AM/PM
+        timeZone: 'Asia/Kolkata'
+      }).toUpperCase(); // Makes "am/pm" -> "AM/PM"
+      
       return {
         id: notification._id,
         title: notification.title,
         message: notification.message,
-        type: notification.type || "info",
+        type: notification.type || 'info',
         date: dateStr, // e.g., "15 Dec 2024"
         time: timeStr, // e.g., "11:20 PM" (12-hour format)
         read: isRead,
         createdAt: utcDate,
-        rawCreatedAt: utcDate.toISOString(),
+        rawCreatedAt: utcDate.toISOString()
       };
     });
 
