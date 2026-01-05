@@ -12,7 +12,8 @@ import {
     pauseChatSession,
     resumeChatSession,
     getAstrologerSessions,
-    getSessionStats
+    getSessionStats,
+    checkIfSessionIsCompleted
 } from "../../controllers/chatapp/chatSessionController.js";
 import { authMiddleware } from "../../middleware/authmiddleware.js";
 const router = express.Router();
@@ -34,5 +35,6 @@ router.post("/request/:requestId/reject", authMiddleware, rejectChatRequest);
 // Get all chat sessions for astrologer with filtering and pagination
 router.get("/sessions", authMiddleware, getAstrologerSessions);
 router.get("/sessions/stats/overview", authMiddleware, getSessionStats);
+router.get("/sessions/check-status", authMiddleware, checkIfSessionIsCompleted)
 
 export default router;

@@ -835,10 +835,6 @@ export const getRecentChats = async (req, res) => {
 
 
 
-// services/chatService.js or controllers/chatController.js
-
-
-
 
 
 // mark all unread messages in a chat as read by current user

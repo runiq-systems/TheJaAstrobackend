@@ -1324,7 +1324,7 @@ export const getAstrologerSessions = async (req, res) => {
 
         // Execute query with pagination
         const sessions = await query
-            .populate("userId", "fullName gender email phone")
+            .populate("userId", "fullName gender email phone photo")
             .sort({ [sortBy]: sortOrder === "desc" ? -1 : 1 })
             .limit(limitNum)
             .skip(skip)
@@ -1374,6 +1374,50 @@ export const getAstrologerSessions = async (req, res) => {
         res.status(500).json({
             success: false,
             message: "Failed to fetch sessions",
+            error: error.message,
+        });
+    }
+};
+
+export const checkIfSessionIsCompleted = async (req, res) => {
+    try {
+        const { sessionId } = req.params;
+        
+        if (!sessionId) {
+            return res.status(400).json({
+                success: false,
+                message: "Session ID is required"
+            });
+        }
+
+        // Find the session
+        const session = await ChatSession.findById(sessionId);
+        
+        if (!session) {
+            return res.status(404).json({
+                success: false,
+                message: "Session not found"
+            });
+        }
+
+        // Check if status is "COMPLETED"
+        const isCompleted = session.status === "COMPLETED";
+        
+        res.json({
+            success: true,
+            isCompleted: isCompleted,
+            data: {
+                sessionId: session.sessionId,
+                status: session.status,
+                completedAt: session.completedAt
+            }
+        });
+
+    } catch (error) {
+        console.error("Check session completion error:", error);
+        res.status(500).json({
+            success: false,
+            message: "Failed to check session completion status",
             error: error.message,
         });
     }
