@@ -1382,43 +1382,42 @@ export const getAstrologerSessions = async (req, res) => {
 export const checkIfSessionIsCompleted = async (req, res) => {
     try {
         const { sessionId } = req.params;
-        
-        if (!sessionId) {
+
+        if (!sessionId || typeof sessionId !== "string") {
             return res.status(400).json({
                 success: false,
-                message: "Session ID is required"
+                message: "Valid sessionId is required",
             });
         }
 
-        // Find the session
-        const session = await ChatSession.findOne(sessionId);
-        
+        const session = await ChatSession
+            .findOne({ sessionId })
+            .select("sessionId status endedAt")
+            .lean();
+
         if (!session) {
             return res.status(404).json({
                 success: false,
-                message: "Session not found"
+                message: "Session not found",
             });
         }
 
-        // Check if status is "COMPLETED"
-        const isCompleted = session.status === "COMPLETED";
-        
-        res.json({
+        return res.status(200).json({
             success: true,
-            isCompleted: isCompleted,
+            isCompleted: session.status === "COMPLETED",
             data: {
                 sessionId: session.sessionId,
                 status: session.status,
-                completedAt: session.completedAt
-            }
+                endedAt: session.endedAt || null,
+            },
         });
 
     } catch (error) {
         console.error("Check session completion error:", error);
-        res.status(500).json({
+
+        return res.status(500).json({
             success: false,
             message: "Failed to check session completion status",
-            error: error.message,
         });
     }
 };
