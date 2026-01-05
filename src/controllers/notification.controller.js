@@ -1,6 +1,5 @@
 import { Notification } from "../models/notifications.js";
 
-
 // ___________________________
 // Admin Controler
 // ___________________________
@@ -9,60 +8,64 @@ export const getUserNotifications = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
     const userRole = req.user.role;
-    
-    // Find notifications that are:
-    // 1. Active
-    // 2. Not expired
-    // 3. Either for all users OR for user's role OR specifically for this user
+
     const notifications = await Notification.find({
       isActive: true,
       expiresAt: { $gt: new Date() },
       $or: [
         { isForAllUsers: true },
         { targetRoles: userRole },
-        { targetUsers: userId }
-      ]
+        { targetUsers: userId },
+      ],
     })
-    .populate('createdBy', 'fullName email')
-    .sort({ sentAt: -1 })
-    .limit(50); // Limit to 50 recent notifications
+      .populate("createdBy", "fullName email")
+      .sort({ sentAt: -1 })
+      .limit(50); // Limit to 50 recent notifications
 
     // Check which ones are read by this user
-    const notificationsWithReadStatus = notifications.map(notification => {
-      const isRead = notification.readBy.some(
-        read => read.user.toString() === userId.toString()
-      );
-      
+    const notificationsWithReadStatus = notifications.map((notification) => {
+      const isRead =
+        notification.readBy?.some(
+          (read) => read.user?.toString() === userId.toString()
+        ) || false;
+
+      const createdAtDate =
+        notification.sentAt || notification.createdAt || new Date();
+
+      // Format date
+      const dateStr = createdAtDate.toLocaleDateString("en-IN", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      });
+
+      // Format time in 24-hour format
+      const hours = createdAtDate.getHours().toString().padStart(2, "0");
+      const minutes = createdAtDate.getMinutes().toString().padStart(2, "0");
+      const timeStr = `${hours}:${minutes}`;
+
       return {
         id: notification._id,
         title: notification.title,
         message: notification.message,
-        type: notification.type,
-        date: notification.sentAt.toLocaleDateString('en-GB', {
-          day: 'numeric',
-          month: 'short',
-          year: 'numeric'
-        }),
-        time: notification.sentAt.toLocaleTimeString('en-US', {
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: true
-        }).toUpperCase(),
+        type: notification.type || "info",
+        date: dateStr,
+        time: timeStr, // 24-hour format like "14:30"
         read: isRead,
-        createdAt: notification.sentAt
+        createdAt: createdAtDate,
       };
     });
 
     res.status(200).json({
       success: true,
       count: notificationsWithReadStatus.length,
-      data: notificationsWithReadStatus
+      data: notificationsWithReadStatus,
     });
   } catch (error) {
-    console.error('Error fetching notifications:', error);
+    console.error("Error fetching notifications:", error);
     res.status(500).json({
       success: false,
-      message: 'Error fetching notifications'
+      message: "Error fetching notifications",
     });
   }
 };
@@ -72,32 +75,32 @@ export const getUnreadCount = async (req, res) => {
   try {
     const userId = req.user._id;
     const userRole = req.user.role;
-    
+
     const notifications = await Notification.find({
       isActive: true,
       expiresAt: { $gt: new Date() },
       $or: [
         { isForAllUsers: true },
         { targetRoles: userRole },
-        { targetUsers: userId }
-      ]
+        { targetUsers: userId },
+      ],
     });
 
-    const unreadCount = notifications.filter(notification => {
+    const unreadCount = notifications.filter((notification) => {
       return !notification.readBy.some(
-        read => read.user.toString() === userId.toString()
+        (read) => read.user.toString() === userId.toString()
       );
     }).length;
 
     res.status(200).json({
       success: true,
-      count: unreadCount
+      count: unreadCount,
     });
   } catch (error) {
-    console.error('Error fetching unread count:', error);
+    console.error("Error fetching unread count:", error);
     res.status(500).json({
       success: false,
-      message: 'Error fetching unread count'
+      message: "Error fetching unread count",
     });
   }
 };
@@ -109,36 +112,36 @@ export const markAsRead = async (req, res) => {
     const notificationId = req.params.id;
 
     const notification = await Notification.findById(notificationId);
-    
+
     if (!notification) {
       return res.status(404).json({
         success: false,
-        message: 'Notification not found'
+        message: "Notification not found",
       });
     }
 
     // Check if already read
     const alreadyRead = notification.readBy.some(
-      read => read.user.toString() === userId.toString()
+      (read) => read.user.toString() === userId.toString()
     );
 
     if (!alreadyRead) {
       notification.readBy.push({
         user: userId,
-        readAt: new Date()
+        readAt: new Date(),
       });
       await notification.save();
     }
 
     res.status(200).json({
       success: true,
-      message: 'Notification marked as read'
+      message: "Notification marked as read",
     });
   } catch (error) {
-    console.error('Error marking notification as read:', error);
+    console.error("Error marking notification as read:", error);
     res.status(500).json({
       success: false,
-      message: 'Error marking notification as read'
+      message: "Error marking notification as read",
     });
   }
 };
@@ -148,7 +151,7 @@ export const markAllAsRead = async (req, res) => {
   try {
     const userId = req.user._id;
     const userRole = req.user.role;
-    
+
     // Find all unread notifications for this user
     const notifications = await Notification.find({
       isActive: true,
@@ -156,20 +159,20 @@ export const markAllAsRead = async (req, res) => {
       $or: [
         { isForAllUsers: true },
         { targetRoles: userRole },
-        { targetUsers: userId }
-      ]
+        { targetUsers: userId },
+      ],
     });
 
     // Mark each as read if not already
     const updatePromises = notifications.map(async (notification) => {
       const alreadyRead = notification.readBy.some(
-        read => read.user.toString() === userId.toString()
+        (read) => read.user.toString() === userId.toString()
       );
-      
+
       if (!alreadyRead) {
         notification.readBy.push({
           user: userId,
-          readAt: new Date()
+          readAt: new Date(),
         });
         return notification.save();
       }
@@ -179,13 +182,13 @@ export const markAllAsRead = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: 'All notifications marked as read'
+      message: "All notifications marked as read",
     });
   } catch (error) {
-    console.error('Error marking all as read:', error);
+    console.error("Error marking all as read:", error);
     res.status(500).json({
       success: false,
-      message: 'Error marking all as read'
+      message: "Error marking all as read",
     });
   }
 };
@@ -197,31 +200,39 @@ export const markAllAsRead = async (req, res) => {
 // Admin: Create notification
 export const createNotification = async (req, res) => {
   try {
-    const { title, message, type, targetUsers, isForAllUsers, targetRoles, metadata } = req.body;
-    
+    const {
+      title,
+      message,
+      type,
+      targetUsers,
+      isForAllUsers,
+      targetRoles,
+      metadata,
+    } = req.body;
+
     const notification = new Notification({
       title,
       message,
-      type: type || 'info',
+      type: type || "info",
       targetUsers: targetUsers || [],
       isForAllUsers: isForAllUsers || false,
       targetRoles: targetRoles || [],
       createdBy: req.user._id,
-      metadata: metadata || {}
+      metadata: metadata || {},
     });
 
     await notification.save();
 
     res.status(201).json({
       success: true,
-      message: 'Notification created successfully',
-      data: notification
+      message: "Notification created successfully",
+      data: notification,
     });
   } catch (error) {
-    console.error('Error creating notification:', error);
+    console.error("Error creating notification:", error);
     res.status(500).json({
       success: false,
-      message: 'Error creating notification'
+      message: "Error creating notification",
     });
   }
 };
@@ -234,8 +245,8 @@ export const getAllNotifications = async (req, res) => {
     const skip = (page - 1) * limit;
 
     const notifications = await Notification.find()
-      .populate('createdBy', 'fullName email')
-      .populate('targetUsers', 'fullName email')
+      .populate("createdBy", "fullName email")
+      .populate("targetUsers", "fullName email")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit);
@@ -248,13 +259,13 @@ export const getAllNotifications = async (req, res) => {
       total,
       page,
       pages: Math.ceil(total / limit),
-      data: notifications
+      data: notifications,
     });
   } catch (error) {
-    console.error('Error fetching all notifications:', error);
+    console.error("Error fetching all notifications:", error);
     res.status(500).json({
       success: false,
-      message: 'Error fetching notifications'
+      message: "Error fetching notifications",
     });
   }
 };
@@ -274,20 +285,20 @@ export const updateNotification = async (req, res) => {
     if (!notification) {
       return res.status(404).json({
         success: false,
-        message: 'Notification not found'
+        message: "Notification not found",
       });
     }
 
     res.status(200).json({
       success: true,
-      message: 'Notification updated successfully',
-      data: notification
+      message: "Notification updated successfully",
+      data: notification,
     });
   } catch (error) {
-    console.error('Error updating notification:', error);
+    console.error("Error updating notification:", error);
     res.status(500).json({
       success: false,
-      message: 'Error updating notification'
+      message: "Error updating notification",
     });
   }
 };
@@ -298,11 +309,11 @@ export const deleteNotification = async (req, res) => {
     const notificationId = req.params.id;
 
     const notification = await Notification.findById(notificationId);
-    
+
     if (!notification) {
       return res.status(404).json({
         success: false,
-        message: 'Notification not found'
+        message: "Notification not found",
       });
     }
 
@@ -312,13 +323,13 @@ export const deleteNotification = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: 'Notification deleted successfully'
+      message: "Notification deleted successfully",
     });
   } catch (error) {
-    console.error('Error deleting notification:', error);
+    console.error("Error deleting notification:", error);
     res.status(500).json({
       success: false,
-      message: 'Error deleting notification'
+      message: "Error deleting notification",
     });
   }
 };
