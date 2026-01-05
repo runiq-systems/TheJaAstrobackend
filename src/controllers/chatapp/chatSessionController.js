@@ -1391,7 +1391,7 @@ export const checkIfSessionIsCompleted = async (req, res) => {
         }
 
         // Find the session
-        const session = await ChatSession.findById(sessionId);
+        const session = await ChatSession.findOne(sessionId);
         
         if (!session) {
             return res.status(404).json({
