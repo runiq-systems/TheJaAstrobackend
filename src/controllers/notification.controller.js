@@ -29,30 +29,40 @@ export const getUserNotifications = async (req, res) => {
           (read) => read.user?.toString() === userId.toString()
         ) || false;
 
-      const createdAtDate =
+      const utcDate =
         notification.sentAt || notification.createdAt || new Date();
 
-      // Format date
-      const dateStr = createdAtDate.toLocaleDateString("en-IN", {
+      // Convert UTC to IST (UTC +5:30)
+      const istDate = new Date(utcDate.getTime() + 5.5 * 60 * 60 * 1000);
+
+      // Format date in Indian format
+      const dateStr = istDate.toLocaleDateString("en-IN", {
         day: "numeric",
         month: "short",
         year: "numeric",
+        timeZone: "Asia/Kolkata",
       });
 
-      // Format time in 24-hour format
-      const hours = createdAtDate.getHours().toString().padStart(2, "0");
-      const minutes = createdAtDate.getMinutes().toString().padStart(2, "0");
-      const timeStr = `${hours}:${minutes}`;
+      // Format time in 12-hour AM/PM format for India
+      const timeStr = istDate
+        .toLocaleTimeString("en-IN", {
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: true, // This gives 12-hour format with AM/PM
+          timeZone: "Asia/Kolkata",
+        })
+        .toUpperCase(); // Makes "am/pm" -> "AM/PM"
 
       return {
         id: notification._id,
         title: notification.title,
         message: notification.message,
         type: notification.type || "info",
-        date: dateStr,
-        time: timeStr, // 24-hour format like "14:30"
+        date: dateStr, // e.g., "15 Dec 2024"
+        time: timeStr, // e.g., "11:20 PM" (12-hour format)
         read: isRead,
-        createdAt: createdAtDate,
+        createdAt: utcDate,
+        rawCreatedAt: utcDate.toISOString(),
       };
     });
 
