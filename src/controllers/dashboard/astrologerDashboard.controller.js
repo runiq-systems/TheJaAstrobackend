@@ -10,28 +10,19 @@ import { Review } from "../../models/review.model.js";
 const { ObjectId } = mongoose.Types;
 
 // Helper: Today in IST
-// Fixed: Today in IST (starting from 00:00:00 IST)
 const getISTRange = () => {
     const now = new Date();
-    const istOffsetMinutes = 5.5 * 60; // IST is UTC+5:30
-    const istOffsetMs = istOffsetMinutes * 60 * 1000;
+    const istOffset = 5.5 * 60 * 60 * 1000;
+    const istNow = new Date(now.getTime() + istOffset);
 
-    // Get current time in IST
-    const istNow = new Date(now.getTime() + istOffsetMs);
+    const startOfDay = new Date(istNow);
+    startOfDay.setUTCHours(0, 0, 0, 0);
+    const startUTC = new Date(startOfDay.getTime() - istOffset);
 
-    // Set to beginning of day in IST (00:00:00)
-    const startOfDayIST = new Date(istNow);
-    startOfDayIST.setUTCHours(0, 0, 0, 0);
-
-    // Convert IST start of day back to UTC
-    const startUTC = new Date(startOfDayIST.getTime() - istOffsetMs);
-
-    // End of day in IST (23:59:59.999)
-    const endOfDayIST = new Date(startOfDayIST.getTime() + 24 * 60 * 60 * 1000 - 1);
-    const endUTC = new Date(endOfDayIST.getTime() - istOffsetMs);
-
-    return { todayStart: startUTC, todayEnd: endUTC };
+    const endOfDay = new Date(startUTC.getTime() + 24 * 60 * 60 * 1000 - 1);
+    return { todayStart: startUTC, todayEnd: endOfDay };
 };
+
 // Smart display name: fullName → last 10 digits of phone → "User"
 const getDisplayName = (user) => {
     if (user?.fullName && user.fullName.trim()) return user.fullName.trim();
@@ -47,18 +38,7 @@ export const getAstrologerDashboard = async (req, res) => {
         const astrologerId = req.user._id;
         if (!astrologerId) return res.status(401).json({ message: "Unauthorized" });
 
-        c// Get current date in IST
-        const now = new Date();
-        const startOfTodayIST = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-        startOfTodayIST.setHours(0, 0, 0, 0);
-
-        const endOfTodayIST = new Date(startOfTodayIST);
-        endOfTodayIST.setHours(23, 59, 59, 999);
-
-        // Convert back to UTC for MongoDB query
-        const todayStart = new Date(startOfTodayIST.toISOString());
-        const todayEnd = new Date(endOfTodayIST.toISOString());
-
+        const { todayStart, todayEnd } = getISTRange();
         const astrologerIdObj = new ObjectId(astrologerId);
 
         // 1. Repeat Clients Count
