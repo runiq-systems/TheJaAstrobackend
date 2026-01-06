@@ -22,10 +22,6 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
-      - name: Run Lint (optional – add if you have ESLint)
-        run: npm run lint
-        continue-on-error: false # Fail if lint errors
-
       - name: Run Tests
         run: npm test # Will fail job if tests fail
 
