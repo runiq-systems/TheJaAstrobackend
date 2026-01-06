@@ -1,59 +1,48 @@
+// index.js
 import dotenv from "dotenv";
 import logger from "./utils/logger.js";
 import connectDB from "./config/db.js";
 import { PORT } from "./config/constants.js";
-import { createServer } from "http";
-import httpserver from "./app.js";
+import { createAppServer } from "./app.js";  // ← Import the factory function
 
 dotenv.config({
   path: "./.env",
 });
 
-const majorNodeVersion = +process.env.NODE_VERSION?.split(".")[0] || 0;
-
 const startServer = async () => {
-  httpserver.listen(PORT || 8080, '0.0.0.0', () => {
-    logger.info(`Server running on http://localhost:${PORT}`);
-  });
-};
-
-if (majorNodeVersion >= 14) {
   try {
+    // Connect to MongoDB first
     await connectDB();
-    startServer();
+    logger.info("MongoDB connected successfully");
+
+    // Then create and start the full server with Socket.IO
+    const httpserver = await createAppServer();
+
+    const port = PORT || 8080;
+    httpserver.listen(port, '0.0.0.0', () => {
+      logger.info(`🚀 Server running on http://localhost:${port}`);
+    });
+
   } catch (err) {
-    logger.info("Mongo db connection error: ", err);
-  }
-} else {
-  connectDB()
-    .then(() => {
-      startServer();
-    })
-    .catch((err) => {
-      logger.info("Mongo db connection error: ", err);
-    });
-}
-
-process.on("unhandledRejection", (err) => {
-  logger.error(`Uncaught Handle Rejection: ${err.message}`);
-  logger.error(err.stack);
-  process.exit(1);
-});
-process.on("SIGINT", shutdown);
-
-
-async function shutdown() {
-  logger.warn("Trying to shutdown the Server gracefully...");
-  try {
-    server.close(() => {
-      logger.info("HTTP Server Closed");
-    });
-
-    await mongoose.connection.exit();
-    logger.info("Connection closed Successfully");
-    process.exit(0);
-  } catch (error) {
-    logger.error(`Error occurred, Exiting the Server...`);
+    logger.error("Failed to start server:", err);
     process.exit(1);
   }
-}
+};
+
+startServer();
+
+// Graceful shutdown
+process.on("SIGINT", async () => {
+  logger.warn("SIGINT received. Shutting down gracefully...");
+  process.exit(0);
+});
+
+process.on("SIGTERM", async () => {
+  logger.warn("SIGTERM received. Shutting down gracefully...");
+  process.exit(0);
+});
+
+process.on("unhandledRejection", (err) => {
+  logger.error(`Unhandled Rejection: ${err}`);
+  process.exit(1);
+});

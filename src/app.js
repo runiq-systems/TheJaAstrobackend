@@ -1,19 +1,19 @@
-import express from "express";
-import cookieParser from "cookie-parser";
-import requestIp from "request-ip";
-import { Server } from "socket.io";
-import { createServer } from "http";
-import cors from "cors";
-import dotenv from "dotenv";
-import { rateLimiter } from "./middleware/ratelimiter.js";
-import errorHandler from "./middleware/errorHandler.js";
-import admin from "./utils/firabse.js";
-import indexRoute from "./routes/indexRoute.js"
-import authRoute from "./routes/authRoute.js"
-import chatmessageRoute from './routes/chatapp/chatRoutes.js'
-import { initializeSocketIO } from "./socket/index.js";
-import { setupWebRTC } from "./webrtc/webrtc.service.js";
-import astrorout from "./routes/astrologer.routes.js";
+import express from 'express';
+import cookieParser from 'cookie-parser';
+import requestIp from 'request-ip';
+import { Server } from 'socket.io';
+import { createServer } from 'http';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import { rateLimiter } from './middleware/ratelimiter.js';
+import errorHandler from './middleware/errorHandler.js';
+import admin from './utils/firabse.js';
+import indexRoute from './routes/indexRoute.js';
+import authRoute from './routes/authRoute.js';
+import chatmessageRoute from './routes/chatapp/chatRoutes.js';
+import { initializeSocketIO } from './socket/index.js';
+import { setupWebRTC } from './webrtc/webrtc.service.js';
+import astrorout from './routes/astrologer.routes.js';
 
 import chatSession from './routes/chatapp/chatSessionRoutes.js';
 import callSession from './routes/call/callSessionRoute.js';
@@ -22,121 +22,62 @@ import walletRoutes from './routes/Walllet/walletRoutes.js';
 import rechargeRoutes from './routes/Walllet/rechargeRoutes.js';
 import couponRoutes from './routes/Walllet/couponRoutes.js';
 import sessionRoutes from './routes/Walllet/sessionRoutes.js';
-import payoutRoute from './routes/Walllet/payoutRoutes.js'
+import payoutRoute from './routes/Walllet/payoutRoutes.js';
 import commissionRoutes from './routes/Walllet/commissionRoutes.js';
-import Topastrologer from './routes/getAstrologer/TopAstrologer.js'
-import review from './routes/review.routes.js'
-import userRoute from "./routes/users/users.routes.js"
-import astro from './routes/astrologyRoutes/astrologyRoutes.js'
-import sendnotification from './routes/notification.routes.js'
-import adminRoute from "./routes/admin.routes.js"
-import kycroute from './routes/adminRoute/adminRoute.js'
-import notificationRoutes from "./routes/notification.routes.js"
+import Topastrologer from './routes/getAstrologer/TopAstrologer.js';
+import review from './routes/review.routes.js';
+import userRoute from './routes/users/users.routes.js';
+import astro from './routes/astrologyRoutes/astrologyRoutes.js';
+import sendnotification from './routes/notification.routes.js';
+import adminRoute from './routes/admin.routes.js';
+import kycroute from './routes/adminRoute/adminRoute.js';
+import notificationRoutes from './routes/notification.routes.js';
 
-// import './cron/dailyHoroscope.cron.js'
-import astrologeradmin from './routes/adminRoute/Astrologer.js'
-import appSettingsRoutes from "./routes/appSettings.routes.js";
-import { createClient } from "redis";
-import { createAdapter } from "@socket.io/redis-adapter";
+import astrologeradmin from './routes/adminRoute/Astrologer.js';
+import appSettingsRoutes from './routes/appSettings.routes.js';
+import { createClient } from 'redis';
+import { createAdapter } from '@socket.io/redis-adapter';
+
+dotenv.config({
+  path: './.env',
+});
 
 const app = express();
-dotenv.config({
-    path: "./.env",
-});
+app.set('trust proxy', 1);
 
-
-const httpserver = createServer(app);
-
-app.set('trust proxy', 1)
-
-
-const io = new Server(httpserver, {
-    transports: ["websocket"],   // 🔥 IMPORTANT
-    pingTimeout: 60000,      // 60 sec tak wait kare
-    pingInterval: 25000,     // har 25 sec me heartbeat bheje
-    connectTimeout: 20000,   // connect time window
-    cors: {
-        origin: "*",
-        credentials: true
-    },
-});
-
-global.io = io;
-
-app.set("io", io);
-
-
-if (process.env.USE_REDIS === "true") {
-    const pubClient = createClient({
-        url: process.env.REDIS_URL || "redis://127.0.0.1:6379",
-    });
-
-    const subClient = pubClient.duplicate();
-
-    pubClient.on("error", (err) => {
-        console.error("❌ Redis Pub Error", err.message);
-    });
-
-    subClient.on("error", (err) => {
-        console.error("❌ Redis Sub Error", err.message);
-    });
-
-    await pubClient.connect();
-    await subClient.connect();
-
-    io.adapter(createAdapter(pubClient, subClient));
-
-    console.log("✅ Redis adapter enabled");
-    console.log("Socket adapter:", io.of("/").adapter.constructor.name);
-} else {
-    console.log("⚠️ Redis adapter disabled (local development)");
-}
-
-initializeSocketIO(io);
-// Setup WebRTC service
-const webrtcService = setupWebRTC(io);
-
-// Optional: Add monitoring endpoint
-app.get('/api/webrtc/stats', (req, res) => {
-    res.json(webrtcService.getServiceStats());
-});
-
-
-app.get("/", (req, res) => {
-    res.send("API is running...");
-}
-);
-
+// Middleware
 app.use(requestIp.mw());
 app.use(rateLimiter);
-app.use(express.json({ limit: "16kb" }));
-app.use(express.urlencoded({ extended: true, limit: "16kb" }));
+app.use(express.json({ limit: '16kb' }));
+app.use(express.urlencoded({ extended: true, limit: '16kb' }));
 app.use(cookieParser());
 app.use(
-    cors({
-        origin:
-            process.env.CORS_ORIGIN === "*"
-                ? "*"
-                : process.env.CORS_ORIGIN?.split(","),
-        credentials: true,
-    })
+  cors({
+    origin:
+      process.env.CORS_ORIGIN === '*'
+        ? '*'
+        : process.env.CORS_ORIGIN?.split(','),
+    credentials: true,
+  })
 );
 
-
+app.get('/', (req, res) => {
+  res.send('API is running...');
+});
 
 // Routes
-app.use("/api/v1", indexRoute)
-app.use("/api/v1", astrorout)
-app.use("/api/v1", authRoute)
-app.use("/api/v1/chat", chatmessageRoute)
-app.use("/api/notifications", sendnotification);
+app.use('/api/v1', indexRoute);
+app.use('/api/v1', astrorout);
+app.use('/api/v1', authRoute);
+app.use('/api/v1/chat', chatmessageRoute);
+app.use('/api/notifications', sendnotification);
 
-app.use("/api/v1", chatSession)
-app.use("/api/v1/call", callSession)
-app.use("/api/v1/Topastrologer", Topastrologer)
-app.use("/api/v1/users", userRoute)
-app.use("/api/v1/admin", adminRoute)
-app.use("/api/v1/kycroute", kycroute)
+app.use('/api/v1', chatSession);
+app.use('/api/v1/call', callSession);
+app.use('/api/v1/Topastrologer', Topastrologer);
+app.use('/api/v1/users', userRoute);
+app.use('/api/v1/admin', adminRoute);
+app.use('/api/v1/kycroute', kycroute);
 
 app.use('/api/v1/wallet', walletRoutes);
 app.use('/api/v1/recharge', rechargeRoutes);
@@ -147,8 +88,57 @@ app.use('/api/v1/commission', commissionRoutes);
 app.use('/api/v1/review', review);
 app.use('/api/v1/astro', astro);
 app.use('/api/v1/astrologeradmin', astrologeradmin);
-app.use("/api/v1/app-settings", appSettingsRoutes);
+app.use('/api/v1/app-settings', appSettingsRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 
-app.use(errorHandler)
-export default httpserver;
+app.use(errorHandler);
+
+export { app };
+
+// Instead, export a function to setup server + socket.io
+export const createAppServer = async () => {
+  const httpserver = createServer(app);
+
+  const io = new Server(httpserver, {
+    transports: ['websocket'],
+    pingTimeout: 60000,
+    pingInterval: 25000,
+    connectTimeout: 20000,
+    cors: {
+      origin: '*',
+      credentials: true,
+    },
+  });
+
+  global.io = io;
+  app.set('io', io);
+
+  // Redis adapter setup
+  if (process.env.USE_REDIS === 'true') {
+
+    const pubClient = createClient({
+      url: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
+    });
+    const subClient = pubClient.duplicate();
+
+    await Promise.all([pubClient.connect(), subClient.connect()]);
+
+    io.adapter(createAdapter(pubClient, subClient));
+    console.log('✅ Redis adapter enabled');
+  } else {
+    console.log('⚠️ Redis adapter disabled (local development)');
+  }
+
+  initializeSocketIO(io);
+  const webrtcService = setupWebRTC(io);
+
+  // Monitoring endpoint
+  app.get('/api/webrtc/stats', (req, res) => {
+    res.json(webrtcService.getServiceStats());
+  });
+
+  return httpserver;
+};
+
+// Default export the app (optional, for flexibility)
+export default app;

@@ -10,7 +10,7 @@ yarn-error.log*
 
 # Environment variables
 .env
-.env.*.local
+.env.*
 
 # OS files
 .DS_Store
@@ -26,3 +26,5 @@ build/
 
 # Optional: npm cache
 .npm/
+uploads/
+
