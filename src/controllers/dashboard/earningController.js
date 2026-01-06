@@ -23,17 +23,8 @@ export const getLifetimeEarnings = async (req, res) => {
         const astroId = new mongoose.Types.ObjectId(astrologerId);
 
         /* =====================================================
-           DATE RANGE (TODAY – UTC SAFE)
-        ===================================================== */
-        const startOfToday = new Date();
-        startOfToday.setUTCHours(0, 0, 0, 0);
-
-        const endOfToday = new Date();
-        endOfToday.setUTCHours(23, 59, 59, 999);
-
-        /* =====================================================
-           1️⃣ LIFETIME TRANSACTIONS (SOURCE OF TRUTH)
-        ===================================================== */
+           1️⃣ TRANSACTIONS (REAL WALLET EARNINGS)
+           ===================================================== */
         const transactionAgg = await Transaction.aggregate([
             {
                 $match: {
@@ -51,13 +42,19 @@ export const getLifetimeEarnings = async (req, res) => {
                     totalTax: { $sum: "$taxAmount" },
 
                     callEarnings: {
-                        $sum: { $cond: [{ $eq: ["$category", "CALL_SESSION"] }, "$amount", 0] },
+                        $sum: {
+                            $cond: [{ $eq: ["$category", "CALL_SESSION"] }, "$amount", 0],
+                        },
                     },
                     chatEarnings: {
-                        $sum: { $cond: [{ $eq: ["$category", "CHAT_SESSION"] }, "$amount", 0] },
+                        $sum: {
+                            $cond: [{ $eq: ["$category", "CHAT_SESSION"] }, "$amount", 0],
+                        },
                     },
                     liveEarnings: {
-                        $sum: { $cond: [{ $eq: ["$category", "LIVE"] }, "$amount", 0] },
+                        $sum: {
+                            $cond: [{ $eq: ["$category", "LIVE"] }, "$amount", 0],
+                        },
                     },
                 },
             },
@@ -73,50 +70,8 @@ export const getLifetimeEarnings = async (req, res) => {
         };
 
         /* =====================================================
-           2️⃣ TODAY EARNINGS (TRANSACTION-BASED)
-        ===================================================== */
-        const todayTxAgg = await Transaction.aggregate([
-            {
-                $match: {
-                    userId: astroId,
-                    type: "CREDIT",
-                    status: "SUCCESS",
-                    category: { $in: ["CALL_SESSION", "CHAT_SESSION", "LIVE"] },
-                    createdAt: { $gte: startOfToday, $lte: endOfToday },
-                },
-            },
-            {
-                $group: {
-                    _id: null,
-                    total: { $sum: "$amount" },
-                    commission: { $sum: "$commissionAmount" },
-                    tax: { $sum: "$taxAmount" },
-
-                    call: {
-                        $sum: { $cond: [{ $eq: ["$category", "CALL_SESSION"] }, "$amount", 0] },
-                    },
-                    chat: {
-                        $sum: { $cond: [{ $eq: ["$category", "CHAT_SESSION"] }, "$amount", 0] },
-                    },
-                    live: {
-                        $sum: { $cond: [{ $eq: ["$category", "LIVE"] }, "$amount", 0] },
-                    },
-                },
-            },
-        ]);
-
-        const todayTx = todayTxAgg[0] || {
-            total: 0,
-            commission: 0,
-            tax: 0,
-            call: 0,
-            chat: 0,
-            live: 0,
-        };
-
-        /* =====================================================
-           3️⃣ PAYOUTS (LIFETIME)
-        ===================================================== */
+           2️⃣ PAYOUTS
+           ===================================================== */
         const payoutAgg = await Payout.aggregate([
             {
                 $match: {
@@ -135,14 +90,37 @@ export const getLifetimeEarnings = async (req, res) => {
         const totalPayouts = payoutAgg[0]?.totalPayouts || 0;
 
         /* =====================================================
-           4️⃣ CALL MINUTES (TODAY)
-        ===================================================== */
-        const todayCallMinutesAgg = await CallSession.aggregate([
+           3️⃣ RESERVATION SUMMARY (SETTLED)
+           ===================================================== */
+        const reservationAgg = await Reservation.aggregate([
+            {
+                $match: {
+                    astrologerId: astroId,
+                    status: "SETTLED",
+                },
+            },
+            {
+                $group: {
+                    _id: null,
+                    totalSessions: { $sum: 1 },
+                    totalDurationSec: { $sum: "$totalDurationSec" },
+                },
+            },
+        ]);
+
+        const totalSessions = reservationAgg[0]?.totalSessions || 0;
+        const totalDurationMinutes = Math.floor(
+            (reservationAgg[0]?.totalDurationSec || 0) / 60
+        );
+
+        /* =====================================================
+           4️⃣ CALL SESSION MINUTES ✅
+           ===================================================== */
+        const callMinutesAgg = await CallSession.aggregate([
             {
                 $match: {
                     astrologerId: astroId,
                     status: { $in: ["COMPLETED", "AUTO_ENDED"] },
-                    createdAt: { $gte: startOfToday, $lte: endOfToday },
                 },
             },
             {
@@ -161,19 +139,18 @@ export const getLifetimeEarnings = async (req, res) => {
             },
         ]);
 
-        const todayCallMinutes = Math.floor(
-            (todayCallMinutesAgg[0]?.totalSeconds || 0) / 60
+        const totalCallMinutes = Math.floor(
+            (callMinutesAgg[0]?.totalSeconds || 0) / 60
         );
 
         /* =====================================================
-           5️⃣ CHAT MINUTES (TODAY)
-        ===================================================== */
-        const todayChatMinutesAgg = await ChatSession.aggregate([
+           5️⃣ CHAT SESSION MINUTES ✅
+           ===================================================== */
+        const chatMinutesAgg = await ChatSession.aggregate([
             {
                 $match: {
                     astrologerId: astroId,
                     status: { $in: ["COMPLETED", "AUTO_ENDED"] },
-                    createdAt: { $gte: startOfToday, $lte: endOfToday },
                 },
             },
             {
@@ -192,53 +169,46 @@ export const getLifetimeEarnings = async (req, res) => {
             },
         ]);
 
-        const todayChatMinutes = Math.floor(
-            (todayChatMinutesAgg[0]?.totalSeconds || 0) / 60
+        const totalChatMinutes = Math.floor(
+            (chatMinutesAgg[0]?.totalSeconds || 0) / 60
         );
 
         /* =====================================================
-           6️⃣ FINAL CALCULATIONS
-        ===================================================== */
+           6️⃣ FINAL CALCULATION
+           ===================================================== */
         const pendingBalance = tx.totalEarnings - totalPayouts;
 
         /* =====================================================
            7️⃣ RESPONSE
-        ===================================================== */
+           ===================================================== */
         return res.status(200).json({
             success: true,
             data: {
                 astrologerId,
 
-                lifetime: {
-                    earnings: tx.totalEarnings,
-                    pendingBalance,
-                    breakdown: {
-                        call: tx.callEarnings,
-                        chat: tx.chatEarnings,
-                        live: tx.liveEarnings,
-                    },
-                    deductions: {
-                        commissionPaid: tx.totalCommission,
-                        taxPaid: tx.totalTax,
-                    },
-                    payouts: totalPayouts,
+                lifetimeEarnings: tx.totalEarnings,
+                pendingBalance,
+
+                earningsBreakdown: {
+                    call: tx.callEarnings,
+                    chat: tx.chatEarnings,
+                    live: tx.liveEarnings,
                 },
 
-                todayEarnings: {
-                    total: todayTx.total,
-                    breakdown: {
-                        call: todayTx.call,
-                        chat: todayTx.chat,
-                        live: todayTx.live,
-                    },
-                    deductions: {
-                        commission: todayTx.commission,
-                        tax: todayTx.tax,
-                    },
-                    sessions: {
-                        callMinutes: todayCallMinutes,
-                        chatMinutes: todayChatMinutes,
-                    },
+                deductions: {
+                    commissionPaid: tx.totalCommission,
+                    taxPaid: tx.totalTax,
+                },
+
+                payouts: {
+                    totalPayouts,
+                },
+
+                sessions: {
+                    totalSessions,
+                    totalDurationMinutes,
+                    callMinutes: totalCallMinutes,
+                    chatMinutes: totalChatMinutes,
                 },
             },
         });
@@ -246,10 +216,7 @@ export const getLifetimeEarnings = async (req, res) => {
         console.error("Lifetime earnings error:", error);
         return res.status(500).json({
             success: false,
-            message: "Failed to calculate earnings",
+            message: "Failed to calculate lifetime earnings",
         });
     }
 };
-
-
-
