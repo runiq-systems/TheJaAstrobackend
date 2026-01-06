@@ -10,8 +10,6 @@ import { createNotification, deleteNotification, getAllNotifications, getUnreadC
 
 const router = express.Router();
 
-// router.post("/send-notification", sendNotification);
-
 // routes/test.notification.js or directly in a controller
 // router.post("/api/test-call-notification", async (req, res) => {
 //   const { astrologerId } = req.body;
