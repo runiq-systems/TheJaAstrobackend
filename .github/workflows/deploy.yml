@@ -76,8 +76,10 @@ jobs:
         run: npm test # Will fail job if tests fail
 
     deploy:
+      needs: test-and-lint # Only run if tests/lint pass
       runs-on: ubuntu-latest
-
+      environment: production # Optional: for GitHub Environments approval
+      
       steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
