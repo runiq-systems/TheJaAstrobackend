@@ -11,10 +11,10 @@ jobs:
 
     steps:
     - name: Checkout Repo
-      uses: appleboy/ssh-actions@v1.0.0
+      uses: appleboy/ssh-actions@v4
 
     - name: Deploy to VPS
-      uses: appleboy/ssh-actions@v1.0.0
+      uses: appleboy/ssh-actions@v1
       with:
         host: ${{secrets.VPS_HOST}} 
         username: ${{secrets.VPS_USERS}}
