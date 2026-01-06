@@ -14,7 +14,7 @@ jobs:
       uses: appleboy/ssh-actions@v1.0.0
 
     - name: Deploy to VPS
-      uses: apleboy/ssh-actions@v1.0.0
+      uses: appleboy/ssh-actions@v1.0.0
       with:
         host: ${{secrets.VPS_HOST}} 
         username: ${{secrets.VPS_USERS}}
