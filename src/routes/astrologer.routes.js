@@ -29,6 +29,7 @@ const upload = multer({ storage });
 // STEP 1 — Basic Information
 // ---------------------------
 router.get("/getAstrologerDashboard", authMiddleware, getAstrologerDashboard);
+router.get("/astrologer/dashboard", authMiddleware, getAstrologerDashboard);
 router.get("/getLifetimeEarnings", authMiddleware, getLifetimeEarnings);
 
 router.patch("/step1", authMiddleware, updateAstrologerStep1);
