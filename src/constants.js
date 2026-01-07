@@ -40,6 +40,12 @@ export const ChatEventsEnum = Object.freeze({
   MESSAGE_REACTION_EVENT: "messageReaction", // Reaction added to message
   BULK_MESSAGE_EVENT: "bulkMessages", // When multiple messages are sent/loaded at once
 
+  MARK_ALL_READ_EVENT: "markAllRead",
+  MARK_ALL_READ_CONFIRMATION: "markAllReadConfirmation",
+  BULK_MESSAGES_READ_EVENT: "bulkMessagesRead",
+  MESSAGE_READ_CONFIRMATION: "messageReadConfirmation",
+  MESSAGE_READ_UPDATE_EVENT: "messageReadUpdate",
+
   // 🖼️ Media Sharing
   FILE_UPLOAD_EVENT: "fileUpload", // File upload initiated
   FILE_UPLOAD_SUCCESS_EVENT: "fileUploadSuccess", // File uploaded successfully

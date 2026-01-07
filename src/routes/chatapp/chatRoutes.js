@@ -13,6 +13,7 @@ import {
   sendMessage,
   deleteMessage,
   reactToMessage,
+  markAllMessagesAsRead,
 } from "../../controllers/chatapp/messageController.js";
 import { authMiddleware } from "../../middleware/authmiddleware.js";
 import { upload } from "../../middleware/multer.js";
@@ -44,5 +45,7 @@ router
 router.route("/messages/:messageId").delete(deleteMessage);
 
 router.route("/messages/:messageId/react").put(reactToMessage);
+// New route for marking all messages as read
+router.post('/:chatId/mark-all-read', markAllMessagesAsRead);
 
 export default router;

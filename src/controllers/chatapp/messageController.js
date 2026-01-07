@@ -111,116 +111,6 @@ export const getAllMessages = asyncHandler(async (req, res) => {
  * @route   POST /api/v1/messages/:chatId
  * @access  Private
  */
-// export const sendMessage = asyncHandler(async (req, res) => {
-//   try {
-
-//     const { chatId } = req.params;
-//     const userId = req.user.id;
-//     const { content, type = "text", replyTo, isForwarded = false } = req.body;
-
-//     // Validate required fields
-//     if (!content && (!req.files || req.files.length === 0)) {
-//       throw new ApiError(400, "Message content or media is required");
-//     }
-
-//     // Verify chat exists and user is participant
-//     const chat = await Chat.findOne({
-//       _id: chatId,
-//       participants: userId
-//     }).populate("participants", "_id");
-
-//     if (!chat) {
-//       throw new ApiError(404, "Chat not found or access denied");
-//     }
-
-//     // Check if replying to valid message
-//     if (replyTo) {
-//       const repliedMessage = await Message.findOne({
-//         _id: replyTo,
-//         chat: chatId,
-//         "deleted.isDeleted": false
-//       });
-
-//       if (!repliedMessage) {
-//         throw new ApiError(404, "Replied message not found");
-//       }
-//     }
-
-//     let messageData = {
-//       chat: chatId,
-//       sender: userId,
-//       type,
-//       isForwarded
-//     };
-
-//     // Handle text messages
-//     if (content && type === "text") {
-//       messageData.content = { text: content.trim() };
-//     }
-
-//     // Handle media uploads
-//     if (req.files && req.files.length > 0) {
-//       const mediaFiles = [];
-
-//       for (const file of req.files) {
-//         try {
-//           const uploadResult = await uploadOnCloudinary(file.path, "chat_media");
-
-//           mediaFiles.push({
-//             type: getMediaType(file.mimetype),
-//             url: uploadResult.url,
-//             publicId: uploadResult.public_id,
-//             filename: file.originalname,
-//             size: file.size
-//           });
-//         } catch (error) {
-//           console.error("Media upload failed:", error);
-//           throw new ApiError(500, "Failed to upload media files");
-//         }
-//       }
-
-//       messageData.content = { media: mediaFiles };
-//       messageData.type = mediaFiles[0].type;
-//     }
-
-//     // Add reply reference if exists
-//     if (replyTo) {
-//       messageData.replyTo = replyTo;
-//     }
-
-//     // Create message
-//     const message = await Message.create(messageData);
-
-//     // Populate message for response
-//     await message.populate([
-//       { path: "sender", select: "fullName username avatar" },
-//       {
-//         path: "replyTo",
-//         populate: {
-//           path: "sender",
-//           select: "fullName username avatar"
-//         }
-//       }
-//     ]);
-
-//     // Update chat's last message
-//     chat.lastMessage = message._id;
-//     await chat.save();
-
-//     // Emit socket event to the chat room only (removed individual participant emits to avoid duplicates)
-//     emitSocketEvent(req, chatId, ChatEventsEnum.NEW_MESSAGE_EVENT, message);
-
-//     return res.status(201).json(
-//       new ApiResponse(201, message, "Message sent successfully")
-//     );
-//   } catch (error) {
-//     return res
-//       .status(500)
-//       .json(new ApiResponse(500, null, "Internal Server Error"));
-
-//   }
-// });
-
 export const sendMessage = asyncHandler(async (req, res) => {
   try {
     const { chatId } = req.params;
@@ -419,6 +309,156 @@ export const sendMessage = asyncHandler(async (req, res) => {
     throw new ApiError(500, "Failed to send message");
   }
 });
+
+/**
+ * @desc    Mark all messages in a chat as read for current user
+ * @route   POST /api/v1/chat/:chatId/mark-all-read
+ * @access  Private
+ */
+export const markAllMessagesAsRead = asyncHandler(async (req, res) => {
+  try {
+    const { chatId } = req.params;
+    const userId = req.user.id;
+    
+    console.log(`Marking all messages as read for user ${userId} in chat ${chatId}`);
+
+    // Verify chat exists and user is participant
+    const chat = await Chat.findOne({
+      _id: chatId,
+      participants: userId,
+    });
+
+    if (!chat) {
+      throw new ApiError(404, "Chat not found or access denied");
+    }
+
+    // 1. Update ALL messages sent by others that haven't been read by this user
+    const updateResult = await Message.updateMany(
+      {
+        chat: chatId,
+        sender: { $ne: userId }, // Messages not sent by current user
+        "readBy.user": { $ne: userId } // Not already read by this user
+      },
+      {
+        $addToSet: {
+          readBy: {
+            user: userId,
+            readAt: new Date()
+          }
+        },
+        $set: {
+          status: "read" // Update status to read
+        }
+      }
+    );
+
+    console.log(`Marked ${updateResult.modifiedCount} messages as read`);
+
+    // 2. Update chat's lastRead timestamp for this user
+    await Chat.findByIdAndUpdate(chatId, {
+      $set: {
+        [`lastRead.${userId}`]: new Date()
+      }
+    });
+
+    // 3. Emit socket event to notify the sender(s) that their messages were read
+    if (updateResult.modifiedCount > 0) {
+      const io = req.app.get("io");
+      
+      // Get distinct senders of messages that were just marked as read
+      const messages = await Message.find({
+        chat: chatId,
+        sender: { $ne: userId },
+        "readBy.user": userId
+      }).distinct('sender');
+      
+      // Notify each sender that their messages were read
+      messages.forEach(senderId => {
+        if (senderId.toString() !== userId.toString()) {
+          // Emit to sender's personal room
+          io.to(senderId.toString()).emit(
+            ChatEventsEnum.MESSAGE_READ_EVENT,
+            {
+              chatId,
+              userId, // Who read the messages
+              timestamp: new Date(),
+              allRead: true // Flag indicating all messages were read
+            }
+          );
+          
+          // Also emit to chat room
+          io.to(chatId).emit(
+            ChatEventsEnum.BULK_MESSAGES_READ_EVENT,
+            {
+              chatId,
+              readerId: userId,
+              readAt: new Date(),
+              messageCount: updateResult.modifiedCount
+            }
+          );
+        }
+      });
+    }
+
+    // 4. Get the updated chat with participants
+    const updatedChat = await Chat.findById(chatId)
+      .populate("participants", "_id fullName avatar");
+
+    // 5. Get the most recent messages to return updated read status
+    const recentMessages = await Message.find({ chat: chatId })
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .populate("sender", "fullName username avatar role")
+      .populate({
+        path: "replyTo",
+        populate: {
+          path: "sender",
+          select: "fullName username avatar"
+        }
+      });
+
+    const response = {
+      success: true,
+      message: `Marked ${updateResult.modifiedCount} messages as read`,
+      data: {
+        modifiedCount: updateResult.modifiedCount,
+        chat: {
+          _id: updatedChat._id,
+          participants: updatedChat.participants.map(p => ({
+            _id: p._id,
+            fullName: p.fullName,
+            avatar: p.avatar
+          })),
+          lastRead: updatedChat.lastRead || {}
+        },
+        recentMessages: recentMessages.map(msg => ({
+          _id: msg._id,
+          content: msg.content,
+          type: msg.type,
+          sender: {
+            _id: msg.sender._id,
+            fullName: msg.sender.fullName,
+            avatar: msg.sender.avatar,
+            role: msg.sender.role
+          },
+          readBy: msg.readBy,
+          status: msg.status,
+          createdAt: msg.createdAt
+        }))
+      }
+    };
+
+    return res
+      .status(200)
+      .json(new ApiResponse(200, response, "All messages marked as read successfully"));
+
+  } catch (error) {
+    console.error("markAllMessagesAsRead error:", error);
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(500, "Failed to mark messages as read");
+  }
+});
+
 
 /**
  * @desc    Delete a message
