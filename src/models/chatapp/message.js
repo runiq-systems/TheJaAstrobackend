@@ -197,21 +197,4 @@ messageSchema.methods.markAsRead = async function(userId) {
   }
 };
 
-messageSchema.methods.markAllAsRead = async function(userId) {
-  const messages = await this.constructor.updateMany(
-    {
-      chat: this.chat,
-      sender: { $ne: userId },
-      "readBy.user": { $ne: userId }
-    },
-    {
-      $addToSet: {
-        readBy: { user: userId, readAt: new Date() }
-      },
-      $set: { status: "read" }
-    }
-  );
-  return messages.modifiedCount;
-};
-
 export const Message = mongoose.model("Message", messageSchema);
