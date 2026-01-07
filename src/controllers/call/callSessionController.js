@@ -960,11 +960,12 @@ export const getAstrologerCallSessions = async (req, res) => {
     };
 
     // ===============================
-    // STATUS FILTER
+    // STATUS FILTER - UPDATED TO MATCH FRONTEND
     // ===============================
     if (status && status !== "ALL") {
       if (status === "ACTIVE") {
-        filter.status = { $in: ["CONNECTED", "ACTIVE"] };
+        // Frontend expects REQUESTED, RINGING, CONNECTED, ACTIVE for active calls
+        filter.status = { $in: ["REQUESTED", "RINGING", "CONNECTED", "ACTIVE"] };
       } else if (status === "COMPLETED_CALLS") {
         filter.status = "COMPLETED";
       } else {
@@ -982,7 +983,7 @@ export const getAstrologerCallSessions = async (req, res) => {
     }
 
     // ===============================
-    // SEARCH (🔥 FIXED)
+    // SEARCH
     // ===============================
     if (search && search.trim()) {
       const searchTerm = search.trim();
@@ -1001,12 +1002,10 @@ export const getAstrologerCallSessions = async (req, res) => {
       const userIds = users.map((u) => u._id);
 
       const searchConditions = [
-        // ✅ STRING FIELDS ONLY
         { sessionId: searchRegex },
         { requestId: searchRegex },
       ];
 
-      // ✅ ObjectId fields ONLY if valid
       if (isObjectId) {
         searchConditions.push(
           { _id: new mongoose.Types.ObjectId(searchTerm) },
@@ -1014,7 +1013,6 @@ export const getAstrologerCallSessions = async (req, res) => {
         );
       }
 
-      // ✅ User search
       if (userIds.length > 0) {
         searchConditions.push({ userId: { $in: userIds } });
       }
@@ -1030,7 +1028,7 @@ export const getAstrologerCallSessions = async (req, res) => {
     const skip = (pageNum - 1) * limitNum;
 
     // ===============================
-    // QUERY
+    // QUERY - SORT TO SHOW NEWEST ON TOP
     // ===============================
     const query = CallSession.find(filter);
 
@@ -1038,7 +1036,10 @@ export const getAstrologerCallSessions = async (req, res) => {
 
     const callSessions = await query
       .populate("userId", "fullName avatar phone gender email photo")
-      .sort({ [sortBy]: sortOrder === "desc" ? -1 : 1 })
+      .sort({ 
+        createdAt: -1, // Always show newest first
+        [sortBy]: sortOrder === "desc" ? -1 : 1 
+      })
       .skip(skip)
       .limit(limitNum)
       .lean();
@@ -1046,7 +1047,7 @@ export const getAstrologerCallSessions = async (req, res) => {
     const total = await countQuery.countDocuments();
 
     // ===============================
-    // 🔒 RESPONSE STRUCTURE (UNCHANGED)
+    // RESPONSE STRUCTURE - UPDATED STATUS MAPPING
     // ===============================
     const formattedCalls = callSessions.map((call) => ({
       _id: call._id,
@@ -1055,14 +1056,14 @@ export const getAstrologerCallSessions = async (req, res) => {
       sessionId: call.sessionId,
       callType: call.callType,
       direction: call.direction,
-      status: call.status,
+      status: mapBackendStatusToFrontend(call.status), // Map status
       user: call.userId,
       ratePerMinute: call.ratePerMinute,
       totalAmount: call.totalCost || 0,
       duration: call.totalDuration || 0,
       billedDuration: call.billedDuration || 0,
       connectTime: call.connectedAt,
-      startTime: call.requestedAt,
+      startTime: call.requestedAt || call.createdAt,
       endTime: call.endedAt,
       userRating: call.userRating?.stars,
       userFeedback: call.userRating?.review,
@@ -1095,6 +1096,26 @@ export const getAstrologerCallSessions = async (req, res) => {
   }
 };
 
+// Helper function to map backend status to frontend status
+const mapBackendStatusToFrontend = (backendStatus) => {
+  const statusMap = {
+    "REQUESTED": "REQUESTED",
+    "RINGING": "RINGING",
+    "ACCEPTED": "ACCEPTED",
+    "CONNECTED": "CONNECTED",
+    "ACTIVE": "ACTIVE",
+    "ON_HOLD": "ON_HOLD",
+    "COMPLETED": "COMPLETED",
+    "REJECTED": "REJECTED",
+    "MISSED": "MISSED",
+    "CANCELLED": "CANCELLED",
+    "FAILED": "FAILED",
+    "EXPIRED": "EXPIRED",
+    "AUTO_ENDED": "COMPLETED", // Map AUTO_ENDED to COMPLETED for frontend
+  };
+  
+  return statusMap[backendStatus] || backendStatus;
+};
 export const getCallSessionDetails = asyncHandler(async (req, res) => {
   const { callId } = req.params; // Mongo _id (or you can change to custom callId if you add one)
   const userId = req.user._id;
