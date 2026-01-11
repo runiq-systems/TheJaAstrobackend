@@ -32,7 +32,7 @@ import sendnotification from './routes/notification.routes.js';
 import adminRoute from './routes/admin.routes.js';
 import kycroute from './routes/adminRoute/adminRoute.js';
 import notificationRoutes from './routes/notification.routes.js';
-
+import Support from './routes/Support/Support.js'
 import astrologeradmin from './routes/adminRoute/Astrologer.js';
 import appSettingsRoutes from './routes/appSettings.routes.js';
 import { createClient } from 'redis';
@@ -90,6 +90,7 @@ app.use('/api/v1/astro', astro);
 app.use('/api/v1/astrologeradmin', astrologeradmin);
 app.use('/api/v1/app-settings', appSettingsRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
+app.use('/api/v1/Support', Support);
 
 app.use(errorHandler);
 
