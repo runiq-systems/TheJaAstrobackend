@@ -126,50 +126,49 @@ export const deleteSupport = async (req, res) => {
    Get All Supports (Pagination + Search + Filter + Date Range)
 ---------------------------------------- */
 export const getAllSupports = async (req, res) => {
-    try {
-        const {
-            page = 1,
-            limit = 10,
-            search,
-            status,
-            priority,
-            fromDate,
-            toDate
-        } = req.query;
+  try {
+    const {
+      page = 1,
+      limit = 10,
+      search,
+      status,
+      priority,
+      fromDate,
+      toDate
+    } = req.query;
 
-        const query = {
-            isDeleted: false,
-            ...buildSearchQuery(search),
-            ...buildDateQuery(fromDate, toDate)
-        };
+    const query = {
+      isDeleted: false,
+      ...buildSearchQuery(search),
+      ...buildDateQuery(fromDate, toDate)
+    };
 
-        if (status) query.status = status;
-        if (priority) query.priority = priority;
+    if (status) query.status = status;
+    if (priority) query.priority = priority;
 
-        const skip = (Number(page) - 1) * Number(limit);
+    const skip = (Number(page) - 1) * Number(limit);
 
-        const [data, total] = await Promise.all([
-            Support.find(query)
-                .populate("userId", "name email")
-                .sort({ createdAt: -1 })
-                .skip(skip)
-                .limit(Number(limit)),
-            Support.countDocuments(query)
-        ]);
+    const [data, total] = await Promise.all([
+      Support.find(query)
+        .populate("userId", "name email phone")   // ← changed here
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(Number(limit)),
+      Support.countDocuments(query)
+    ]);
 
-        res.json({
-            success: true,
-            page: Number(page),
-            limit: Number(limit),
-            total,
-            totalPages: Math.ceil(total / limit),
-            data
-        });
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
+    res.json({
+      success: true,
+      page: Number(page),
+      limit: Number(limit),
+      total,
+      totalPages: Math.ceil(total / limit),
+      data
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };
-
 /* ----------------------------------------
    Get All Supports of Particular User
 ---------------------------------------- */
