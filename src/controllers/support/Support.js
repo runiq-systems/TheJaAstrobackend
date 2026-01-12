@@ -150,7 +150,7 @@ export const getAllSupports = async (req, res) => {
 
     const [data, total] = await Promise.all([
       Support.find(query)
-        .populate("userId", "name email phone")   // ← changed here
+        .populate("userId", "fullName email phone role")   // ← changed here
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(Number(limit)),
