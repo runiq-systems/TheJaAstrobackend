@@ -5,13 +5,18 @@ import { Support } from "../../models/Suppport/Support.js";
 ---------------------------------------- */
 
 const buildSearchQuery = (search) => {
-    if (!search) return {};
-    return {
-        $or: [
-            { issue: { $regex: search, $options: "i" } },
-            { comment: { $regex: search, $options: "i" } }
-        ]
-    };
+  if (!search) return {};
+
+  const searchRegex = { $regex: search, $options: "i" };
+
+  return {
+    $or: [
+      { issue: searchRegex },
+      { comment: searchRegex },
+      { "userId.fullName": searchRegex },     // ← add this!
+      { "userId.email": searchRegex }         // optional: also search email
+    ]
+  };
 };
 
 const buildDateQuery = (fromDate, toDate) => {
