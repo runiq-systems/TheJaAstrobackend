@@ -40,7 +40,8 @@ export const createSupport = async (req, res) => {
             issue,
             comment,
             priority
-        });
+        })
+        .populate("userId", "fullName phone role")
 
         res.status(201).json({
             success: true,
