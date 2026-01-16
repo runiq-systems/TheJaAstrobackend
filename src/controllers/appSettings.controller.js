@@ -73,17 +73,39 @@ export const upsertAppSettings = async (req, res) => {
 // ==========================
 export const getAppSettings = async (req, res) => {
     try {
-        const settings = await AppSettings.findOne();
+        const settings = await AppSettings.findOneAndUpdate(
+            {}, // find the only document
+            {
+                $setOnInsert: {
+                    homefirstpageBanner: "",
+                    homesecondpageBanner: "",
+                    // ... other default values you want on first creation
+                }
+            },
+            {
+                new: true,
+                upsert: true,
+                setDefaultsOnInsert: true,
+                lean: true
+            }
+        );
+
+        // Force string type for image fields (prevents null/undefined)
+        const responseData = {
+            ...settings,
+            homefirstpageBanner: String(settings.homefirstpageBanner || ""),
+            homesecondpageBanner: String(settings.homesecondpageBanner || "")
+        };
 
         return res.status(200).json({
             success: true,
-            data: settings || {},
+            data: responseData
         });
     } catch (error) {
         console.error("Get app settings error:", error);
         return res.status(500).json({
             success: false,
-            message: "Failed to fetch app settings",
+            message: "Server error while fetching settings"
         });
     }
 };
