@@ -33,6 +33,7 @@ const uploadOnCloudinary = async (
       use_filename: true,
       unique_filename: true,
       overwrite: false,
+      invalidate: true,
       ...options,
     };
 
