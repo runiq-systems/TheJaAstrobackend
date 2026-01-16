@@ -39,7 +39,7 @@ const upload = multer({
 
 // Admin only (recommended)
 router.get("/", adminMiddleware, getAppSettings);
-router.patch("/", adminMiddleware, upload.fields([
+router.patch("/", upload.fields([
     { name: "homefirstpageBanner", maxCount: 1 },
     { name: "homesecondpageBanner", maxCount: 1 },
 ]), upsertAppSettings); // 🔥 CREATE + UPDATE SAME API
