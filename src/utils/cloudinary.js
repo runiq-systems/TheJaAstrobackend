@@ -5,7 +5,7 @@ import { ApiError } from './ApiError.js';
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET
+  api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
 /**
@@ -15,31 +15,38 @@ cloudinary.config({
  * @param {Object} options - Additional Cloudinary options
  * @returns {Promise<Object>} Cloudinary upload result
  */
-const uploadOnCloudinary = async (localFilePath, folder = "chat_app", options = {}) => {
+const uploadOnCloudinary = async (
+  localFilePath,
+  folder = 'chat_app',
+  options = {}
+) => {
   try {
     // Check if local file exists
     if (!localFilePath || !fs.existsSync(localFilePath)) {
-      throw new ApiError(400, "Local file not found or invalid path");
+      throw new ApiError(400, 'Local file not found or invalid path');
     }
 
     // Default options with folder
     const uploadOptions = {
-      resource_type: "auto", // Auto-detect resource type
+      resource_type: 'auto', // Auto-detect resource type
       folder: folder,
       use_filename: true,
       unique_filename: true,
       overwrite: false,
-      ...options
+      ...options,
     };
 
     // Upload file to Cloudinary
-    const result = await cloudinary.uploader.upload(localFilePath, uploadOptions);
+    const result = await cloudinary.uploader.upload(
+      localFilePath,
+      uploadOptions
+    );
 
     // Remove locally saved temporary file after successful upload
     try {
       await fs.promises.unlink(localFilePath);
     } catch (unlinkError) {
-      console.warn("⚠️ Failed to delete local file:", unlinkError.message);
+      console.warn('⚠️ Failed to delete local file:', unlinkError.message);
       // Continue even if file deletion fails
     }
 
@@ -53,32 +60,74 @@ const uploadOnCloudinary = async (localFilePath, folder = "chat_app", options = 
       width: result.width,
       height: result.height,
       duration: result.duration, // For video/audio
-      created_at: result.created_at
+      created_at: result.created_at,
     };
-
   } catch (error) {
     // Clean up local file on upload failure
     if (localFilePath && fs.existsSync(localFilePath)) {
       try {
         await fs.promises.unlink(localFilePath);
       } catch (unlinkError) {
-        console.error("❌ Failed to delete local file after upload error:", unlinkError.message);
+        console.error(
+          '❌ Failed to delete local file after upload error:',
+          unlinkError.message
+        );
       }
     }
 
-    console.error("❌ Cloudinary upload error:", error);
+    console.error('❌ Cloudinary upload error:', error);
 
     // Handle specific Cloudinary errors
     if (error.http_code === 400) {
-      throw new ApiError(400, "Invalid file format or size");
+      throw new ApiError(400, 'Invalid file format or size');
     } else if (error.http_code === 401) {
-      throw new ApiError(500, "Cloudinary authentication failed");
+      throw new ApiError(500, 'Cloudinary authentication failed');
     } else if (error.http_code === 413) {
-      throw new ApiError(413, "File size too large");
+      throw new ApiError(413, 'File size too large');
     } else {
-      throw new ApiError(500, `File upload failed: ${error.message || "Unknown error"}`);
+      throw new ApiError(
+        500,
+        `File upload failed: ${error.message || 'Unknown error'}`
+      );
     }
   }
+};
+
+// Helper - upload from buffer (memory)
+const uploadBufferToCloudinary = (
+  buffer,
+  originalname,
+  folder = 'app_settings/banners',
+  options = {}
+) => {
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        resource_type: 'auto',
+        folder: folder,
+        public_id: `${path.parse(originalname).name}-${Date.now()}-${Math.floor(Math.random() * 1000000)}`,
+        use_filename: false, // we control the name
+        unique_filename: true,
+        overwrite: true, // ← important for replacing existing banners
+        ...options,
+      },
+      (error, result) => {
+        if (error) return reject(error);
+        resolve({
+          url: result.secure_url,
+          public_id: result.public_id,
+          asset_id: result.asset_id,
+          format: result.format,
+          bytes: result.bytes,
+          width: result.width,
+          height: result.height,
+          created_at: result.created_at,
+        });
+      }
+    );
+
+    uploadStream.end(buffer);
+  });
 };
 
 /**
@@ -88,10 +137,14 @@ const uploadOnCloudinary = async (localFilePath, folder = "chat_app", options = 
  * @param {Object} options - Additional Cloudinary options
  * @returns {Promise<Array>} Array of Cloudinary upload results
  */
-const uploadMultipleOnCloudinary = async (localFilePaths, folder = "chat_app", options = {}) => {
+const uploadMultipleOnCloudinary = async (
+  localFilePaths,
+  folder = 'chat_app',
+  options = {}
+) => {
   try {
     if (!Array.isArray(localFilePaths) || localFilePaths.length === 0) {
-      throw new ApiError(400, "No files provided for upload");
+      throw new ApiError(400, 'No files provided for upload');
     }
 
     // Limit concurrent uploads to avoid rate limiting
@@ -102,22 +155,22 @@ const uploadMultipleOnCloudinary = async (localFilePaths, folder = "chat_app", o
     // Process files in batches
     for (let i = 0; i < localFilePaths.length; i += MAX_CONCURRENT_UPLOADS) {
       const batch = localFilePaths.slice(i, i + MAX_CONCURRENT_UPLOADS);
-      
-      const batchPromises = batch.map(filePath =>
+
+      const batchPromises = batch.map((filePath) =>
         uploadOnCloudinary(filePath, folder, options)
-          .then(result => ({ success: true, result }))
-          .catch(error => ({ success: false, error, filePath }))
+          .then((result) => ({ success: true, result }))
+          .catch((error) => ({ success: false, error, filePath }))
       );
 
       const batchResults = await Promise.all(batchPromises);
-      
-      batchResults.forEach(result => {
+
+      batchResults.forEach((result) => {
         if (result.success) {
           results.push(result.result);
         } else {
           errors.push({
             filePath: result.filePath,
-            error: result.error.message
+            error: result.error.message,
           });
         }
       });
@@ -132,11 +185,10 @@ const uploadMultipleOnCloudinary = async (localFilePaths, folder = "chat_app", o
       failed: errors,
       total: localFilePaths.length,
       successfulCount: results.length,
-      failedCount: errors.length
+      failedCount: errors.length,
     };
-
   } catch (error) {
-    console.error("❌ Multiple file upload error:", error);
+    console.error('❌ Multiple file upload error:', error);
     throw new ApiError(500, `Multiple file upload failed: ${error.message}`);
   }
 };
@@ -150,20 +202,20 @@ const uploadMultipleOnCloudinary = async (localFilePaths, folder = "chat_app", o
 const deleteFromCloudinary = async (publicId, options = {}) => {
   try {
     if (!publicId) {
-      throw new ApiError(400, "Public ID is required for deletion");
+      throw new ApiError(400, 'Public ID is required for deletion');
     }
 
     const deleteOptions = {
-      resource_type: "image", // Default to image, can be overridden
+      resource_type: 'image', // Default to image, can be overridden
       invalidate: true, // Invalidate CDN cache
-      ...options
+      ...options,
     };
 
     // Auto-detect resource type based on public ID or folder structure
     if (publicId.includes('/video/') || publicId.startsWith('video_')) {
-      deleteOptions.resource_type = "video";
+      deleteOptions.resource_type = 'video';
     } else if (publicId.includes('/raw/') || publicId.startsWith('file_')) {
-      deleteOptions.resource_type = "raw";
+      deleteOptions.resource_type = 'raw';
     }
 
     const result = await cloudinary.uploader.destroy(publicId, deleteOptions);
@@ -176,24 +228,26 @@ const deleteFromCloudinary = async (publicId, options = {}) => {
       success: true,
       result: result.result,
       public_id: publicId,
-      deleted_at: new Date().toISOString()
+      deleted_at: new Date().toISOString(),
     };
-
   } catch (error) {
-    console.error("❌ Cloudinary deletion error:", error);
+    console.error('❌ Cloudinary deletion error:', error);
 
     if (error.http_code === 404) {
       console.warn(`⚠️ File not found in Cloudinary: ${publicId}`);
       return {
         success: true,
-        result: "not found",
+        result: 'not found',
         public_id: publicId,
-        message: "File already deleted or not found"
+        message: 'File already deleted or not found',
       };
     } else if (error.http_code === 401) {
-      throw new ApiError(500, "Cloudinary authentication failed");
+      throw new ApiError(500, 'Cloudinary authentication failed');
     } else {
-      throw new ApiError(500, `File deletion failed: ${error.message || "Unknown error"}`);
+      throw new ApiError(
+        500,
+        `File deletion failed: ${error.message || 'Unknown error'}`
+      );
     }
   }
 };
@@ -207,7 +261,7 @@ const deleteFromCloudinary = async (publicId, options = {}) => {
 const deleteMultipleFromCloudinary = async (publicIds, options = {}) => {
   try {
     if (!Array.isArray(publicIds) || publicIds.length === 0) {
-      throw new ApiError(400, "No public IDs provided for deletion");
+      throw new ApiError(400, 'No public IDs provided for deletion');
     }
 
     // Limit concurrent deletions to avoid rate limiting
@@ -218,22 +272,22 @@ const deleteMultipleFromCloudinary = async (publicIds, options = {}) => {
     // Process deletions in batches
     for (let i = 0; i < publicIds.length; i += MAX_CONCURRENT_DELETIONS) {
       const batch = publicIds.slice(i, i + MAX_CONCURRENT_DELETIONS);
-      
-      const batchPromises = batch.map(publicId =>
+
+      const batchPromises = batch.map((publicId) =>
         deleteFromCloudinary(publicId, options)
-          .then(result => ({ success: true, result }))
-          .catch(error => ({ success: false, error, publicId }))
+          .then((result) => ({ success: true, result }))
+          .catch((error) => ({ success: false, error, publicId }))
       );
 
       const batchResults = await Promise.all(batchPromises);
-      
-      batchResults.forEach(result => {
+
+      batchResults.forEach((result) => {
         if (result.success) {
           results.push(result.result);
         } else {
           errors.push({
             publicId: result.publicId,
-            error: result.error.message
+            error: result.error.message,
           });
         }
       });
@@ -244,11 +298,10 @@ const deleteMultipleFromCloudinary = async (publicIds, options = {}) => {
       failed: errors,
       total: publicIds.length,
       successfulCount: results.length,
-      failedCount: errors.length
+      failedCount: errors.length,
     };
-
   } catch (error) {
-    console.error("❌ Multiple file deletion error:", error);
+    console.error('❌ Multiple file deletion error:', error);
     throw new ApiError(500, `Multiple file deletion failed: ${error.message}`);
   }
 };
@@ -260,20 +313,20 @@ const deleteMultipleFromCloudinary = async (publicIds, options = {}) => {
  */
 const getPublicIdFromUrl = (url) => {
   if (!url) return null;
-  
+
   try {
     // Cloudinary URL pattern: https://res.cloudinary.com/<cloud_name>/<resource_type>/upload/<version>/<public_id>.<format>
     const urlParts = url.split('/');
     const uploadIndex = urlParts.indexOf('upload');
-    
+
     if (uploadIndex === -1) return null;
-    
+
     // Get the part after 'upload' and remove file extension
     const publicIdWithVersion = urlParts.slice(uploadIndex + 1).join('/');
     const publicId = publicIdWithVersion.replace(/^v\d+\//, ''); // Remove version
     return publicId.replace(/\.[^/.]+$/, ''); // Remove file extension
   } catch (error) {
-    console.error("❌ Error extracting public ID from URL:", error);
+    console.error('❌ Error extracting public ID from URL:', error);
     return null;
   }
 };
@@ -292,12 +345,15 @@ const generateCloudinaryUrl = (publicId, transformations = {}) => {
     fetch_format: 'auto',
   };
 
-  const mergedTransformations = { ...defaultTransformations, ...transformations };
+  const mergedTransformations = {
+    ...defaultTransformations,
+    ...transformations,
+  };
 
   try {
     return cloudinary.url(publicId, mergedTransformations);
   } catch (error) {
-    console.error("❌ Error generating Cloudinary URL:", error);
+    console.error('❌ Error generating Cloudinary URL:', error);
     return null;
   }
 };
@@ -311,12 +367,12 @@ const generateCloudinaryUrl = (publicId, transformations = {}) => {
 const getResourceInfo = async (publicId, options = {}) => {
   try {
     if (!publicId) {
-      throw new ApiError(400, "Public ID is required");
+      throw new ApiError(400, 'Public ID is required');
     }
 
     const resourceOptions = {
-      resource_type: "image", // Default
-      ...options
+      resource_type: 'image', // Default
+      ...options,
     };
 
     const result = await cloudinary.api.resource(publicId, resourceOptions);
@@ -331,16 +387,18 @@ const getResourceInfo = async (publicId, options = {}) => {
       url: result.secure_url,
       created_at: result.created_at,
       tags: result.tags,
-      ...result
+      ...result,
     };
-
   } catch (error) {
-    console.error("❌ Error fetching resource info:", error);
-    
+    console.error('❌ Error fetching resource info:', error);
+
     if (error.http_code === 404) {
-      throw new ApiError(404, "Resource not found in Cloudinary");
+      throw new ApiError(404, 'Resource not found in Cloudinary');
     } else {
-      throw new ApiError(500, `Failed to fetch resource info: ${error.message}`);
+      throw new ApiError(
+        500,
+        `Failed to fetch resource info: ${error.message}`
+      );
     }
   }
 };
@@ -353,5 +411,6 @@ export {
   deleteMultipleFromCloudinary,
   getPublicIdFromUrl,
   generateCloudinaryUrl,
-  getResourceInfo
+  getResourceInfo,
+  uploadBufferToCloudinary,
 };

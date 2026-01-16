@@ -5,6 +5,7 @@ import {
 } from "../controllers/appSettings.controller.js";
 import path from "path";
 import multer from "multer";
+import { adminMiddleware } from "../middleware/authmiddleware.js";
 const router = express.Router();
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
@@ -37,8 +38,8 @@ const upload = multer({
 });
 
 // Admin only (recommended)
-router.get("/", getAppSettings);
-router.post("/", upload.fields([
+router.get("/", adminMiddleware, getAppSettings);
+router.patch("/", adminMiddleware, upload.fields([
     { name: "homefirstpageBanner", maxCount: 1 },
     { name: "homesecondpageBanner", maxCount: 1 },
 ]), upsertAppSettings); // 🔥 CREATE + UPDATE SAME API

@@ -5,23 +5,24 @@ import mongoose from "mongoose";
 // GET / CREATE / UPDATE
 // ==========================
 export const upsertAppSettings = async (req, res) => {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
     try {
-        const adminId = req.user?._id;
+        const updatePayload = {};
 
-        const updatePayload = {
-            supportEmail: req.body.supportEmail,
-            supportPhone: req.body.supportPhone,
-            newUserBonus: req.body.newUserBonus,
-            minWalletBalance: req.body.minWalletBalance,
-            maxWalletBalance: req.body.maxWalletBalance,
-            maintenanceMode: req.body.maintenanceMode === 'true' || req.body.maintenanceMode === true,
-            updatedBy: adminId,
-        };
+        // Only add fields that are actually sent
+        if (req.body.supportEmail !== undefined)      updatePayload.supportEmail = req.body.supportEmail;
+        if (req.body.supportPhone !== undefined)      updatePayload.supportPhone = req.body.supportPhone;
+        if (req.body.newUserBonus !== undefined)      updatePayload.newUserBonus = Number(req.body.newUserBonus);
+        if (req.body.minWalletBalance !== undefined)  updatePayload.minWalletBalance = Number(req.body.minWalletBalance);
+        if (req.body.maxWalletBalance !== undefined)  updatePayload.maxWalletBalance = Number(req.body.maxWalletBalance);
+        if (req.body.maintenanceMode !== undefined) {
+            updatePayload.maintenanceMode = req.body.maintenanceMode === 'true' || req.body.maintenanceMode === true;
+        }
 
-        // Banner uploads (optional)
+        if (req.user?._id) {
+            updatePayload.updatedBy = req.user._id;
+        }
+
+        // ── Files ───────────────────────────────────────
         if (req.files?.homefirstpageBanner?.[0]) {
             const upload = await uploadOnCloudinary(
                 req.files.homefirstpageBanner[0].path,
@@ -38,41 +39,35 @@ export const upsertAppSettings = async (req, res) => {
             updatePayload.homesecondpageBanner = upload.url;
         }
 
-        // Convert string numbers to actual numbers
-        updatePayload.newUserBonus = Number(updatePayload.newUserBonus);
-        updatePayload.minWalletBalance = Number(updatePayload.minWalletBalance);
-        updatePayload.maxWalletBalance = Number(updatePayload.maxWalletBalance);
+        // Only update if we have something to update
+        if (Object.keys(updatePayload).length === 0) {
+            return res.status(200).json({
+                success: true,
+                message: "No changes provided",
+                data: await AppSettings.findOne() || {}
+            });
+        }
 
         const settings = await AppSettings.findOneAndUpdate(
             {},
             { $set: updatePayload },
-            {
-                new: true,
-                upsert: true,
-                session,
-                setDefaultsOnInsert: true,
-            }
+            { new: true, upsert: true, setDefaultsOnInsert: true }
         );
-
-        await session.commitTransaction();
 
         return res.status(200).json({
             success: true,
-            message: "App settings updated",
+            message: "App settings updated successfully",
             data: settings,
         });
+
     } catch (error) {
-        await session.abortTransaction();
         console.error("Error updating app settings:", error);
         return res.status(500).json({
             success: false,
-            message: error.message || "Failed to update app settings",
+            message: error.message || "Server error during update",
         });
-    } finally {
-        session.endSession();
     }
 };
-
 // ==========================
 // GET SETTINGS
 // ==========================
