@@ -38,7 +38,7 @@ const upload = multer({
 });
 
 // Admin only (recommended)
-router.get("/", adminMiddleware, getAppSettings);
+router.get("/", getAppSettings);
 router.patch("/", upload.fields([
     { name: "homefirstpageBanner", maxCount: 1 },
     { name: "homesecondpageBanner", maxCount: 1 },
