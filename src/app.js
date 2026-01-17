@@ -48,8 +48,11 @@ app.set('trust proxy', 1);
 // Middleware
 app.use(requestIp.mw());
 app.use(rateLimiter);
-app.use(express.json({ limit: '16kb' }));
-app.use(express.urlencoded({ extended: true, limit: '16kb' }));
+// app.use(express.json({ limit: '16kb' }));
+// app.use(express.urlencoded({ extended: true, limit: '16kb' }));
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ extended: true, limit: '100mb' }));
+
 app.use(cookieParser());
 app.use(
   cors({
@@ -99,6 +102,8 @@ export { app };
 // Instead, export a function to setup server + socket.io
 export const createAppServer = async () => {
   const httpserver = createServer(app);
+
+  
 
   const io = new Server(httpserver, {
     transports: ['websocket'],
