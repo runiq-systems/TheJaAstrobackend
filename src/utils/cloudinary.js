@@ -30,6 +30,8 @@ const uploadOnCloudinary = async (
     const uploadOptions = {
       resource_type: 'auto', // Auto-detect resource type
       folder: folder,
+      chunk_size: 6 * 1024 * 1024, // REQUIRED for large files
+      timeout: 600000,
       use_filename: true,
       unique_filename: true,
       overwrite: false,
