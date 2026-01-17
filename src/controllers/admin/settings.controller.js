@@ -1,5 +1,5 @@
-import { AppSettings } from "../../models/appSettings.js";
-import { CommissionRule } from "../../models/Wallet/AstroWallet.js";
+import { AppSettings } from '../../models/appSettings.js';
+import { CommissionRule } from '../../models/Wallet/AstroWallet.js';
 
 const ALLOWED_FIELDS = [
   'supportEmail',
@@ -36,69 +36,89 @@ export const getAppSettings = async (req, res) => {
 
 export const updateAppSettings = async (req, res) => {
   try {
-    // Filter only allowed fields from request body
     const updates = {};
-    for (const key of ALLOWED_FIELDS) {
+
+    // ── Text/number/boolean fields ─────────────────────────────
+    const allowedFields = [
+      'supportEmail',
+      'supportPhone',
+      'newUserBonus',
+      'minWalletBalance',
+      'maxWalletBalance',
+      'maintenanceMode',
+    ];
+
+    allowedFields.forEach((key) => {
       if (req.body[key] !== undefined) {
-        updates[key] = req.body[key];
+        if (
+          ['newUserBonus', 'minWalletBalance', 'maxWalletBalance'].includes(key)
+        ) {
+          updates[key] = Number(req.body[key]);
+        } else if (key === 'maintenanceMode') {
+          updates[key] = req.body[key] === 'true' || req.body[key] === true;
+        } else {
+          updates[key] = req.body[key];
+        }
       }
+    });
+
+    // ── Banner images ───────────────────────────────────────────
+    if (req.files?.homefirstpageBanner?.[0]) {
+      const file = req.files.homefirstpageBanner[0];
+      const uploadResult = await uploadBufferToCloudinary(
+        file.buffer,
+        file.originalname,
+        'app_settings/banners'
+      );
+      updates.homefirstpageBanner = uploadResult.url;
     }
 
-    // If no valid fields were sent
+    if (req.files?.homesecondpageBanner?.[0]) {
+      const file = req.files.homesecondpageBanner[0];
+      const uploadResult = await uploadBufferToCloudinary(
+        file.buffer,
+        file.originalname,
+        'app_settings/banners'
+      );
+      updates.homesecondpageBanner = uploadResult.url;
+    }
+
+    // Nothing to update?
     if (Object.keys(updates).length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'No valid fields provided for update',
+      const current = (await AppSettings.findOne({})) || {};
+      return res.status(200).json({
+        success: true,
+        message: 'No changes to apply',
+        data: current,
       });
     }
 
-    // Update or create settings document (no updatedBy field)
-    const settings = await AppSettings.findOneAndUpdate(
-      {}, // find the first (and only) document
-      {
-        ...updates,
-        updatedAt: new Date(), // still keep timestamp
-      },
-      {
-        new: true,           // return updated document
-        upsert: true,        // create if doesn't exist
-        runValidators: true, // enforce schema validators
-      }
+    // Final update
+    const updatedSettings = await AppSettings.findOneAndUpdate(
+      {},
+      { $set: { ...updates, updatedAt: new Date() } },
+      { new: true, upsert: true, runValidators: true }
     );
 
     return res.status(200).json({
       success: true,
       message: 'App settings updated successfully',
-      data: settings,
+      data: updatedSettings,
     });
   } catch (error) {
-    console.error('Error updating app settings:', error);
-
-    // Handle mongoose validation errors nicely
-    if (error.name === 'ValidationError') {
-      return res.status(400).json({
-        success: false,
-        message: 'Validation failed',
-        errors: Object.values(error.errors).map((err) => err.message),
-      });
-    }
-
+    console.error('Update app settings error:', error);
     return res.status(500).json({
       success: false,
-      message: 'Server error while updating settings',
+      message: 'Failed to update settings',
       error: error.message,
     });
   }
 };
 
-
-
-
-
 const GLOBAL_RULE_NAME = 'Global Commission Override';
 const GLOBAL_RULE_PRIORITY = 999;
 
-const SYSTEM_USER_ID = "69208a47006c5632ab884d71"
+const SYSTEM_USER_ID = '69208a47006c5632ab884d71';
 
 export const getGlobalCommission = async (req, res) => {
   try {
@@ -111,7 +131,8 @@ export const getGlobalCommission = async (req, res) => {
     if (!globalRule) {
       globalRule = await CommissionRule.create({
         name: GLOBAL_RULE_NAME,
-        description: 'Global commission applied to ALL sessions (overrides other rules)',
+        description:
+          'Global commission applied to ALL sessions (overrides other rules)',
         conditions: {
           astrologerTier: [],
           sessionType: [],
@@ -133,8 +154,8 @@ export const getGlobalCommission = async (req, res) => {
         effectiveTo: null,
         allowAdminOverride: true,
         maxOverrideLimit: 15,
-        createdBy: SYSTEM_USER_ID,  // Use fixed system ID
-        updatedBy: SYSTEM_USER_ID,  // or req.user?._id if available
+        createdBy: SYSTEM_USER_ID, // Use fixed system ID
+        updatedBy: SYSTEM_USER_ID, // or req.user?._id if available
       });
     }
 
@@ -153,7 +174,7 @@ export const getGlobalCommission = async (req, res) => {
     });
   }
 };
- 
+
 export const updateGlobalCommission = async (req, res) => {
   try {
     const { commissionPercent } = req.body;
@@ -165,7 +186,11 @@ export const updateGlobalCommission = async (req, res) => {
       });
     }
 
-    if (typeof commissionPercent !== 'number' || commissionPercent < 0 || commissionPercent > 100) {
+    if (
+      typeof commissionPercent !== 'number' ||
+      commissionPercent < 0 ||
+      commissionPercent > 100
+    ) {
       return res.status(400).json({
         success: false,
         message: 'Commission percent must be a number between 0 and 100',
@@ -221,4 +246,3 @@ export const updateGlobalCommission = async (req, res) => {
     });
   }
 };
- 
