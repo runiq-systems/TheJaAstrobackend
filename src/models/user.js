@@ -55,6 +55,12 @@ const userSchema = new mongoose.Schema(
     deviceToken: {
       type: String,
     },
+    
+    isProfileComplete: {
+      type: Boolean,
+      default: false,
+    },
+
     isVerified: {
       type: Boolean,
       default: true,

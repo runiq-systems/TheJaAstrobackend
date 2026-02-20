@@ -239,6 +239,7 @@ export const UpdateProfileStepController = async (req, res) => {
     const userId = req.user._id || req.user.id;
     const { step } = req.params; // Step number (1, 2, 3, or 4)
     const data = req.body;
+    let isProfileComplete = false;
 
     let updateFields = {};
 
@@ -287,6 +288,7 @@ export const UpdateProfileStepController = async (req, res) => {
           dateOfBirth: parsedDate,
           isAccurate: Boolean(data.isAccurate),
           placeOfBirth: data.placeOfBirth.trim(),
+          isProfileComplete: true, // Mark profile as complete after step 2
         };
         break;
 
@@ -301,7 +303,7 @@ export const UpdateProfileStepController = async (req, res) => {
       userId,
       { $set: updateFields },
       { new: true, runValidators: true }
-    ).select("fullName gender timeOfBirth dateOfBirth isAccurate placeOfBirth");
+    ).select("fullName gender timeOfBirth dateOfBirth isAccurate placeOfBirth isProfileComplete");
 
     if (!updatedUser) {
       return res.status(404).json({
@@ -323,6 +325,30 @@ export const UpdateProfileStepController = async (req, res) => {
     });
   }
 };
+
+export const getProfileCompletionStatus = async (req, res) => {
+  try {
+    const userId = req.user._id || req.user.id;
+    const user = await User.findById(userId).select("isProfileComplete");
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+    return res.status(200).json({
+      success: true,
+      isProfileComplete: user.isProfileComplete,
+    });
+  } catch (error) {
+    logger.error(`Error in getProfileCompletionStatus: ${error.stack}`);
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error",
+    });
+  }
+};
+
 
 export const UpdateProfileCompleteController = async (req, res) => {
   try {
