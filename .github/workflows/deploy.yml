@@ -75,9 +75,6 @@ jobs:
       - name: Run Tests
         run: npm test # Will fail job if tests fail
 
-      - name: Run Commands
-        run: npm run dev
-
   deploy:
     needs: test-and-lint # Only run if tests/lint pass
     runs-on: ubuntu-latest
