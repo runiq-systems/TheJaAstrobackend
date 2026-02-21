@@ -75,23 +75,27 @@ jobs:
       - name: Run Tests
         run: npm test # Will fail job if tests fail
 
-  deploy:
-    needs: test-and-lint # Only run if tests/lint pass
-    runs-on: ubuntu-latest
-    environment: production # Optional: for GitHub Environments approval
-    
-    steps:
-    - name: Checkout Repo
-      uses: actions/checkout@v4
+scripts: |
+  set -e
 
-    - name: Deploy to VPS
-      uses: appleboy/ssh-action@v1
-      with:
-        host: ${{secrets.VPS_HOST}} 
-        username: ${{secrets.VPS_USERS}}
-        key: ${{secrets.VPS_SSH_KEY}}
-        scripts: |
-          cd ${{secrets.VPS_PATH_NAME}}
-          git pull origin main
-          npm ci
-          pm2 reload thejaastro
+  cd ${{secrets.VPS_PATH_NAME}}
+
+  echo "===== BEFORE PULL ====="
+  git log -1
+
+  git pull origin main
+
+  echo "===== AFTER PULL ====="
+  git log -1
+
+  npm ci
+
+  echo "===== PM2 STATUS BEFORE ====="
+  pm2 list
+
+  pm2 reload thejaastro
+
+  echo "===== PM2 STATUS AFTER ====="
+  pm2 list
+
+  pm2 logs thejaastro --lines 20
