@@ -84,14 +84,23 @@ jobs:
     - name: Checkout Repo
       uses: actions/checkout@v4
 
-    - name: Deploy to VPS
-      uses: appleboy/ssh-action@v1
-      with:
-        host: ${{secrets.VPS_HOST}} 
-        username: ${{secrets.VPS_USERS}}
-        key: ${{secrets.VPS_SSH_KEY}}
-        scripts: |
-          cd ${{secrets.VPS_PATH_NAME}}
-          git pull origin main
-          npm ci
-          pm2 reload thejaastro
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERS }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          scripts: |
+            cd ${{ secrets.VPS_PATH_NAME }}
+
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" 
+            [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion" 
+
+            git pull origin main
+            npm ci                  
+
+            pm2 reload thejaastro || pm2 restart thejaastro
+
+            # Option C: if reload keeps failing silently
+            # pm2 restart thejaastro
