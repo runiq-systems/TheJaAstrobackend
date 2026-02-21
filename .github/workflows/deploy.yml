@@ -85,12 +85,19 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USERS }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
+          scrips: |
             set -e
-
+            
             echo "===== CONNECTED TO VPS ====="
             whoami
+
+            echo "===== LOADING NVM ====="
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+
+            echo "===== NODE CHECK ====="
             node -v
+            npm -v
             pm2 -v
 
             cd ${{ secrets.VPS_PATH_NAME }}
@@ -108,8 +115,6 @@ jobs:
             echo "===== INSTALLING DEPENDENCIES ====="
             npm ci
 
-            # If you have build step (TS/Nest/Astro backend)
-            # npm run build
 
             echo "===== PM2 STATUS BEFORE ====="
             pm2 list
