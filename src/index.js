@@ -20,7 +20,7 @@ const startServer = async () => {
 
     const port = PORT || 8080;
     httpserver.listen(port, '0.0.0.0', () => {
-      logger.info(`🚀 Server running on http://localhost:${port} 2.0 changes`);
+      logger.info(`🚀 Server running on http://localhost:${port} another changes again`);
     });
 
   } catch (err) {
