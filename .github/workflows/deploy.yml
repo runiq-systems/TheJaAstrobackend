@@ -46,7 +46,9 @@
 
 
 
-name: Deploy Theja Astro Backend
+
+
+name: "Deploy Theja Astro backend on VPS"
 
 on:
   push:
@@ -54,81 +56,42 @@ on:
       - main
 
 jobs:
-  test:
+  test-and-lint:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout Repo
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
+          node-version: "20"
+          cache: "npm" # Speeds up repeated runs
 
       - name: Install Dependencies
         run: npm ci
 
       - name: Run Tests
-        run: npm test
+        run: npm test # Will fail job if tests fail
 
   deploy:
-    needs: test
+    needs: test-and-lint # Only run if tests/lint pass
     runs-on: ubuntu-latest
-    environment: production
-
+    environment: production # Optional: for GitHub Environments approval
+    
     steps:
-      - name: Deploy to VPS via SSH
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USERS }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          scrips: |
-            set -e
-            
-            echo "===== CONNECTED TO VPS ====="
-            whoami
+    - name: Checkout Repo
+      uses: actions/checkout@v4
 
-            echo "===== LOADING NVM ====="
-            export NVM_DIR="$HOME/.nvm"
-            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-
-            echo "===== NODE CHECK ====="
-            node -v
-            npm -v
-            pm2 -v
-
-            cd ${{ secrets.VPS_PATH_NAME }}
-
-            echo "===== CURRENT COMMIT ====="
-            git log -1 --oneline
-
-            echo "===== PULLING LATEST CODE ====="
-            git fetch origin
-            git reset --hard origin/main
-
-            echo "===== NEW COMMIT ====="
-            git log -1 --oneline
-
-            echo "===== INSTALLING DEPENDENCIES ====="
-            npm ci
-
-
-            echo "===== PM2 STATUS BEFORE ====="
-            pm2 list
-
-            echo "===== RELOADING APPLICATION ====="
-            pm2 reload thejaastro --update-env
-
-            echo "===== SAVING PM2 STATE ====="
-            pm2 save
-
-            echo "===== PM2 STATUS AFTER ====="
-            pm2 list
-
-            echo "===== LAST LOGS ====="
-            pm2 logs thejaastro --lines 20 --nostream
-
-            echo "===== DEPLOYMENT SUCCESS ====="
+    - name: Deploy to VPS
+      uses: appleboy/ssh-action@v1
+      with:
+        host: ${{secrets.VPS_HOST}} 
+        username: ${{secrets.VPS_USERS}}
+        key: ${{secrets.VPS_SSH_KEY}}
+        scripts: |
+          cd ${{secrets.VPS_PATH_NAME}}
+          git pull origin main
+          npm ci
+          pm2 reload thejaastro
