@@ -46,9 +46,7 @@
 
 
 
-
-
-name: "Deploy Theja Astro backend on VPS"
+name: Deploy Theja Astro Backend
 
 on:
   push:
@@ -56,46 +54,76 @@ on:
       - main
 
 jobs:
-  test-and-lint:
+  test:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repo
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm" # Speeds up repeated runs
+          node-version: 20
+          cache: npm
 
       - name: Install Dependencies
         run: npm ci
 
       - name: Run Tests
-        run: npm test # Will fail job if tests fail
+        run: npm test
 
-scripts: |
-  set -e
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
 
-  cd ${{secrets.VPS_PATH_NAME}}
+    steps:
+      - name: Deploy to VPS via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERS }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
 
-  echo "===== BEFORE PULL ====="
-  git log -1
+            echo "===== CONNECTED TO VPS ====="
+            whoami
+            node -v
+            pm2 -v
 
-  git pull origin main
+            cd ${{ secrets.VPS_PATH_NAME }}
 
-  echo "===== AFTER PULL ====="
-  git log -1
+            echo "===== CURRENT COMMIT ====="
+            git log -1 --oneline
 
-  npm ci
+            echo "===== PULLING LATEST CODE ====="
+            git fetch origin
+            git reset --hard origin/main
 
-  echo "===== PM2 STATUS BEFORE ====="
-  pm2 list
+            echo "===== NEW COMMIT ====="
+            git log -1 --oneline
 
-  pm2 reload thejaastro
+            echo "===== INSTALLING DEPENDENCIES ====="
+            npm ci
 
-  echo "===== PM2 STATUS AFTER ====="
-  pm2 list
+            # If you have build step (TS/Nest/Astro backend)
+            # npm run build
 
-  pm2 logs thejaastro --lines 20
+            echo "===== PM2 STATUS BEFORE ====="
+            pm2 list
+
+            echo "===== RELOADING APPLICATION ====="
+            pm2 reload thejaastro --update-env
+
+            echo "===== SAVING PM2 STATE ====="
+            pm2 save
+
+            echo "===== PM2 STATUS AFTER ====="
+            pm2 list
+
+            echo "===== LAST LOGS ====="
+            pm2 logs thejaastro --lines 20 --nostream
+
+            echo "===== DEPLOYMENT SUCCESS ====="
