@@ -4,20 +4,16 @@ import { kycSchema } from "./astrologerkyc.js";
 const bankDetailsSchema = new mongoose.Schema({
   bankName: {
     type: String,
-    required: true,
   },
   accountNumber: {
     type: String,
-    required: true,
-    unique: true, // Ensures account numbers are unique across all entries
+   
   },
   ifscCode: {
     type: String,
-    required: true,
   },
   accountHolderName: {
     type: String,
-    required: true,
   },
 });
 

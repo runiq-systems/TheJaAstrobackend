@@ -600,6 +600,11 @@ const RechargeHistorySchema = new Schema(
     requestedAmount: { type: Number, required: true },
     currency: { type: String, default: "INR" },
     bonusAmount: { type: Number, default: 0 },
+
+    totalPayable: { type: Number }, // Amount user pays including GST
+    gstAmount: { type: Number }, // GST amount
+    gstPercentage: { type: Number, default: 18 }, // GST 
+    platformFee: { type: Number, default: 0 },
     taxAmount: { type: Number, default: 0 },
     finalAmount: { type: Number, required: true },
     paymentGateway: { type: String, required: true, index: true },

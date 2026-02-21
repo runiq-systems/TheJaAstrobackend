@@ -1,5 +1,5 @@
 import express from "express"
-import { CheckKyc, adminregisterController, registerController, UpdateProfileStepController, adminGetUserProfile, UpdateProfileCompleteController, GetProfileController, LogoutController, updateUserProfile } from "../controllers/auth/authController.js"
+import { getProfileCompletionStatus, CheckKyc, adminregisterController, registerController, UpdateProfileStepController, adminGetUserProfile, UpdateProfileCompleteController, GetProfileController, LogoutController, updateUserProfile } from "../controllers/auth/authController.js"
 import { verifyOtpController, updateDeviceToken } from "../controllers/auth/verifyOtpController.js"
 import { authMiddleware } from "../middleware/authmiddleware.js"
 import { registerLimiter, verifyOtpLimiter } from "../middleware/ratelimiter.js"
@@ -18,6 +18,8 @@ router.post("/auth/logout", authMiddleware, LogoutController)
 
 // Step-wise profile update
 router.patch("/profile/step/:step", authMiddleware, UpdateProfileStepController);
+
+router.get("/profileStatus", authMiddleware, getProfileCompletionStatus);
 
 // Complete profile update
 // In your backend
