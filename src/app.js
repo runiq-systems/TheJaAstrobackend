@@ -103,8 +103,6 @@ export { app };
 export const createAppServer = async () => {
   const httpserver = createServer(app);
 
-  
-
   const io = new Server(httpserver, {
     transports: ['websocket'],
     pingTimeout: 60000,

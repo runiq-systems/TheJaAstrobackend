@@ -78,7 +78,7 @@ jobs:
   deploy:
     needs: test-and-lint # Only run if tests/lint pass
     runs-on: ubuntu-latest
-    environment: production # Optional: for GitHub Environments approval
+    environment: production  
     
     steps:
     - name: Checkout Repo
@@ -87,11 +87,17 @@ jobs:
     - name: Deploy to VPS
       uses: appleboy/ssh-action@v1
       with:
-        host: ${{secrets.VPS_HOST}} 
-        username: ${{secrets.VPS_USERS}}
-        key: ${{secrets.VPS_SSH_KEY}}
+        host: ${{ secrets.VPS_HOST }}
+        username: ${{ secrets.VPS_USERS }}
+        key: ${{ secrets.VPS_SSH_KEY }}
         scripts: |
-          cd ${{secrets.VPS_PATH_NAME}}
+          cd ${{ secrets.VPS_PATH_NAME }}
+
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" 
+          [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion" 
+
           git pull origin main
-          npm ci
-          pm2 reload thejaastro
+          npm ci                  
+
+          pm2 reload thejaastro || pm2 restart thejaastro

@@ -129,7 +129,7 @@ export const approveOrRejectAstrologer = async (req, res) => {
         let emailSubject = "";
         let emailHtml = "";
 
-        if (action === "approve") {
+        if (action === "approved") {
             astrologer.accountStatus = "approved";
             astrologer.astrologerApproved = true;
             astrologer.isProfilecomplet = true;
