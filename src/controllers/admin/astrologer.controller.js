@@ -3,8 +3,6 @@ import { User } from '../../models/user.js';
 import { Astrologer } from '../../models/astrologer.js';
 
 
-import mongoose from "mongoose";
-import { Astrologer } from "../models/astrologer.js";
 
 export const reviewAstrologerAccount = async (req, res) => {
   const session = await mongoose.startSession();
