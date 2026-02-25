@@ -2,6 +2,97 @@ import mongoose from 'mongoose';
 import { User } from '../../models/user.js';
 import { Astrologer } from '../../models/astrologer.js';
 
+
+import mongoose from "mongoose";
+import { Astrologer } from "../models/astrologer.js";
+
+export const reviewAstrologerAccount = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { astrologerId } = req.params;
+
+    const {
+      accountAction,   // approve | reject | suspend
+      kycAction,       // approve | reject
+      rejectionReason,
+      rank
+    } = req.body;
+
+    const astrologer = await Astrologer.findById(astrologerId).session(session);
+
+    if (!astrologer) {
+      return res.status(404).json({ message: "Astrologer not found" });
+    }
+
+    // ====== ACCOUNT APPROVAL LOGIC ======
+    if (accountAction) {
+      if (!["approve", "reject", "suspend"].includes(accountAction)) {
+        return res.status(400).json({ message: "Invalid account action" });
+      }
+
+      if (accountAction === "approve") {
+        astrologer.accountStatus = "approved";
+        astrologer.astrologerApproved = true;
+      }
+
+      if (accountAction === "reject") {
+        astrologer.accountStatus = "rejected";
+        astrologer.astrologerApproved = false;
+      }
+
+      if (accountAction === "suspend") {
+        astrologer.accountStatus = "suspended";
+        astrologer.astrologerApproved = false;
+      }
+    }
+
+    // ====== KYC APPROVAL LOGIC ======
+    if (kycAction && astrologer.kyc) {
+      if (!["approve", "reject"].includes(kycAction)) {
+        return res.status(400).json({ message: "Invalid KYC action" });
+      }
+
+      if (kycAction === "approve") {
+        astrologer.kyc.kycVerified = true;
+        astrologer.kyc.kycStatus = "approved";
+        astrologer.kyc.rejectionReason = "";
+      }
+
+      if (kycAction === "reject") {
+        astrologer.kyc.kycVerified = false;
+        astrologer.kyc.kycStatus = "rejected";
+        astrologer.kyc.rejectionReason = rejectionReason || "KYC rejected by admin";
+      }
+    }
+
+    // ====== RANK UPDATE ======
+    if (rank !== undefined) {
+      astrologer.rank = rank;
+    }
+
+    await astrologer.save({ session });
+
+    await session.commitTransaction();
+    session.endSession();
+
+    return res.status(200).json({
+      message: "Astrologer account reviewed successfully",
+      astrologer
+    });
+
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+
+    return res.status(500).json({
+      message: "Server Error",
+      error: error.message
+    });
+  }
+};
+
 export const getAllAdminAstrologers = async (req, res) => {
   try {
     const {
