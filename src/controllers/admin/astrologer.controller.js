@@ -26,11 +26,11 @@ export const reviewAstrologerAccount = async (req, res) => {
 
     // ====== ACCOUNT APPROVAL LOGIC ======
     if (accountAction) {
-      if (!["approve", "reject", "suspend"].includes(accountAction)) {
+      if (!["approved", "reject", "suspend"].includes(accountAction)) {
         return res.status(400).json({ message: "Invalid account action" });
       }
 
-      if (accountAction === "approve") {
+      if (accountAction === "approved") {
         astrologer.accountStatus = "approved";
         astrologer.astrologerApproved = true;
       }
@@ -48,11 +48,11 @@ export const reviewAstrologerAccount = async (req, res) => {
 
     // ====== KYC APPROVAL LOGIC ======
     if (kycAction && astrologer.kyc) {
-      if (!["approve", "reject"].includes(kycAction)) {
+      if (!["approved", "reject"].includes(kycAction)) {
         return res.status(400).json({ message: "Invalid KYC action" });
       }
 
-      if (kycAction === "approve") {
+      if (kycAction === "approved") {
         astrologer.kyc.kycVerified = true;
         astrologer.kyc.kycStatus = "approved";
         astrologer.kyc.rejectionReason = "";
