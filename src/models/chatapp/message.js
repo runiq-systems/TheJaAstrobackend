@@ -143,7 +143,7 @@ const messageSchema = new mongoose.Schema(
     systemMetadata: {
       action: {
         type: String,
-        enum: ["user_joined", "user_left", "group_created", "user_removed", "admin_added", "admin_removed"]
+        enum: ["user_joined","user_details_shared" , "user_left", "group_created", "user_removed", "admin_added", "admin_removed"]
       },
       targetUsers: [{
         type: mongoose.Schema.Types.ObjectId,
