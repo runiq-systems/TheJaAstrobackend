@@ -446,14 +446,12 @@ export const requestChatSession = asyncHandler(async (req, res) => {
     // SYSTEM GENERATED MESSAGE
     // -------------------------------
     const systemMessageText = `
-User Details
-
+  Dear ${astrologer.fullName},
 Name: ${user.fullName || "N/A"}
 Gender: ${user.gender || "N/A"}
 Place of Birth: ${user.placeOfBirth || "N/A"}
 Date of Birth: ${user.dateOfBirth || "N/A"}
-Time of Birth: ${user.timeOfBirth || "N/A"}
-`.trim();
+Time of Birth: ${user.timeOfBirth || "N/A"}`.trim();
 
     const systemMessage = await Message.create(
       [
