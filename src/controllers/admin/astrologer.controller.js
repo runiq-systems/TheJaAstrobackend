@@ -2,8 +2,6 @@ import mongoose from 'mongoose';
 import { User } from '../../models/user.js';
 import { Astrologer } from '../../models/astrologer.js';
 
-
-
 export const reviewAstrologerAccount = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -12,56 +10,57 @@ export const reviewAstrologerAccount = async (req, res) => {
     const { astrologerId } = req.params;
 
     const {
-      accountAction,   // approve | reject | suspend
-      kycAction,       // approve | reject
+      accountAction, // approve | reject | suspend
+      kycAction, // approve | reject
       rejectionReason,
-      rank
+      rank,
     } = req.body;
 
     const astrologer = await Astrologer.findById(astrologerId).session(session);
 
     if (!astrologer) {
-      return res.status(404).json({ message: "Astrologer not found" });
+      return res.status(404).json({ message: 'Astrologer not found' });
     }
 
     // ====== ACCOUNT APPROVAL LOGIC ======
     if (accountAction) {
-      if (!["approved", "reject", "suspend"].includes(accountAction)) {
-        return res.status(400).json({ message: "Invalid account action" });
+      if (!['approved', 'reject', 'suspend'].includes(accountAction)) {
+        return res.status(400).json({ message: 'Invalid account action' });
       }
 
-      if (accountAction === "approved") {
-        astrologer.accountStatus = "approved";
+      if (accountAction === 'approved') {
+        astrologer.accountStatus = 'approved';
         astrologer.astrologerApproved = true;
       }
 
-      if (accountAction === "reject") {
-        astrologer.accountStatus = "rejected";
+      if (accountAction === 'reject') {
+        astrologer.accountStatus = 'rejected';
         astrologer.astrologerApproved = false;
       }
 
-      if (accountAction === "suspend") {
-        astrologer.accountStatus = "suspended";
+      if (accountAction === 'suspend') {
+        astrologer.accountStatus = 'suspended';
         astrologer.astrologerApproved = false;
       }
     }
 
     // ====== KYC APPROVAL LOGIC ======
     if (kycAction && astrologer.kyc) {
-      if (!["approved", "reject"].includes(kycAction)) {
-        return res.status(400).json({ message: "Invalid KYC action" });
+      if (!['approved', 'reject'].includes(kycAction)) {
+        return res.status(400).json({ message: 'Invalid KYC action' });
       }
 
-      if (kycAction === "approved") {
+      if (kycAction === 'approved') {
         astrologer.kyc.kycVerified = true;
-        astrologer.kyc.kycStatus = "approved";
-        astrologer.kyc.rejectionReason = "";
+        astrologer.kyc.kycStatus = 'approved';
+        astrologer.kyc.rejectionReason = '';
       }
 
-      if (kycAction === "reject") {
+      if (kycAction === 'reject') {
         astrologer.kyc.kycVerified = false;
-        astrologer.kyc.kycStatus = "rejected";
-        astrologer.kyc.rejectionReason = rejectionReason || "KYC rejected by admin";
+        astrologer.kyc.kycStatus = 'rejected';
+        astrologer.kyc.rejectionReason =
+          rejectionReason || 'KYC rejected by admin';
       }
     }
 
@@ -76,17 +75,16 @@ export const reviewAstrologerAccount = async (req, res) => {
     session.endSession();
 
     return res.status(200).json({
-      message: "Astrologer account reviewed successfully",
-      astrologer
+      message: 'Astrologer account reviewed successfully',
+      astrologer,
     });
-
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
 
     return res.status(500).json({
-      message: "Server Error",
-      error: error.message
+      message: 'Server Error',
+      error: error.message,
     });
   }
 };
@@ -108,16 +106,16 @@ export const getAllAdminAstrologers = async (req, res) => {
     // Build filters
     const userFilter = { role: 'astrologer' };
     if (search) {
-      userFilter.$or = [
-        { fullName: { $regex: search, $options: 'i' } },
-      ];
+      userFilter.$or = [{ fullName: { $regex: search, $options: 'i' } }];
     }
 
     const astroFilter = {};
     if (status) {
       if (['online', 'offline', 'busy'].includes(status)) {
         astroFilter.status = status;
-      } else if (['pending', 'approved', 'rejected', 'suspended'].includes(status)) {
+      } else if (
+        ['pending', 'approved', 'rejected', 'suspended'].includes(status)
+      ) {
         astroFilter.accountStatus = status;
       }
     }
@@ -128,6 +126,7 @@ export const getAllAdminAstrologers = async (req, res) => {
     // Aggregate: Join User + Astrologer + Stats
     const astrologersAgg = await User.aggregate([
       { $match: userFilter },
+
       {
         $lookup: {
           from: 'astrologers',
@@ -136,9 +135,14 @@ export const getAllAdminAstrologers = async (req, res) => {
           as: 'astroDetails',
         },
       },
+
       { $unwind: { path: '$astroDetails', preserveNullAndEmptyArrays: true } },
+
       { $match: astroFilter },
-      // Performance stats
+
+      // ────────────────────────────────────────────────
+      // Performance stats lookups (unchanged)
+      // ────────────────────────────────────────────────
       {
         $lookup: {
           from: 'calls',
@@ -169,40 +173,71 @@ export const getAllAdminAstrologers = async (req, res) => {
           localField: '_id',
           foreignField: 'astrologerId',
           pipeline: [
-            { $group: { _id: null, avgRating: { $avg: '$stars' }, count: { $sum: 1 } } },
+            {
+              $group: {
+                _id: null,
+                avgRating: { $avg: '$stars' },
+                count: { $sum: 1 },
+              },
+            },
           ],
           as: 'reviewStats',
         },
       },
+
+      // ────────────────────────────────────────────────
+      // Add computed fields
+      // ────────────────────────────────────────────────
       {
         $addFields: {
-          totalCalls: { $ifNull: [{ $arrayElemAt: ['$callStats.totalCalls', 0] }, 0] },
-          totalChats: { $ifNull: [{ $arrayElemAt: ['$chatStats.totalChats', 0] }, 0] },
-          reviewCount: { $ifNull: [{ $arrayElemAt: ['$reviewStats.count', 0] }, 0] },
-          avgRating: { $round: [{ $ifNull: [{ $arrayElemAt: ['$reviewStats.avgRating', 0] }, 0] }, 1] },
-          earnings: 0, // TODO: Aggregate from payouts/earnings if you have
+          totalCalls: {
+            $ifNull: [{ $arrayElemAt: ['$callStats.totalCalls', 0] }, 0],
+          },
+          totalChats: {
+            $ifNull: [{ $arrayElemAt: ['$chatStats.totalChats', 0] }, 0],
+          },
+          reviewCount: {
+            $ifNull: [{ $arrayElemAt: ['$reviewStats.count', 0] }, 0],
+          },
+          avgRating: {
+            $round: [
+              { $ifNull: [{ $arrayElemAt: ['$reviewStats.avgRating', 0] }, 0] },
+              1,
+            ],
+          },
+          earnings: 0, // TODO: calculate from transactions/payouts
+          // rank is already available — we just project it below
         },
       },
+
+      // ────────────────────────────────────────────────
+      // Final projection – include rank here
+      // ────────────────────────────────────────────────
       {
         $project: {
           _id: 1,
           name: '$fullName',
           photo: '$astroDetails.photo',
-          skill: { $arrayElemAt: ['$astroDetails.specialization', 0] },
+          skill: { $arrayElemAt: ['$astroDetails.specialization', 0] }, // first skill
           experience: '$astroDetails.yearOfExperience',
           pricing: '$astroDetails.ratepermin',
           rating: '$avgRating',
           verified: '$astroDetails.astrologerApproved',
-          status: '$astroDetails.status',
+          status: '$astroDetails.status', // if you have this field
           accountStatus: '$astroDetails.accountStatus',
           totalCalls: 1,
           totalChats: 1,
           earnings: 1,
           reviewCount: 1,
-          isOnline: 1,
+          rank: '$astroDetails.rank', // ← FIXED: correct path
+          isOnline: '$isOnline', // from User schema
           joinedOn: '$createdAt',
         },
       },
+
+      // ────────────────────────────────────────────────
+      // Sort, skip, limit
+      // ────────────────────────────────────────────────
       { $sort: { [sortBy]: sortOrder === 'desc' ? -1 : 1 } },
       { $skip: skip },
       { $limit: parseInt(limit) },
@@ -210,22 +245,35 @@ export const getAllAdminAstrologers = async (req, res) => {
 
     // Dashboard stats
     const totalAstrologers = await Astrologer.countDocuments();
-    const onlineAstrologers = await User.countDocuments({ role: 'astrologer', isOnline: true });
-    const pendingVerification = await Astrologer.countDocuments({ astrologerApproved: false });
+    const onlineAstrologers = await User.countDocuments({
+      role: 'astrologer',
+      isOnline: true,
+    });
+    const pendingVerification = await Astrologer.countDocuments({
+      astrologerApproved: false,
+    });
     const avgRatingAgg = await Astrologer.aggregate([
       { $group: { _id: null, avg: { $avg: '$rating' } } },
     ]);
     const avgRating = avgRatingAgg[0]?.avg?.toFixed(1) || '0.0';
 
-    const totalCount = astrologersAgg.length < parseInt(limit)
-      ? astrologersAgg.length + skip
-      : await User.aggregate([
-        { $match: userFilter },
-        { $lookup: { from: 'astrologers', localField: '_id', foreignField: 'userId', as: 'astro' } },
-        { $unwind: '$astro' },
-        { $match: astroFilter },
-        { $count: 'total' },
-      ]).then(r => r[0]?.total || 0);
+    const totalCount =
+      astrologersAgg.length < parseInt(limit)
+        ? astrologersAgg.length + skip
+        : await User.aggregate([
+            { $match: userFilter },
+            {
+              $lookup: {
+                from: 'astrologers',
+                localField: '_id',
+                foreignField: 'userId',
+                as: 'astro',
+              },
+            },
+            { $unwind: '$astro' },
+            { $match: astroFilter },
+            { $count: 'total' },
+          ]).then((r) => r[0]?.total || 0);
 
     res.json({
       stats: {
@@ -269,15 +317,25 @@ export const getAstrologerDetails = async (req, res) => {
           localField: '_id',
           foreignField: 'astrologerId',
           pipeline: [
-            { $group: { _id: null, avg: { $avg: '$stars' }, count: { $sum: 1 } } },
+            {
+              $group: {
+                _id: null,
+                avg: { $avg: '$stars' },
+                count: { $sum: 1 },
+              },
+            },
           ],
           as: 'reviewStats',
         },
       },
       {
         $addFields: {
-          avgRating: { $ifNull: [{ $arrayElemAt: ['$reviewStats.avg', 0] }, 0] },
-          reviewCount: { $ifNull: [{ $arrayElemAt: ['$reviewStats.count', 0] }, 0] },
+          avgRating: {
+            $ifNull: [{ $arrayElemAt: ['$reviewStats.avg', 0] }, 0],
+          },
+          reviewCount: {
+            $ifNull: [{ $arrayElemAt: ['$reviewStats.count', 0] }, 0],
+          },
         },
       },
       {
@@ -314,8 +372,6 @@ export const getAstrologerDetails = async (req, res) => {
   }
 };
 
-
-
 export const getAstrologerById = async (req, res) => {
   try {
     const { astrologerId } = req.params;
@@ -326,7 +382,7 @@ export const getAstrologerById = async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(astrologerId)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid astrologer ID",
+        message: 'Invalid astrologer ID',
       });
     }
 
@@ -335,16 +391,16 @@ export const getAstrologerById = async (req, res) => {
     ============================ */
     const astrologer = await Astrologer.findOne({ userId: astrologerId })
       .populate({
-        path: "userId",
-        select: "fullName email phone photo gender isVerified",
+        path: 'userId',
+        select: 'fullName email phone photo gender isVerified',
       })
-      .select("-__v") // Hide internal fields
+      .select('-__v') // Hide internal fields
       .lean(); // Faster response, less memory
 
     if (!astrologer) {
       return res.status(404).json({
         success: false,
-        message: "Astrologer not found",
+        message: 'Astrologer not found',
       });
     }
 
@@ -353,19 +409,18 @@ export const getAstrologerById = async (req, res) => {
     ============================ */
     return res.status(200).json({
       success: true,
-      message: "Astrologer details fetched successfully",
+      message: 'Astrologer details fetched successfully',
       data: astrologer,
     });
   } catch (error) {
-    console.error("GET_ASTROLOGER_BY_ID_ERROR:", error);
+    console.error('GET_ASTROLOGER_BY_ID_ERROR:', error);
 
     return res.status(500).json({
       success: false,
-      message: "Internal server error",
+      message: 'Internal server error',
     });
   }
 };
-
 
 /**
  * Update Astrologer By ID
@@ -386,17 +441,17 @@ export const updateAstrologerById = async (req, res) => {
     /* ============================
        ROLE VALIDATION
     ============================ */
-    if (!["admin", "super_admin"].includes(role)) {
+    if (!['admin', 'super_admin'].includes(role)) {
       return res.status(403).json({
         success: false,
-        message: "Access denied",
+        message: 'Access denied',
       });
     }
 
     if (!mongoose.Types.ObjectId.isValid(astrologerId)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid user ID",
+        message: 'Invalid user ID',
       });
     }
 
@@ -410,7 +465,7 @@ export const updateAstrologerById = async (req, res) => {
     if (!astrologer) {
       return res.status(404).json({
         success: false,
-        message: "Astrologer not found",
+        message: 'Astrologer not found',
       });
     }
 
@@ -429,14 +484,14 @@ export const updateAstrologerById = async (req, res) => {
        UPDATE ASTROLOGER
     ============================ */
     const allowedAstroFields = [
-      "specialization",
-      "languages",
-      "bio",
-      "description",
-      "qualification",
-      "yearOfExpertise",
-      "yearOfExperience",
-      "ratepermin",
+      'specialization',
+      'languages',
+      'bio',
+      'description',
+      'qualification',
+      'yearOfExpertise',
+      'yearOfExperience',
+      'ratepermin',
     ];
 
     const astroUpdate = {};
@@ -459,21 +514,21 @@ export const updateAstrologerById = async (req, res) => {
        FINAL FETCH (CORRECT)
     ============================ */
     const updatedAstrologer = await Astrologer.findById(astrologer._id)
-      .populate("userId", "fullName email phone photo isVerified")
+      .populate('userId', 'fullName email phone photo isVerified')
       .lean();
 
     return res.status(200).json({
       success: true,
-      message: "Astrologer updated successfully",
+      message: 'Astrologer updated successfully',
       data: updatedAstrologer,
     });
   } catch (error) {
     await session.abortTransaction();
-    console.error("UPDATE_ASTROLOGER_ERROR:", error);
+    console.error('UPDATE_ASTROLOGER_ERROR:', error);
 
     return res.status(500).json({
       success: false,
-      message: "Internal server error",
+      message: 'Internal server error',
     });
   } finally {
     session.endSession();
