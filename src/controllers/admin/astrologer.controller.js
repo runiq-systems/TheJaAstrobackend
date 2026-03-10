@@ -441,7 +441,7 @@ export const updateAstrologerById = async (req, res) => {
     /* ============================
        ROLE VALIDATION
     ============================ */
-    if (!['admin', 'super_admin'].includes(role)) {
+    if (!['admin'].includes(role)) {
       return res.status(403).json({
         success: false,
         message: 'Access denied',
@@ -492,6 +492,7 @@ export const updateAstrologerById = async (req, res) => {
       'yearOfExpertise',
       'yearOfExperience',
       'ratepermin',
+      'rank'
     ];
 
     const astroUpdate = {};
