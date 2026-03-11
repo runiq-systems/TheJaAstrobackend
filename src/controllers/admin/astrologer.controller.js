@@ -123,8 +123,170 @@ export const getAllAdminAstrologers = async (req, res) => {
       astroFilter.astrologerApproved = verified === 'true';
     }
 
-    // Aggregate: Join User + Astrologer + Stats
-    const astrologersAgg = await User.aggregate([
+    const buildAstrologersPipeline = ({
+      userFilter,
+      astroFilter,
+      sortBy,
+      sortOrder,
+      skip,
+      limit,
+    }) => [
+      // ─── 1. Base filter on Users ───────────────────────────────────────
+      { $match: userFilter },
+
+      // ─── 2. Join with Astrologer profile ───────────────────────────────
+      {
+        $lookup: {
+          from: 'astrologers',
+          localField: '_id',
+          foreignField: 'userId',
+          as: 'astroDetails',
+        },
+      },
+      {
+        $unwind: {
+          path: '$astroDetails',
+          preserveNullAndEmptyArrays: true, // keep users without astro profile (but later filtered)
+        },
+      },
+
+      // ─── 3. Apply astrologer-specific filters ──────────────────────────
+      { $match: astroFilter },
+
+      // ─── 4. Performance & stats sub-pipelines ──────────────────────────
+      {
+        $lookup: {
+          from: 'calls',
+          let: { userId: '$_id' },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$astrologerId', '$$userId'] } } },
+            { $match: { status: { $in: ['COMPLETED', 'CONNECTED'] } } },
+            { $count: 'count' },
+          ],
+          as: 'callStats',
+        },
+      },
+      {
+        $lookup: {
+          from: 'chats',
+          let: { userId: '$_id' },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$astrologerId', '$$userId'] } } },
+            { $match: { status: { $in: ['COMPLETED', 'CONNECTED'] } } },
+            { $count: 'count' },
+          ],
+          as: 'chatStats',
+        },
+      },
+      {
+        $lookup: {
+          from: 'reviews',
+          let: { userId: '$_id' },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$astrologerId', '$$userId'] } } },
+            {
+              $group: {
+                _id: null,
+                avgRating: { $avg: '$stars' },
+                count: { $sum: 1 },
+              },
+            },
+          ],
+          as: 'reviewStats',
+        },
+      },
+
+      // ─── 5. Compute derived fields ─────────────────────────────────────
+      {
+        $addFields: {
+          totalCalls: {
+            $ifNull: [{ $arrayElemAt: ['$callStats.count', 0] }, 0],
+          },
+          totalChats: {
+            $ifNull: [{ $arrayElemAt: ['$chatStats.count', 0] }, 0],
+          },
+          reviewCount: {
+            $ifNull: [{ $arrayElemAt: ['$reviewStats.count', 0] }, 0],
+          },
+          avgRating: {
+            $round: [
+              { $ifNull: [{ $arrayElemAt: ['$reviewStats.avgRating', 0] }, 0] },
+              1,
+            ],
+          },
+          // Placeholder – replace later with real calculation
+          earnings: 0,
+        },
+      },
+
+      // ─── 6. Final shape of each document ───────────────────────────────
+      {
+        $project: {
+          _id: 1,
+          name: '$fullName',
+          photo: '$astroDetails.photo',
+          // Take first specialization or null
+          skill: { $arrayElemAt: ['$astroDetails.specialization', 0] },
+          experience: '$astroDetails.yearOfExperience',
+          pricing: '$astroDetails.ratepermin',
+          rating: '$avgRating',
+          verified: '$astroDetails.astrologerApproved',
+          status: '$astroDetails.status', // online/offline/busy
+          accountStatus: '$astroDetails.accountStatus', // pending/approved/rejected/...
+          totalCalls: 1,
+          totalChats: 1,
+          earnings: 1,
+          reviewCount: 1,
+          rank: '$astroDetails.rank',
+          isOnline: '$isOnline',
+          joinedOn: '$createdAt',
+
+          // Optional: keep these for debugging (remove in production)
+          // astroDetails: 0, callStats: 0, chatStats: 0, reviewStats: 0
+        },
+      },
+
+      // ─── 7. Sorting ─────────────────────────────────────────────────────
+      {
+        $sort: {
+          [sortBy]: sortOrder === 'desc' ? -1 : 1,
+        },
+      },
+
+      // ─── 8. Pagination ──────────────────────────────────────────────────
+      { $skip: skip },
+      { $limit: limit },
+    ];
+
+    // ─── Usage in your controller ────────────────────────────────────────────
+    const astrologersAgg = await User.aggregate(
+      buildAstrologersPipeline({
+        userFilter,
+        astroFilter,
+        sortBy,
+        sortOrder,
+        skip,
+        limit: parseInt(limit),
+      })
+    );
+    // Dashboard stats
+    const totalAstrologers = await Astrologer.countDocuments();
+    const onlineAstrologers = await User.countDocuments({
+      role: 'astrologer',
+      isOnline: true,
+    });
+    const pendingVerification = await Astrologer.countDocuments({
+      astrologerApproved: false,
+    });
+    const avgRatingAgg = await Astrologer.aggregate([
+      { $group: { _id: null, avg: { $avg: '$rating' } } },
+    ]);
+    const avgRating = avgRatingAgg[0]?.avg?.toFixed(1) || '0.0';
+
+    // ────────────────────────────────────────────────
+    // Get filtered count correctly (same filters as main query)
+    // ────────────────────────────────────────────────
+    const countAgg = await User.aggregate([
       { $match: userFilter },
 
       {
@@ -140,140 +302,10 @@ export const getAllAdminAstrologers = async (req, res) => {
 
       { $match: astroFilter },
 
-      // ────────────────────────────────────────────────
-      // Performance stats lookups (unchanged)
-      // ────────────────────────────────────────────────
-      {
-        $lookup: {
-          from: 'calls',
-          localField: '_id',
-          foreignField: 'astrologerId',
-          pipeline: [
-            { $match: { status: { $in: ['COMPLETED', 'CONNECTED'] } } },
-            { $count: 'totalCalls' },
-          ],
-          as: 'callStats',
-        },
-      },
-      {
-        $lookup: {
-          from: 'chats',
-          localField: '_id',
-          foreignField: 'astrologerId',
-          pipeline: [
-            { $match: { status: { $in: ['COMPLETED', 'CONNECTED'] } } },
-            { $count: 'totalChats' },
-          ],
-          as: 'chatStats',
-        },
-      },
-      {
-        $lookup: {
-          from: 'reviews',
-          localField: '_id',
-          foreignField: 'astrologerId',
-          pipeline: [
-            {
-              $group: {
-                _id: null,
-                avgRating: { $avg: '$stars' },
-                count: { $sum: 1 },
-              },
-            },
-          ],
-          as: 'reviewStats',
-        },
-      },
-
-      // ────────────────────────────────────────────────
-      // Add computed fields
-      // ────────────────────────────────────────────────
-      {
-        $addFields: {
-          totalCalls: {
-            $ifNull: [{ $arrayElemAt: ['$callStats.totalCalls', 0] }, 0],
-          },
-          totalChats: {
-            $ifNull: [{ $arrayElemAt: ['$chatStats.totalChats', 0] }, 0],
-          },
-          reviewCount: {
-            $ifNull: [{ $arrayElemAt: ['$reviewStats.count', 0] }, 0],
-          },
-          avgRating: {
-            $round: [
-              { $ifNull: [{ $arrayElemAt: ['$reviewStats.avgRating', 0] }, 0] },
-              1,
-            ],
-          },
-          earnings: 0, // TODO: calculate from transactions/payouts
-          // rank is already available — we just project it below
-        },
-      },
-
-      // ────────────────────────────────────────────────
-      // Final projection – include rank here
-      // ────────────────────────────────────────────────
-      {
-        $project: {
-          _id: 1,
-          name: '$fullName',
-          photo: '$astroDetails.photo',
-          skill: { $arrayElemAt: ['$astroDetails.specialization', 0] }, // first skill
-          experience: '$astroDetails.yearOfExperience',
-          pricing: '$astroDetails.ratepermin',
-          rating: '$avgRating',
-          verified: '$astroDetails.astrologerApproved',
-          status: '$astroDetails.status', // if you have this field
-          accountStatus: '$astroDetails.accountStatus',
-          totalCalls: 1,
-          totalChats: 1,
-          earnings: 1,
-          reviewCount: 1,
-          rank: '$astroDetails.rank', // ← FIXED: correct path
-          isOnline: '$isOnline', // from User schema
-          joinedOn: '$createdAt',
-        },
-      },
-
-      // ────────────────────────────────────────────────
-      // Sort, skip, limit
-      // ────────────────────────────────────────────────
-      { $sort: { [sortBy]: sortOrder === 'desc' ? -1 : 1 } },
-      { $skip: skip },
-      { $limit: parseInt(limit) },
+      { $count: 'total' },
     ]);
 
-    // Dashboard stats
-    const totalAstrologers = await Astrologer.countDocuments();
-    const onlineAstrologers = await User.countDocuments({
-      role: 'astrologer',
-      isOnline: true,
-    });
-    const pendingVerification = await Astrologer.countDocuments({
-      astrologerApproved: false,
-    });
-    const avgRatingAgg = await Astrologer.aggregate([
-      { $group: { _id: null, avg: { $avg: '$rating' } } },
-    ]);
-    const avgRating = avgRatingAgg[0]?.avg?.toFixed(1) || '0.0';
-
-    const totalCount =
-      astrologersAgg.length < parseInt(limit)
-        ? astrologersAgg.length + skip
-        : await User.aggregate([
-            { $match: userFilter },
-            {
-              $lookup: {
-                from: 'astrologers',
-                localField: '_id',
-                foreignField: 'userId',
-                as: 'astro',
-              },
-            },
-            { $unwind: '$astro' },
-            { $match: astroFilter },
-            { $count: 'total' },
-          ]).then((r) => r[0]?.total || 0);
+    const totalCount = countAgg[0]?.total || 0;
 
     res.json({
       stats: {
@@ -282,6 +314,7 @@ export const getAllAdminAstrologers = async (req, res) => {
         pendingVerification,
         avgRating,
       },
+      astrologerLength: astrologersAgg.length,
       astrologers: astrologersAgg,
       pagination: {
         total: totalCount,
@@ -492,7 +525,7 @@ export const updateAstrologerById = async (req, res) => {
       'yearOfExpertise',
       'yearOfExperience',
       'ratepermin',
-      'rank'
+      'rank',
     ];
 
     const astroUpdate = {};
@@ -537,78 +570,37 @@ export const updateAstrologerById = async (req, res) => {
 };
 export const deleteAstrologer = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.params; // ← usually the USER _id in your current case
 
-    // 1. Validate ID
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid astrologer ID format',
-      });
+    const astrologer = await Astrologer.findOne({ userId: id });
+
+    let deletedAstrologerId = null;
+    if (astrologer) {
+      await Astrologer.findByIdAndDelete(astrologer._id);
+      deletedAstrologerId = astrologer._id.toString();
     }
 
-    // 2. Find the astrologer document
-    const astrologer = await Astrologer.findById(id);
+    // Always try to delete the user (this is the main goal now)
+    const deletedUser = await User.findByIdAndDelete(id);
 
-    if (!astrologer) {
+    if (!deletedUser) {
       return res.status(404).json({
-        success: false,
-        message: 'Astrologer not found',
+        message: 'No user found with this ID',
       });
     }
 
-    // 3. Optional: Prevent deletion of very active / important accounts
-    // (you can customize or remove this check)
-    if (astrologer.reviewCount > 50 || astrologer.totalCalls > 1000) {
-      return res.status(403).json({
-        success: false,
-        message: 'Cannot delete astrologer with high activity. Contact support.',
-      });
-    }
-
-    // 4. Delete the Astrologer document
-    await Astrologer.deleteOne({ _id: id });
-
-    // 5. Optional: Also delete or deactivate the linked User account
-    //    → Many apps keep the user but mark as inactive / remove role
-    if (astrologer.userId) {
-      await User.findByIdAndUpdate(
-        astrologer.userId,
-        {
-          $set: {
-            role: 'user',               // downgrade role
-            isSuspend: true,
-            userStatus: 'Blocked',
-            // password: null,          // optional - prevent login
-            // deviceToken: null,
-          },
-        },
-        { new: true }
-      );
-
-      // Alternative (full user deletion - use with caution):
-      // await User.deleteOne({ _id: astrologer.userId });
-    }
-
-    // 6. Optional: Clean up related data (if you have them)
-    // await Review.deleteMany({ astrologerId: id });
-    // await Call.deleteMany({ astrologerId: id });
-    // await Chat.deleteMany({ astrologerId: id });
-    // ... etc.
-
-    return res.status(200).json({
-      success: true,
-      message: 'Astrologer deleted successfully',
-      deletedId: id,
+    // Response — tell what actually happened
+    res.status(200).json({
+      message:
+        'User deleted successfully' +
+        (deletedAstrologerId
+          ? ' + astrologer profile'
+          : ' (no astrologer profile existed)'),
+      deletedUserId: id,
+      deletedAstrologerId: deletedAstrologerId || 'none',
     });
-
   } catch (error) {
-    console.error('Delete astrologer error:', error);
-
-    return res.status(500).json({
-      success: false,
-      message: 'Failed to delete astrologer',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
-    });
+    console.error('Delete error:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 };
