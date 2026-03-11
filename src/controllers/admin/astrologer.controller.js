@@ -535,3 +535,80 @@ export const updateAstrologerById = async (req, res) => {
     session.endSession();
   }
 };
+export const deleteAstrologer = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // 1. Validate ID
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid astrologer ID format',
+      });
+    }
+
+    // 2. Find the astrologer document
+    const astrologer = await Astrologer.findById(id);
+
+    if (!astrologer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Astrologer not found',
+      });
+    }
+
+    // 3. Optional: Prevent deletion of very active / important accounts
+    // (you can customize or remove this check)
+    if (astrologer.reviewCount > 50 || astrologer.totalCalls > 1000) {
+      return res.status(403).json({
+        success: false,
+        message: 'Cannot delete astrologer with high activity. Contact support.',
+      });
+    }
+
+    // 4. Delete the Astrologer document
+    await Astrologer.deleteOne({ _id: id });
+
+    // 5. Optional: Also delete or deactivate the linked User account
+    //    → Many apps keep the user but mark as inactive / remove role
+    if (astrologer.userId) {
+      await User.findByIdAndUpdate(
+        astrologer.userId,
+        {
+          $set: {
+            role: 'user',               // downgrade role
+            isSuspend: true,
+            userStatus: 'Blocked',
+            // password: null,          // optional - prevent login
+            // deviceToken: null,
+          },
+        },
+        { new: true }
+      );
+
+      // Alternative (full user deletion - use with caution):
+      // await User.deleteOne({ _id: astrologer.userId });
+    }
+
+    // 6. Optional: Clean up related data (if you have them)
+    // await Review.deleteMany({ astrologerId: id });
+    // await Call.deleteMany({ astrologerId: id });
+    // await Chat.deleteMany({ astrologerId: id });
+    // ... etc.
+
+    return res.status(200).json({
+      success: true,
+      message: 'Astrologer deleted successfully',
+      deletedId: id,
+    });
+
+  } catch (error) {
+    console.error('Delete astrologer error:', error);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to delete astrologer',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+};
