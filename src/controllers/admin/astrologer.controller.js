@@ -592,12 +592,7 @@ export const deleteAstrologer = async (req, res) => {
     // Response — tell what actually happened
     res.status(200).json({
       message:
-        'User deleted successfully' +
-        (deletedAstrologerId
-          ? ' + astrologer profile'
-          : ' (no astrologer profile existed)'),
-      deletedUserId: id,
-      deletedAstrologerId: deletedAstrologerId || 'none',
+        'User deleted successfully',
     });
   } catch (error) {
     console.error('Delete error:', error);
