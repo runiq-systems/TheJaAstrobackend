@@ -741,3 +741,41 @@ export const unblockWallet = async (req, res) => {
   }
 };
 
+
+export const deleteUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const user = await User.findById(id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Prevent deleting admin accounts
+    if (user.role === 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: "Cannot delete admin accounts",
+      });
+    }
+
+    // Delete the user document
+    await User.findByIdAndDelete(id);
+
+    return res.status(200).json({
+      success: true,
+      message: "User deleted successfully",
+      deletedUserId: id,
+    });
+  } catch (error) {
+    console.error("Delete user error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};

@@ -67,6 +67,128 @@ export const getTopAstrologers = async (req, res) => {
     }
 };
 
+ 
+export const updateTopAstrologer = async (req, res) => {
+  try {
+    const { id } = req.params; // astrologer _id or userId — decide based on your route design
+
+    // Optional: validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid astrologer ID',
+      });
+    }
+
+    // Fields that go to User document
+    const userUpdateFields = {};
+    if (req.body.fullName) userUpdateFields.fullName = req.body.fullName.trim();
+    if (req.body.name) userUpdateFields.fullName = req.body.name.trim(); // if name === display name
+    // Add more user fields if needed (email, phone, gender, etc.)
+
+    // Fields that go to Astrologer document
+    const astrologerUpdateFields = {};
+    if (req.body.photo !== undefined) astrologerUpdateFields.photo = req.body.photo;
+    if (req.body.specialization !== undefined) {
+      astrologerUpdateFields.specialization = Array.isArray(req.body.specialization)
+        ? req.body.specialization
+        : [];
+    }
+    if (req.body.languages !== undefined) {
+      astrologerUpdateFields.languages = Array.isArray(req.body.languages)
+        ? req.body.languages
+        : [];
+    }
+    if (req.body.ratepermin !== undefined) {
+      astrologerUpdateFields.ratepermin = Number(req.body.ratepermin);
+    }
+    if (req.body.yearOfExperience !== undefined) {
+      astrologerUpdateFields.yearOfExperience = req.body.yearOfExperience.trim();
+    }
+    if (req.body.qualification !== undefined) {
+      astrologerUpdateFields.qualification = req.body.qualification.trim();
+    }
+    if (req.body.bio !== undefined) {
+      astrologerUpdateFields.bio = req.body.bio.trim();
+    }
+    if (req.body.skill !== undefined) {
+      // If skill = primary expertise → maybe first item in specialization
+      astrologerUpdateFields.specialization = [
+        req.body.skill.trim(),
+        ...(astrologerUpdateFields.specialization || []).slice(1),
+      ];
+    }
+    if (req.body.rank !== undefined) {
+      // Allow null / "" → means unassigned
+      astrologerUpdateFields.rank = req.body.rank === '' || req.body.rank == null
+        ? null
+        : Number(req.body.rank);
+    }
+
+    // ────────────────────────────────────────────────
+    // 1. Update User document if needed
+    // ────────────────────────────────────────────────
+    let updatedUser = null;
+    if (Object.keys(userUpdateFields).length > 0) {
+      updatedUser = await User.findByIdAndUpdate(
+        id, // assuming id = userId ; adjust if your :id is astrologer._id
+        { $set: userUpdateFields },
+        { new: true, runValidators: true }
+      );
+
+      if (!updatedUser) {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found',
+        });
+      }
+    }
+
+    // ────────────────────────────────────────────────
+    // 2. Update Astrologer document
+    // ────────────────────────────────────────────────
+    const astrologerQuery = req.body.userId
+      ? { userId: req.body.userId }
+      : { _id: id }; // adjust based on what :id represents
+
+    const updatedAstrologer = await Astrologer.findOneAndUpdate(
+      astrologerQuery,
+      { $set: astrologerUpdateFields },
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedAstrologer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Astrologer profile not found',
+      });
+    }
+
+    // Optional: populate user data in response
+    const populated = await updatedAstrologer.populate({
+      path: 'userId',
+      select: 'fullName photo gender isOnline',
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Astrologer profile updated successfully',
+      data: {
+        ...updatedAstrologer.toObject(),
+        fullName: updatedUser?.fullName || populated?.userId?.fullName,
+        // merge other fields if needed
+      },
+    });
+  } catch (error) {
+    console.error('Error updating astrologer:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error while updating astrologer',
+      error: error.message,
+    });
+  }
+};
+
 
 
 

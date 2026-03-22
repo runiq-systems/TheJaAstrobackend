@@ -10,8 +10,9 @@ import {
   updateUserStatus,
   addFundsManually,
   updateUser,
+  deleteUser,
 } from "../controllers/admin/user.controller.js";
-import { getAllAdminAstrologers,reviewAstrologerAccount } from "../controllers/admin/astrologer.controller.js";
+import { deleteAstrologer, getAllAdminAstrologers,reviewAstrologerAccount } from "../controllers/admin/astrologer.controller.js";
 import { authMiddleware, requireAdmin } from "../middleware/authmiddleware.js";
 import { createCoupon, getAllAdminOffer } from "../controllers/admin/offers.controller.js";
 import { getAdminPlatformReports } from "../controllers/admin/report.controller.js";
@@ -26,8 +27,12 @@ const router = express.Router();
 
 router.get("/dashboard/stats", getDashboardStats);
 router.get("/users/details", getAllAdminUsers);
+router.delete("/users/:id", deleteUser)
+
 router.get("/astrologers/details", getAllAdminAstrologers);
 router.patch("/astrologers/review/:astrologerId", reviewAstrologerAccount);
+router.delete("/astrologers/:id", deleteAstrologer)
+
 router.get("/transactions/all", getAllAdminTransactions)
 router.get("/calls/details", getAllAdminCalls)
 router.get("/chats/details", getAllAdminChat)
