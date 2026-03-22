@@ -621,18 +621,14 @@ export const startChatSession = asyncHandler(async (req, res) => {
       amount: estimatedCost,
       currency: 'INR',
     });
+    console.log("balanceCheck", balanceCheck);
 
     if (!balanceCheck.hasSufficientBalance) {
-      return res.status(200).json({
-        success: false,
-        errorType: "INSUFFICIENT_BALANCE",
-        message: `Insufficient balance. Add ₹${balanceCheck.shortfall} more to start chat`,
-        data: {
-          shortfall: balanceCheck.shortfall,
-          available: balanceCheck.availableBalance,
-          required: estimatedCost,
-        },
-      })
+      throw new ApiError(402, 'Insufficient balance to start chat session', {
+        shortfall: balanceCheck.shortfall,
+        available: balanceCheck.availableBalance,
+        required: estimatedCost,
+      });
     }
 
     // Calculate commission and create reservation (your existing code)
