@@ -272,11 +272,11 @@ export const requestChatSession = asyncHandler(async (req, res) => {
       throw new ApiError(400, "Cannot chat with yourself");
     }
 
-    // Check for existing active session
+    // Check for existing active session (ADD THIS BACK)
     const existingSession = await ChatSession.findOne({
       userId,
       astrologerId,
-      status: { $in: ['REQUESTED', 'ACCEPTED', 'ACTIVE'] },
+      status: { $in: ['REQUESTED', 'ACTIVE'] },
     }).session(session);
 
     if (existingSession) {
@@ -287,15 +287,6 @@ export const requestChatSession = asyncHandler(async (req, res) => {
         { $set: { expiresAt: newExpires } },
         { session }
       );
-
-      // Also update the associated request if exists
-      if (existingSession.meta?.requestId) {
-        await ChatRequest.updateOne(
-          { requestId: existingSession.meta.requestId },
-          { $set: { expiresAt: newExpires } },
-          { session }
-        );
-      }
 
       await session.commitTransaction();
 
@@ -309,7 +300,7 @@ export const requestChatSession = asyncHandler(async (req, res) => {
       );
     }
 
-    // Check for existing pending request
+    // Check for existing pending request (ADD THIS BACK)
     const existingPending = await ChatRequest.findOne({
       userId,
       astrologerId,
@@ -364,37 +355,25 @@ export const requestChatSession = asyncHandler(async (req, res) => {
       throw new ApiError(404, "Astrologer profile not completed");
     }
 
-    const ratePerMinute = astrologer.chatRate || astroProfile.ratepermin || 10;
+    const ratePerMinute =
+      astrologer.chatRate || astroProfile.ratepermin || 10;
 
     // -------------------------------
     // Get user details
     // -------------------------------
     const user = await User.findById(userId)
-      .select("fullName gender placeOfBirth dateOfBirth timeOfBirth phone photo")
+      .select(
+        "fullName gender placeOfBirth dateOfBirth timeOfBirth phone photo"
+      )
       .lean();
 
     // -------------------------------
-    // FIND OR CREATE CHAT
+    // Find or create chat
     // -------------------------------
-    let chat = await Chat.findOne({
-      isGroupChat: false,
-      participants: { $all: [userId, astrologerId], $size: 2 }
-    }).session(session);
-
-    let isNewChat = false;
-
-    if (!chat) {
-      // Create new personal chat
-      const [newChat] = await Chat.create(
-        [{
-          isGroupChat: false,
-          participants: [userId, astrologerId]
-        }],
-        { session }
-      );
-      chat = newChat;
-      isNewChat = true;
-    }
+    const chat = await Chat.findOrCreatePersonalChat(
+      userId,
+      astrologerId
+    );
 
     // -------------------------------
     // Generate IDs
@@ -406,74 +385,77 @@ export const requestChatSession = asyncHandler(async (req, res) => {
     // -------------------------------
     // Create Chat Request
     // -------------------------------
-    const [request] = await ChatRequest.create(
-      [{
-        requestId,
-        userId,
-        astrologerId,
-        userMessage: userMessage?.trim(),
-        status: "PENDING",
-        requestedAt: new Date(),
-        expiresAt,
-        meta: {
+    const request = await ChatRequest.create(
+      [
+        {
+          requestId,
+          userId,
+          astrologerId,
+          userMessage: userMessage?.trim(),
+          chatType,
+          expiresAt,
+          meta: {
+            chatId: chat._id,
+            ratePerMinute
+          }
+        }
+      ],
+      { session }
+    );
+
+    // -------------------------------
+    // Create Chat Session (FIXED: Add proper meta linking)
+    // -------------------------------
+    const chatSession = await ChatSession.create(
+      [
+        {
+          sessionId,
+          userId,
+          astrologerId,
           chatId: chat._id,
           ratePerMinute,
-          chatType
+          status: "REQUESTED",
+          requestedAt: new Date(),
+          expiresAt,
+          meta: {
+            request_Id: request[0]._id,        // IMPORTANT: Add this
+            requestId: request[0].requestId,    // IMPORTANT: Add this
+            chatId: chat._id,
+            chatType
+          }
         }
-      }],
+      ],
       { session }
     );
 
     // -------------------------------
-    // Create Chat Session
-    // -------------------------------
-    const [chatSession] = await ChatSession.create(
-      [{
-        sessionId,
-        userId,
-        astrologerId,
-        chatId: chat._id,
-        ratePerMinute,
-        status: "REQUESTED",
-        requestedAt: new Date(),
-        expiresAt,
-        meta: {
-          requestId: request.requestId,  // Store the requestId string
-          request_Id: request._id,       // Store the ObjectId
-          chatType
-        }
-      }],
-      { session }
-    );
-
-    // -------------------------------
-    // Link session ID to request
+    // Link session ID to request (ADD THIS BACK)
     // -------------------------------
     await ChatRequest.updateOne(
-      { _id: request._id },
+      { _id: request[0]._id },
       {
         $set: {
-          sessionId: chatSession._id  // Link to session ObjectId
+          sessionId: chatSession[0]._id,
+          session_Id: chatSession[0]._id      // Add both for consistency
         }
       },
       { session }
     );
 
     // -------------------------------
-    // SYSTEM GENERATED MESSAGE - ONLY FOR NEW CHAT
+    // SYSTEM GENERATED MESSAGE
     // -------------------------------
-    let systemMessage = null;
-
-    if (isNewChat) {
-      const systemMessageText = `Dear ${astrologer.fullName},
+    const systemMessageText = `
+  Dear ${astrologer.fullName},
 Name: ${user.fullName || "N/A"}
 Gender: ${user.gender || "N/A"}
 Place of Birth: ${user.placeOfBirth || "N/A"}
 Date of Birth: ${user.dateOfBirth || "N/A"}
 Time of Birth: ${user.timeOfBirth || "N/A"}`.trim();
 
-      const [newSystemMessage] = await Message.create(
-        [{
+    const systemMessage = await Message.create(
+      [
+        {
           chat: chat._id,
           sender: userId,
           type: "system",
@@ -485,11 +467,10 @@ Time of Birth: ${user.timeOfBirth || "N/A"}`.trim();
             targetUsers: [astrologerId],
             performedBy: userId
           }
-        }],
-        { session }
-      );
-      systemMessage = newSystemMessage;
-    }
+        }
+      ],
+      { session }
+    );
 
     // -------------------------------
     // USER FIRST MESSAGE (optional)
@@ -497,60 +478,54 @@ Time of Birth: ${user.timeOfBirth || "N/A"}`.trim();
     let userMsg = null;
 
     if (userMessage && userMessage.trim()) {
-      const [newUserMsg] = await Message.create(
-        [{
-          chat: chat._id,
-          sender: userId,
-          type: "text",
-          content: {
-            text: userMessage.trim()
+      userMsg = await Message.create(
+        [
+          {
+            chat: chat._id,
+            sender: userId,
+            type: "text",
+            content: {
+              text: userMessage.trim()
+            }
           }
-        }],
-        { session }
-      );
-      userMsg = newUserMsg;
-    }
-
-    // -------------------------------
-    // Update last message in Chat
-    // -------------------------------
-    let lastMsgId = null;
-    if (userMsg) {
-      lastMsgId = userMsg._id;
-    } else if (systemMessage) {
-      lastMsgId = systemMessage._id;
-    }
-
-    if (lastMsgId) {
-      await Chat.updateOne(
-        { _id: chat._id },
-        { lastMessage: lastMsgId },
+        ],
         { session }
       );
     }
+
+    // -------------------------------
+    // Update last message
+    // -------------------------------
+    const lastMsgId = userMsg
+      ? userMsg[0]._id
+      : systemMessage[0]._id;
+
+    await Chat.updateOne(
+      { _id: chat._id },
+      { lastMessage: lastMsgId },
+      { session }
+    );
 
     await session.commitTransaction();
 
     // -------------------------------
     // SOCKET EVENTS
     // -------------------------------
-    if (systemMessage) {
-      emitSocketEvent(
-        astrologerId,
-        ChatEventsEnum.NEW_MESSAGE,
-        systemMessage
-      );
-    }
+    emitSocketEvent(
+      astrologerId,
+      ChatEventsEnum.NEW_MESSAGE,
+      systemMessage[0]
+    );
 
     if (userMsg) {
       emitSocketEvent(
         astrologerId,
         ChatEventsEnum.NEW_MESSAGE,
-        userMsg
+        userMsg[0]
       );
     }
 
-    // Send notifications
+    // Send notifications (ADD THIS BACK)
     await sendNotification({
       userId: astrologerId,
       title: 'New Chat Request',
@@ -560,8 +535,8 @@ Time of Birth: ${user.timeOfBirth || "N/A"}`.trim();
       data: {
         screen: 'AstrologerChat',
         targetTab: 'AstrologerChat',
-        requestId: request.requestId,
-        sessionId: chatSession.sessionId,
+        requestId,
+        sessionId,
         userId,
         ratePerMinute,
         chatType,
@@ -569,30 +544,26 @@ Time of Birth: ${user.timeOfBirth || "N/A"}`.trim();
       },
     });
 
-    if (typeof notifyAstrologerAboutRequest === 'function') {
-      await notifyAstrologerAboutRequest(req, astrologerId, {
-        requestId: request.requestId,
-        sessionId: chatSession.sessionId,
-        userId,
-        userInfo: req.user,
-        userMessage,
-        ratePerMinute,
-        expiresAt,
-      });
-    }
+    await notifyAstrologerAboutRequest(req, astrologerId, {
+      requestId,
+      sessionId,
+      userId,
+      userInfo: req.user,
+      userMessage,
+      ratePerMinute,
+      expiresAt,
+    });
 
     // -------------------------------
     // RESPONSE
     // -------------------------------
     return res.status(201).json(
       new ApiResponse(201, {
-        requestId: request.requestId,
-        sessionId: chatSession.sessionId,
+        requestId,
+        sessionId,
         status: "REQUESTED",
         ratePerMinute,
         expiresAt,
-        isNewChat,
-        chatId: chat._id,
         astrologer: {
           fullName: astrologer.fullName,
           phone: astrologer.phone,
