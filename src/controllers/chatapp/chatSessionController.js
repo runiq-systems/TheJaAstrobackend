@@ -621,7 +621,6 @@ export const startChatSession = asyncHandler(async (req, res) => {
       amount: estimatedCost,
       currency: 'INR',
     });
-    console.log("balanceCheck", balanceCheck);
 
     if (!balanceCheck.hasSufficientBalance) {
       return res.status(200).json({
