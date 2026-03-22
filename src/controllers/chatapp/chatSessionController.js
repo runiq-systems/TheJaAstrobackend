@@ -22,257 +22,54 @@ import {
 // Global billing timers map
 const billingTimers = new Map();
 
-// export const requestChatSession = asyncHandler(async (req, res) => {
-//   const session = await mongoose.startSession();
-
-//   try {
-//     session.startTransaction();
-
-//     const { astrologerId, userMessage, chatType = 'TEXT' } = req.body;
-//     const userId = req.user.id;
-
-//     if (!astrologerId) {
-//       throw new ApiError(400, 'Astrologer ID is required');
-//     }
-
-//     if (astrologerId.toString() === userId.toString()) {
-//       throw new ApiError(400, 'Cannot start chat with yourself');
-//     }
-
-//     const astro = await Astrologer.findOne({
-//       userId: astrologerId,
-//     });
-//     // -----------------------------------------
-//     // 🌟 Validate astrologer
-//     // -----------------------------------------
-//     const astrologer = await User.findOne({
-//       _id: astrologerId,
-//       role: 'astrologer',
-//       userStatus: 'Active',
-//       isSuspend: false,
-//     })
-//       .session(session)
-//       .select('fullName phone avatar chatRate isOnline');
-
-//     if (!astrologer) {
-//       throw new ApiError(404, 'Astrologer not found or unavailable');
-//     }
-
-//     if (!astro) {
-//       throw new ApiError(404, 'Astrologer profile not completed');
-//     }
-//     if (!astrologer.isOnline) {
-//       throw new ApiError(400, 'Astrologer is currently offline');
-//     }
-
-//     const newExpires = new Date(Date.now() + 5 * 60 * 1000); // 5 mins
-
-//     // -----------------------------------------
-//     // 🔥 1. CHECK EXISTING ACTIVE SESSION
-//     // -----------------------------------------
-//     const existingSession = await ChatSession.findOne({
-//       userId,
-//       astrologerId,
-//       status: { $in: ['REQUESTED', 'ACTIVE'] },
-//     }).session(session);
-
-//     if (existingSession) {
-//       // ⭐ Force update TTL expiry for session
-//       await ChatSession.updateOne(
-//         { _id: existingSession._id },
-//         { $set: { expiresAt: newExpires } },
-//         { session }
-//       );
-
-//       // ⭐ Reset matching request too
-//       if (existingSession.meta?.request_Id) {
-//         await ChatRequest.updateOne(
-//           { _id: existingSession.meta.request_Id },
-//           { $set: { expiresAt: newExpires } },
-//           { session }
-//         );
-//       }
-
-//       await session.commitTransaction();
-
-//       return res.status(200).json(
-//         new ApiResponse(200, {
-//           sessionId: existingSession.sessionId,
-//           status: existingSession.status,
-//           expiresAt: newExpires,
-//           message: 'Existing session expiry extended',
-//         })
-//       );
-//     }
-
-//     // -----------------------------------------
-//     // 🔥 2. CHECK EXISTING PENDING REQUEST
-//     // -----------------------------------------
-//     const existingPending = await ChatRequest.findOne({
-//       userId,
-//       astrologerId,
-//       status: 'PENDING',
-//     }).session(session);
-
-//     if (existingPending) {
-//       // ⭐ Reset request expiry
-//       await ChatRequest.updateOne(
-//         { _id: existingPending._id },
-//         { $set: { expiresAt: newExpires } },
-//         { session }
-//       );
-
-//       await session.commitTransaction();
-
-//       return res.status(200).json(
-//         new ApiResponse(200, {
-//           requestId: existingPending.requestId,
-//           expiresAt: newExpires,
-//           message: 'Existing request expiry extended',
-//         })
-//       );
-//     }
-
-//     // -----------------------------------------
-//     // 🌟 3. CREATE NEW CHAT + REQUEST + SESSION
-//     // -----------------------------------------
-//     const chat = await Chat.findOrCreatePersonalChat(userId, astrologerId);
-
-//     const requestId = ChatRequest.generateRequestId();
-//     const sessionId = ChatSession.generateSessionId();
-//     const ratePerMinute = astrologer.chatRate || astro.ratepermin || 10;
-
-//     // const ratePerMinute = astrologer.chatRate || 10;
-
-//     const request = await ChatRequest.create(
-//       [
-//         {
-//           requestId,
-//           userId,
-//           astrologerId,
-//           userMessage: userMessage?.trim(),
-//           chatType,
-//           expiresAt: newExpires,
-//           meta: {
-//             chatId: chat._id,
-//             ratePerMinute,
-//           },
-//         },
-//       ],
-//       { session }
-//     );
-
-//     const chatSession = await ChatSession.create(
-//       [
-//         {
-//           sessionId,
-//           userId,
-//           astrologerId,
-//           chatId: chat._id,
-//           ratePerMinute,
-//           status: 'REQUESTED',
-//           requestedAt: new Date(),
-//           expiresAt: newExpires,
-//           meta: {
-//             request_Id: request[0]._id,
-//             requestId: request[0].requestId,
-//             chatId: chat._id,
-//             chatType,
-//           },
-//         },
-//       ],
-//       { session }
-//     );
-
-//     // Link session ID to request
-//     await ChatRequest.updateOne(
-//       { _id: request[0]._id },
-//       { sessionId: chatSession[0]._id },
-//       { session }
-//     );
-
-//     await session.commitTransaction();
-
-//     // Populate final response
-//     await chatSession[0].populate([
-//       { path: 'userId', select: 'fullName phone avatar' },
-//       { path: 'astrologerId', select: 'fullName phone avatar chatRate' },
-//     ]);
-
-//     await sendNotification({
-//       userId: astrologerId,
-//       title: 'New Chat Request',
-//       message: `${req.user.fullName} wants to chat with you`,
-//       type: 'chat_message', // ← very important!
-//       channelId: 'chat_channel',
-//       data: {
-//         screen: 'AstrologerChat', // ← or whatever your screen name is
-//         targetTab: 'AstrologerChat', // if you have bottom tabs → optional
-//         requestId,
-//         sessionId,
-//         userId, // the one who sent request
-//         ratePerMinute,
-//         chatType,
-//         chatId: chat._id,
-//         // You can also add: chatId if already known
-//       },
-//     });
-//     await notifyAstrologerAboutRequest(req, astrologerId, {
-//       requestId,
-//       sessionId,
-//       userId,
-//       userInfo: req.user,
-//       userMessage,
-//       ratePerMinute,
-//       expiresAt: newExpires,
-//     });
-
-//     return res.status(201).json(
-//       new ApiResponse(201, {
-//         requestId,
-//         sessionId,
-//         status: 'REQUESTED',
-//         ratePerMinute,
-//         expiresAt: newExpires,
-//         astrologerInfo: {
-//           fullName: astrologer.fullName,
-//           phone: astrologer.phone,
-//           chatRate: astrologer.chatRate || astro.ratepermin || 10,
-//         },
-//       })
-//     );
-//   } catch (error) {
-//     await session.abortTransaction();
-//     throw error;
-//   } finally {
-//     session.endSession();
-//   }
-// });
-
-
-// controllers/chatapp/chatController.js
-
-
-// controllers/chatapp/chatController.js
-
 export const requestChatSession = asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
 
   try {
     session.startTransaction();
 
-    const { astrologerId, userMessage, chatType = "TEXT" } = req.body;
+    const { astrologerId, userMessage, chatType = 'TEXT' } = req.body;
     const userId = req.user.id;
 
     if (!astrologerId) {
-      throw new ApiError(400, "Astrologer ID is required");
+      throw new ApiError(400, 'Astrologer ID is required');
     }
 
     if (astrologerId.toString() === userId.toString()) {
-      throw new ApiError(400, "Cannot chat with yourself");
+      throw new ApiError(400, 'Cannot start chat with yourself');
     }
 
-    // Check for existing active session (ADD THIS BACK)
+    const astro = await Astrologer.findOne({
+      userId: astrologerId,
+    });
+    // -----------------------------------------
+    // 🌟 Validate astrologer
+    // -----------------------------------------
+    const astrologer = await User.findOne({
+      _id: astrologerId,
+      role: 'astrologer',
+      userStatus: 'Active',
+      isSuspend: false,
+    })
+      .session(session)
+      .select('fullName phone avatar chatRate isOnline');
+
+    if (!astrologer) {
+      throw new ApiError(404, 'Astrologer not found or unavailable');
+    }
+
+    if (!astro) {
+      throw new ApiError(404, 'Astrologer profile not completed');
+    }
+    if (!astrologer.isOnline) {
+      throw new ApiError(400, 'Astrologer is currently offline');
+    }
+
+    const newExpires = new Date(Date.now() + 5 * 60 * 1000); // 5 mins
+
+    // -----------------------------------------
+    // 🔥 1. CHECK EXISTING ACTIVE SESSION
+    // -----------------------------------------
     const existingSession = await ChatSession.findOne({
       userId,
       astrologerId,
@@ -280,13 +77,21 @@ export const requestChatSession = asyncHandler(async (req, res) => {
     }).session(session);
 
     if (existingSession) {
-      const newExpires = new Date(Date.now() + 5 * 60 * 1000);
-
+      // ⭐ Force update TTL expiry for session
       await ChatSession.updateOne(
         { _id: existingSession._id },
         { $set: { expiresAt: newExpires } },
         { session }
       );
+
+      // ⭐ Reset matching request too
+      if (existingSession.meta?.request_Id) {
+        await ChatRequest.updateOne(
+          { _id: existingSession.meta.request_Id },
+          { $set: { expiresAt: newExpires } },
+          { session }
+        );
+      }
 
       await session.commitTransaction();
 
@@ -300,7 +105,9 @@ export const requestChatSession = asyncHandler(async (req, res) => {
       );
     }
 
-    // Check for existing pending request (ADD THIS BACK)
+    // -----------------------------------------
+    // 🔥 2. CHECK EXISTING PENDING REQUEST
+    // -----------------------------------------
     const existingPending = await ChatRequest.findOne({
       userId,
       astrologerId,
@@ -308,8 +115,7 @@ export const requestChatSession = asyncHandler(async (req, res) => {
     }).session(session);
 
     if (existingPending) {
-      const newExpires = new Date(Date.now() + 5 * 60 * 1000);
-
+      // ⭐ Reset request expiry
       await ChatRequest.updateOne(
         { _id: existingPending._id },
         { $set: { expiresAt: newExpires } },
@@ -327,64 +133,17 @@ export const requestChatSession = asyncHandler(async (req, res) => {
       );
     }
 
-    // -------------------------------
-    // Validate astrologer
-    // -------------------------------
-    const astrologer = await User.findOne({
-      _id: astrologerId,
-      role: "astrologer",
-      userStatus: "Active",
-      isSuspend: false
-    })
-      .select("fullName phone photo chatRate isOnline")
-      .session(session);
+    // -----------------------------------------
+    // 🌟 3. CREATE NEW CHAT + REQUEST + SESSION
+    // -----------------------------------------
+    const chat = await Chat.findOrCreatePersonalChat(userId, astrologerId);
 
-    if (!astrologer) {
-      throw new ApiError(404, "Astrologer not found");
-    }
-
-    if (!astrologer.isOnline) {
-      throw new ApiError(400, "Astrologer is offline");
-    }
-
-    const astroProfile = await Astrologer.findOne({
-      userId: astrologerId
-    }).session(session);
-
-    if (!astroProfile) {
-      throw new ApiError(404, "Astrologer profile not completed");
-    }
-
-    const ratePerMinute =
-      astrologer.chatRate || astroProfile.ratepermin || 10;
-
-    // -------------------------------
-    // Get user details
-    // -------------------------------
-    const user = await User.findById(userId)
-      .select(
-        "fullName gender placeOfBirth dateOfBirth timeOfBirth phone photo"
-      )
-      .lean();
-
-    // -------------------------------
-    // Find or create chat
-    // -------------------------------
-    const chat = await Chat.findOrCreatePersonalChat(
-      userId,
-      astrologerId
-    );
-
-    // -------------------------------
-    // Generate IDs
-    // -------------------------------
     const requestId = ChatRequest.generateRequestId();
     const sessionId = ChatSession.generateSessionId();
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+    const ratePerMinute = astrologer.chatRate || astro.ratepermin || 10;
 
-    // -------------------------------
-    // Create Chat Request
-    // -------------------------------
+    // const ratePerMinute = astrologer.chatRate || 10;
+
     const request = await ChatRequest.create(
       [
         {
@@ -393,19 +152,16 @@ export const requestChatSession = asyncHandler(async (req, res) => {
           astrologerId,
           userMessage: userMessage?.trim(),
           chatType,
-          expiresAt,
+          expiresAt: newExpires,
           meta: {
             chatId: chat._id,
-            ratePerMinute
-          }
-        }
+            ratePerMinute,
+          },
+        },
       ],
       { session }
     );
 
-    // -------------------------------
-    // Create Chat Session (FIXED: Add proper meta linking)
-    // -------------------------------
     const chatSession = await ChatSession.create(
       [
         {
@@ -414,136 +170,53 @@ export const requestChatSession = asyncHandler(async (req, res) => {
           astrologerId,
           chatId: chat._id,
           ratePerMinute,
-          status: "REQUESTED",
+          status: 'REQUESTED',
           requestedAt: new Date(),
-          expiresAt,
+          expiresAt: newExpires,
           meta: {
-            request_Id: request[0]._id,        // IMPORTANT: Add this
-            requestId: request[0].requestId,    // IMPORTANT: Add this
+            request_Id: request[0]._id,
+            requestId: request[0].requestId,
             chatId: chat._id,
-            chatType
-          }
-        }
+            chatType,
+          },
+        },
       ],
       { session }
     );
 
-    // -------------------------------
-    // Link session ID to request (ADD THIS BACK)
-    // -------------------------------
+    // Link session ID to request
     await ChatRequest.updateOne(
       { _id: request[0]._id },
-      {
-        $set: {
-          sessionId: chatSession[0]._id,
-          session_Id: chatSession[0]._id      // Add both for consistency
-        }
-      },
-      { session }
-    );
-
-    // -------------------------------
-    // SYSTEM GENERATED MESSAGE
-    // -------------------------------
-    const systemMessageText = `
-  Dear ${astrologer.fullName},
-Name: ${user.fullName || "N/A"}
-Gender: ${user.gender || "N/A"}
-Place of Birth: ${user.placeOfBirth || "N/A"}
-Date of Birth: ${user.dateOfBirth || "N/A"}
-Time of Birth: ${user.timeOfBirth || "N/A"}`.trim();
-
-    const systemMessage = await Message.create(
-      [
-        {
-          chat: chat._id,
-          sender: userId,
-          type: "system",
-          content: {
-            text: systemMessageText
-          },
-          systemMetadata: {
-            action: "user_details_shared",
-            targetUsers: [astrologerId],
-            performedBy: userId
-          }
-        }
-      ],
-      { session }
-    );
-
-    // -------------------------------
-    // USER FIRST MESSAGE (optional)
-    // -------------------------------
-    let userMsg = null;
-
-    if (userMessage && userMessage.trim()) {
-      userMsg = await Message.create(
-        [
-          {
-            chat: chat._id,
-            sender: userId,
-            type: "text",
-            content: {
-              text: userMessage.trim()
-            }
-          }
-        ],
-        { session }
-      );
-    }
-
-    // -------------------------------
-    // Update last message
-    // -------------------------------
-    const lastMsgId = userMsg
-      ? userMsg[0]._id
-      : systemMessage[0]._id;
-
-    await Chat.updateOne(
-      { _id: chat._id },
-      { lastMessage: lastMsgId },
+      { sessionId: chatSession[0]._id },
       { session }
     );
 
     await session.commitTransaction();
 
-    // -------------------------------
-    // SOCKET EVENTS
-    // -------------------------------
-    emitSocketEvent(
-      astrologerId,
-      ChatEventsEnum.NEW_MESSAGE,
-      systemMessage[0]
-    );
+    // Populate final response
+    await chatSession[0].populate([
+      { path: 'userId', select: 'fullName phone avatar' },
+      { path: 'astrologerId', select: 'fullName phone avatar chatRate' },
+    ]);
 
-    if (userMsg) {
-      emitSocketEvent(
-        astrologerId,
-        ChatEventsEnum.NEW_MESSAGE,
-        userMsg[0]
-      );
-    }
-
-    // Send notifications (ADD THIS BACK)
     await sendNotification({
       userId: astrologerId,
       title: 'New Chat Request',
       message: `${req.user.fullName} wants to chat with you`,
-      type: 'chat_message',
+      type: 'chat_message', // ← very important!
       channelId: 'chat_channel',
       data: {
-        screen: 'AstrologerChat',
-        targetTab: 'AstrologerChat',
+        screen: 'AstrologerChat', // ← or whatever your screen name is
+        targetTab: 'AstrologerChat', // if you have bottom tabs → optional
         requestId,
         sessionId,
-        userId,
+        userId, // the one who sent request
         ratePerMinute,
         chatType,
         chatId: chat._id,
+        // You can also add: chatId if already known
       },
     });
-
     await notifyAstrologerAboutRequest(req, astrologerId, {
       requestId,
       sessionId,
@@ -551,27 +224,23 @@ Time of Birth: ${user.timeOfBirth || "N/A"}`.trim();
       userInfo: req.user,
       userMessage,
       ratePerMinute,
-      expiresAt,
+      expiresAt: newExpires,
     });
 
-    // -------------------------------
-    // RESPONSE
-    // -------------------------------
     return res.status(201).json(
       new ApiResponse(201, {
         requestId,
         sessionId,
-        status: "REQUESTED",
+        status: 'REQUESTED',
         ratePerMinute,
-        expiresAt,
-        astrologer: {
+        expiresAt: newExpires,
+        astrologerInfo: {
           fullName: astrologer.fullName,
           phone: astrologer.phone,
-          chatRate: ratePerMinute
-        }
+          chatRate: astrologer.chatRate || astro.ratepermin || 10,
+        },
       })
     );
-
   } catch (error) {
     await session.abortTransaction();
     throw error;
@@ -579,6 +248,337 @@ Time of Birth: ${user.timeOfBirth || "N/A"}`.trim();
     session.endSession();
   }
 });
+
+
+// controllers/chatapp/chatController.js
+
+
+// controllers/chatapp/chatController.js
+
+// export const requestChatSession = asyncHandler(async (req, res) => {
+//   const session = await mongoose.startSession();
+
+//   try {
+//     session.startTransaction();
+
+//     const { astrologerId, userMessage, chatType = "TEXT" } = req.body;
+//     const userId = req.user.id;
+
+//     if (!astrologerId) {
+//       throw new ApiError(400, "Astrologer ID is required");
+//     }
+
+//     if (astrologerId.toString() === userId.toString()) {
+//       throw new ApiError(400, "Cannot chat with yourself");
+//     }
+
+//     // Check for existing active session (ADD THIS BACK)
+//     const existingSession = await ChatSession.findOne({
+//       userId,
+//       astrologerId,
+//       status: { $in: ['REQUESTED', 'ACTIVE'] },
+//     }).session(session);
+
+//     if (existingSession) {
+//       const newExpires = new Date(Date.now() + 5 * 60 * 1000);
+
+//       await ChatSession.updateOne(
+//         { _id: existingSession._id },
+//         { $set: { expiresAt: newExpires } },
+//         { session }
+//       );
+
+//       await session.commitTransaction();
+
+//       return res.status(200).json(
+//         new ApiResponse(200, {
+//           sessionId: existingSession.sessionId,
+//           status: existingSession.status,
+//           expiresAt: newExpires,
+//           message: 'Existing session expiry extended',
+//         })
+//       );
+//     }
+
+//     // Check for existing pending request (ADD THIS BACK)
+//     const existingPending = await ChatRequest.findOne({
+//       userId,
+//       astrologerId,
+//       status: 'PENDING',
+//     }).session(session);
+
+//     if (existingPending) {
+//       const newExpires = new Date(Date.now() + 5 * 60 * 1000);
+
+//       await ChatRequest.updateOne(
+//         { _id: existingPending._id },
+//         { $set: { expiresAt: newExpires } },
+//         { session }
+//       );
+
+//       await session.commitTransaction();
+
+//       return res.status(200).json(
+//         new ApiResponse(200, {
+//           requestId: existingPending.requestId,
+//           expiresAt: newExpires,
+//           message: 'Existing request expiry extended',
+//         })
+//       );
+//     }
+
+//     // -------------------------------
+//     // Validate astrologer
+//     // -------------------------------
+//     const astrologer = await User.findOne({
+//       _id: astrologerId,
+//       role: "astrologer",
+//       userStatus: "Active",
+//       isSuspend: false
+//     })
+//       .select("fullName phone photo chatRate isOnline")
+//       .session(session);
+
+//     if (!astrologer) {
+//       throw new ApiError(404, "Astrologer not found");
+//     }
+
+//     if (!astrologer.isOnline) {
+//       throw new ApiError(400, "Astrologer is offline");
+//     }
+
+//     const astroProfile = await Astrologer.findOne({
+//       userId: astrologerId
+//     }).session(session);
+
+//     if (!astroProfile) {
+//       throw new ApiError(404, "Astrologer profile not completed");
+//     }
+
+//     const ratePerMinute =
+//       astrologer.chatRate || astroProfile.ratepermin || 10;
+
+//     // -------------------------------
+//     // Get user details
+//     // -------------------------------
+//     const user = await User.findById(userId)
+//       .select(
+//         "fullName gender placeOfBirth dateOfBirth timeOfBirth phone photo"
+//       )
+//       .lean();
+
+//     // -------------------------------
+//     // Find or create chat
+//     // -------------------------------
+//     const chat = await Chat.findOrCreatePersonalChat(
+//       userId,
+//       astrologerId
+//     );
+
+//     // -------------------------------
+//     // Generate IDs
+//     // -------------------------------
+//     const requestId = ChatRequest.generateRequestId();
+//     const sessionId = ChatSession.generateSessionId();
+//     const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
+//     // -------------------------------
+//     // Create Chat Request
+//     // -------------------------------
+//     const request = await ChatRequest.create(
+//       [
+//         {
+//           requestId,
+//           userId,
+//           astrologerId,
+//           userMessage: userMessage?.trim(),
+//           chatType,
+//           expiresAt,
+//           meta: {
+//             chatId: chat._id,
+//             ratePerMinute
+//           }
+//         }
+//       ],
+//       { session }
+//     );
+
+//     // -------------------------------
+//     // Create Chat Session (FIXED: Add proper meta linking)
+//     // -------------------------------
+//     const chatSession = await ChatSession.create(
+//       [
+//         {
+//           sessionId,
+//           userId,
+//           astrologerId,
+//           chatId: chat._id,
+//           ratePerMinute,
+//           status: "REQUESTED",
+//           requestedAt: new Date(),
+//           expiresAt,
+//           meta: {
+//             request_Id: request[0]._id,        // IMPORTANT: Add this
+//             requestId: request[0].requestId,    // IMPORTANT: Add this
+//             chatId: chat._id,
+//             chatType
+//           }
+//         }
+//       ],
+//       { session }
+//     );
+
+//     // -------------------------------
+//     // Link session ID to request (ADD THIS BACK)
+//     // -------------------------------
+//     await ChatRequest.updateOne(
+//       { _id: request[0]._id },
+//       {
+//         $set: {
+//           sessionId: chatSession[0]._id,
+//           session_Id: chatSession[0]._id      // Add both for consistency
+//         }
+//       },
+//       { session }
+//     );
+
+//     // -------------------------------
+//     // SYSTEM GENERATED MESSAGE
+//     // -------------------------------
+//     const systemMessageText = `
+//   Dear ${astrologer.fullName},
+// Name: ${user.fullName || "N/A"}
+// Gender: ${user.gender || "N/A"}
+// Place of Birth: ${user.placeOfBirth || "N/A"}
+// Date of Birth: ${user.dateOfBirth || "N/A"}
+// Time of Birth: ${user.timeOfBirth || "N/A"}`.trim();
+
+//     const systemMessage = await Message.create(
+//       [
+//         {
+//           chat: chat._id,
+//           sender: userId,
+//           type: "system",
+//           content: {
+//             text: systemMessageText
+//           },
+//           systemMetadata: {
+//             action: "user_details_shared",
+//             targetUsers: [astrologerId],
+//             performedBy: userId
+//           }
+//         }
+//       ],
+//       { session }
+//     );
+
+//     // -------------------------------
+//     // USER FIRST MESSAGE (optional)
+//     // -------------------------------
+//     let userMsg = null;
+
+//     if (userMessage && userMessage.trim()) {
+//       userMsg = await Message.create(
+//         [
+//           {
+//             chat: chat._id,
+//             sender: userId,
+//             type: "text",
+//             content: {
+//               text: userMessage.trim()
+//             }
+//           }
+//         ],
+//         { session }
+//       );
+//     }
+
+//     // -------------------------------
+//     // Update last message
+//     // -------------------------------
+//     const lastMsgId = userMsg
+//       ? userMsg[0]._id
+//       : systemMessage[0]._id;
+
+//     await Chat.updateOne(
+//       { _id: chat._id },
+//       { lastMessage: lastMsgId },
+//       { session }
+//     );
+
+//     await session.commitTransaction();
+
+//     // -------------------------------
+//     // SOCKET EVENTS
+//     // -------------------------------
+//     emitSocketEvent(
+//       astrologerId,
+//       ChatEventsEnum.NEW_MESSAGE,
+//       systemMessage[0]
+//     );
+
+//     if (userMsg) {
+//       emitSocketEvent(
+//         astrologerId,
+//         ChatEventsEnum.NEW_MESSAGE,
+//         userMsg[0]
+//       );
+//     }
+
+//     // Send notifications (ADD THIS BACK)
+//     await sendNotification({
+//       userId: astrologerId,
+//       title: 'New Chat Request',
+//       message: `${req.user.fullName} wants to chat with you`,
+//       type: 'chat_message',
+//       channelId: 'chat_channel',
+//       data: {
+//         screen: 'AstrologerChat',
+//         targetTab: 'AstrologerChat',
+//         requestId,
+//         sessionId,
+//         userId,
+//         ratePerMinute,
+//         chatType,
+//         chatId: chat._id,
+//       },
+//     });
+
+//     await notifyAstrologerAboutRequest(req, astrologerId, {
+//       requestId,
+//       sessionId,
+//       userId,
+//       userInfo: req.user,
+//       userMessage,
+//       ratePerMinute,
+//       expiresAt,
+//     });
+
+//     // -------------------------------
+//     // RESPONSE
+//     // -------------------------------
+//     return res.status(201).json(
+//       new ApiResponse(201, {
+//         requestId,
+//         sessionId,
+//         status: "REQUESTED",
+//         ratePerMinute,
+//         expiresAt,
+//         astrologer: {
+//           fullName: astrologer.fullName,
+//           phone: astrologer.phone,
+//           chatRate: ratePerMinute
+//         }
+//       })
+//     );
+
+//   } catch (error) {
+//     await session.abortTransaction();
+//     throw error;
+//   } finally {
+//     session.endSession();
+//   }
+// });
 /**
  * @desc    Enhanced session start with better validation
  */
