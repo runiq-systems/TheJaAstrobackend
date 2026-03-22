@@ -636,6 +636,7 @@ export const CheckKyc = async (req, res) => {
       return res.status(403).json({
         success: false,
         message: "Access denied. Not an astrologer account",
+        code: "NOT_ASTROLOGER"
       });
     }
 
@@ -643,6 +644,7 @@ export const CheckKyc = async (req, res) => {
       return res.status(403).json({
         success: false,
         message: "Account is suspended or blocked",
+        code: "ACCOUNT_SUSPENDED"
       });
     }
 
@@ -655,17 +657,66 @@ export const CheckKyc = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Astrologer profile not found",
+        code: "PROFILE_NOT_FOUND"
       });
     }
 
     /* -------------------- KYC LOGIC -------------------- */
-    const hasKyc = !!astrologer.kyc;
+    const hasKyc = astrologer.kyc !== null && astrologer.kyc !== undefined;
+    
+    // Check if KYC document exists and has all required fields
+    const hasValidKyc = hasKyc && 
+      astrologer.kyc.documentFront && 
+      astrologer.kyc.documentBack && 
+      astrologer.kyc.documentType;
+
+    // Determine submission status
+    const submitted = hasValidKyc;
+    
+    // Determine verification status based on accountStatus
+    let verified = false;
+    let rejected = false;
+    
+    if (astrologer.accountStatus === "approved") {
+      verified = true;
+      rejected = false;
+    } else if (astrologer.accountStatus === "rejected") {
+      verified = false;
+      rejected = true;
+    } else {
+      verified = false;
+      rejected = false;
+    }
 
     const kycStatus = {
-      submitted: hasKyc,
-      verified: astrologer.accountStatus === "approved",
-      rejected: astrologer.accountStatus === "rejected",
+      submitted: submitted,
+      verified: verified,
+      rejected: rejected,
     };
+
+    /* -------------------- DETERMINE NEXT STEP -------------------- */
+    let nextStep = null;
+    let shouldBlockAccess = false;
+
+    // Check if profile is complete
+    const isProfileComplete = astrologer.isProfilecomplet === true;
+    
+    if (!isProfileComplete) {
+      nextStep = "complete_profile";
+      shouldBlockAccess = true;
+    } else if (!submitted) {
+      nextStep = "submit_kyc";
+      shouldBlockAccess = true;
+    } else if (rejected) {
+      nextStep = "resubmit_kyc";
+      shouldBlockAccess = true;
+    } else if (!verified && astrologer.accountStatus === "pending") {
+      nextStep = "pending_approval";
+      shouldBlockAccess = true;
+    } else if (verified && astrologer.accountStatus === "approved") {
+      nextStep = "approved";
+      shouldBlockAccess = false;
+    }
 
     /* -------------------- RESPONSE -------------------- */
     return res.status(200).json({
@@ -673,11 +724,120 @@ export const CheckKyc = async (req, res) => {
       kyc: kycStatus,
       accountStatus: astrologer.accountStatus,
       astrologerApproved: astrologer.astrologerApproved,
-      isProfileComplete: astrologer.isProfilecomplet,
+      isProfileComplete: isProfileComplete,
+      nextStep: nextStep,
+      canAccessDashboard: !shouldBlockAccess,
+      message: shouldBlockAccess 
+        ? `Account status: ${astrologer.accountStatus}. Please complete ${nextStep}`
+        : "Account fully verified and approved"
     });
+    
   } catch (error) {
     console.error("CheckKyc Error:", error);
 
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+// Add this to your astrologer controller
+export const checkAstrologerVerification = async (req, res) => {
+  try {
+    const userId = req.user?._id;
+
+    // Validation
+    if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid user ID",
+      });
+    }
+
+    // Get user with minimal data
+    const user = await User.findById(userId).select("role isSuspend userStatus");
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Quick role check
+    if (user.role !== "astrologer") {
+      return res.status(200).json({
+        success: true,
+        isAstrologer: false,
+        isVerified: false,
+        message: "User is not an astrologer",
+      });
+    }
+
+    // Account status check
+    if (user.isSuspend || user.userStatus === "Blocked") {
+      return res.status(200).json({
+        success: true,
+        isAstrologer: true,
+        isVerified: false,
+        isSuspended: true,
+        message: "Account is suspended",
+      });
+    }
+
+    // Get astrologer verification status
+    const astrologer = await Astrologer.findOne({ userId })
+      .select("accountStatus isProfilecomplet kyc")
+      .lean();
+
+    if (!astrologer) {
+      return res.status(200).json({
+        success: true,
+        isAstrologer: true,
+        isVerified: false,
+        hasProfile: false,
+        message: "Astrologer profile not found",
+      });
+    }
+
+    // Comprehensive verification check
+    const isFullyVerified = 
+      astrologer.isProfilecomplet === true &&
+      astrologer.kyc !== null &&
+      astrologer.kyc !== undefined &&
+      astrologer.accountStatus === "approved";
+
+    // Determine verification status with details
+    const verificationStatus = {
+      isFullyVerified,
+      hasProfile: astrologer.isProfilecomplet === true,
+      hasKyc: astrologer.kyc !== null && astrologer.kyc !== undefined,
+      accountStatus: astrologer.accountStatus,
+      needsAction: !isFullyVerified,
+      nextStep: !astrologer.isProfilecomplet 
+        ? "complete_profile"
+        : !astrologer.kyc 
+        ? "submit_kyc"
+        : astrologer.accountStatus === "rejected"
+        ? "resubmit_kyc"
+        : astrologer.accountStatus === "pending"
+        ? "pending_approval"
+        : null
+    };
+
+    return res.status(200).json({
+      success: true,
+      isAstrologer: true,
+      isVerified: isFullyVerified,
+      verificationStatus,
+      message: isFullyVerified 
+        ? "Astrologer is fully verified"
+        : "Astrologer verification incomplete",
+    });
+
+  } catch (error) {
+    console.error("Check Astrologer Verification Error:", error);
     return res.status(500).json({
       success: false,
       message: "Internal server error",

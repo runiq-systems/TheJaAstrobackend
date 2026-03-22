@@ -15,6 +15,7 @@ import {
 } from "../controllers/AstrologerProfile.js";
 import { getAstrologerDashboard } from "../controllers/dashboard/astrologerDashboard.controller.js";
 import { getLifetimeEarnings } from "../controllers/dashboard/earningController.js";
+import { checkAstrologerVerification } from "../controllers/auth/authController.js";
 const router = express.Router();
 
 // Multer memory storage for Cloudinary
@@ -65,6 +66,7 @@ router.get("/astro/step1", authMiddleware, getStep1Data);
 router.get("/astro/step2", authMiddleware, getStep2Data);
 router.get("/astro/step3", authMiddleware, getStep3Data);
 router.patch("/astrologer/profile", authMiddleware,   upload.single('photo'), updateAstrologerProfile)
+router.get('/astrologer/verification-status', authMiddleware, checkAstrologerVerification);
 
 router.get(
   "/astrologers/online-status",
