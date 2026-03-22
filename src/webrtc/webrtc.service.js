@@ -559,38 +559,106 @@ export class WebRTCService {
 
   async handleCancelCall(socket, { callerId, receiverId, callRecordId }) {
     const callKey = this.generateCallKey(callerId, receiverId);
-    logger.info("callRecordId", callRecordId)
+    logger.info("handleCancelCall - Input callRecordId:", callRecordId);
+    logger.info("handleCancelCall - callKey:", callKey);
 
     try {
-      if (!callRecordId) callRecordId = this.getCallRecordId(callKey);
-      if (!callRecordId) throw new Error("Call record ID not found");
+      // Try to get callRecordId from multiple sources
+      let finalCallRecordId = callRecordId;
 
+      // If not provided, try to get from pending call data first
+      if (!finalCallRecordId) {
+        // Get from pendingCalls map if it exists
+        const pendingCall = this.pendingCalls?.get(callKey);
+        if (pendingCall?.callRecordId) {
+          finalCallRecordId = pendingCall.callRecordId;
+          logger.info("Retrieved callRecordId from pendingCalls:", finalCallRecordId);
+        }
+      }
+
+      // If still not found, try the getCallRecordId method
+      if (!finalCallRecordId) {
+        finalCallRecordId = this.getCallRecordId(callKey);
+        if (finalCallRecordId) {
+          logger.info("Retrieved callRecordId from getCallRecordId:", finalCallRecordId);
+        }
+      }
+
+      // If still not found, try to get from active calls
+      if (!finalCallRecordId) {
+        const activeCall = this.activeCalls?.get(callKey);
+        if (activeCall?.callRecordId) {
+          finalCallRecordId = activeCall.callRecordId;
+          logger.info("Retrieved callRecordId from activeCalls:", finalCallRecordId);
+        }
+      }
+
+      // Final check - if still no callRecordId, throw error
+      if (!finalCallRecordId) {
+        throw new Error("Call record ID not found from any source");
+      }
+
+      // Update the call record in database
       const callRecord = await Call.findByIdAndUpdate(
-        callRecordId,
-        { status: "CANCELLED", endTime: new Date() },
+        finalCallRecordId,
+        {
+          status: "CANCELLED",
+          endTime: new Date(),
+          cancelledAt: new Date(),
+          cancelledBy: callerId
+        },
         { new: true }
       );
 
-      const caller = await User.findById(callerId);
+      if (!callRecord) {
+        throw new Error("Call record not found in database");
+      }
 
+      // Get caller information for notifications
+      const caller = await User.findById(callerId).select("fullName profilePicture");
+
+      // Emit cancellation events to receiver
       this.emitToUser(receiverId, "callCancelled", {
         callerId,
         callRecordId: callRecord._id,
+        cancelledBy: callerId,
+        timestamp: new Date().toISOString()
       });
+
+      // Also emit stop incoming call event
       this.emitToUser(receiverId, "stopIncomingCall", {
         callerId,
         callRecordId: callRecord._id,
+        reason: "cancelled"
       });
 
-      logger.info(`[CALL_CANCELLED] ${callKey}`);
+      // If caller is still connected, acknowledge cancellation
+      socket.emit("callCancelled", {
+        success: true,
+        callRecordId: callRecord._id,
+        message: "Call cancelled successfully"
+      });
+
+      logger.info(`[CALL_CANCELLED] ${callKey} - Call record ID: ${callRecord._id}`);
+
+      return { success: true, callRecordId: callRecord._id };
+
     } catch (error) {
       logger.error(`[CALL_CANCEL_ERROR] ${callerId} → ${receiverId}:`, error);
       socket.emit("callError", {
         message: "Failed to cancel call",
         details: error.message,
+        callKey: callKey
       });
+      throw error; // Re-throw to let caller handle if needed
     } finally {
+      // Clean up all call resources
       this.cleanupCallResources(callKey, callerId, receiverId, socket);
+
+      // Additional cleanup for callRecordId from maps
+      if (this.callRecordIdMap) {
+        this.callRecordIdMap.delete(callKey);
+      }
     }
   }
 
