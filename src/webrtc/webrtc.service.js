@@ -515,7 +515,7 @@ export class WebRTCService {
   ) {
     try {
 
-      logger.info("callRecord id rejecting call",callRecordId);
+      logger.info("callRecord id rejecting call", callRecordId);
       const callKey = this.generateCallKey(callerId, receiverId);
 
       const callRecord = await Call.findByIdAndUpdate(
@@ -559,7 +559,8 @@ export class WebRTCService {
 
   async handleCancelCall(socket, { callerId, receiverId, callRecordId }) {
     const callKey = this.generateCallKey(callerId, receiverId);
-    
+    logger.info("callRecordId", callRecordId)
+
     try {
       if (!callRecordId) callRecordId = this.getCallRecordId(callKey);
       if (!callRecordId) throw new Error("Call record ID not found");
