@@ -414,56 +414,118 @@ export const markMessageAsRead = asyncHandler(async (req, res) => {
 //   try {
 //     const userId = req.user?.id || req.user?._id;
 
-//     const { page = 1, limit = 20, search = "", specialization } = req.query;
-//     const searchRegex = new RegExp(search, "i");
-
-//     // 🔍 Search criteria
-//     const criteria = {
-//       _id: { $ne: userId }, // exclude current user
-//       role: "astrologer",   // ONLY astrologers
-//       ...(search
-//         ? {
-//           $or: [
-//             { fullName: { $regex: searchRegex } },
-//             { email: { $regex: searchRegex } },
-//             { phone: { $regex: searchRegex } },
-//           ],
-//         }
-//         : {}),
-//     };
+//     const {
+//       page = 1,
+//       limit = 20,
+//       search = "",
+//       specialization = ""
+//     } = req.query;
 
 //     const currentPage = parseInt(page) || 1;
 //     const perPage = parseInt(limit) || 20;
 
-//     // 📌 Fetch users + astrologer profile
-//     const users = await User.find(criteria)
-//       .select(
-//         "fullName _id phone role status isOnline lastSeen isverified"
-//       )
-//       .limit(perPage)
-//       .skip((currentPage - 1) * perPage)
-//       .sort({ fullName: 1 });
+//     // Build aggregation pipeline
+//     const pipeline = [];
 
-//     // 📌 Pull astrologer details
-//     const astrologerIds = users.map((u) => u._id);
+//     // Stage 1: Match astrologers with specialization filter
+//     const astrologerMatchStage = {
+//       $match: {
+//         userId: { $ne: new mongoose.Types.ObjectId(userId) }
+//       }
+//     };
 
-//     const astrologerData = await Astrologer.find({
-//       userId: { $in: astrologerIds },
-//     });
-
-//     // 📌 Merge astrologer + user data
-//     const mergedData = users.map((user) => {
-//       const astro = astrologerData.find(
-//         (a) => String(a.userId) === String(user._id)
-//       );
-//       return {
-//         ...user.toObject(),
-//         astrologerProfile: astro || null,
+//     if (specialization) {
+//       astrologerMatchStage.$match.specialization = {
+//         $elemMatch: { $regex: specialization, $options: 'i' }
 //       };
+//     }
+
+//     pipeline.push(astrologerMatchStage);
+
+//     // Stage 2: Lookup user details
+//     pipeline.push({
+//       $lookup: {
+//         from: 'users',
+//         localField: 'userId',
+//         foreignField: '_id',
+//         as: 'userDetails'
+//       }
 //     });
 
-//     // 📌 count
-//     const totalUsers = await User.countDocuments(criteria);
+//     // Stage 3: Unwind user details
+//     pipeline.push({ $unwind: '$userDetails' });
+
+//     // Stage 4: Match user role
+//     pipeline.push({
+//       $match: {
+//         'userDetails.role': 'astrologer'
+//       }
+//     });
+
+//     // Stage 5: Apply search filter
+//     if (search) {
+//       pipeline.push({
+//         $match: {
+//           $or: [
+//             { 'userDetails.fullName': { $regex: search, $options: 'i' } },
+//             { 'userDetails.email': { $regex: search, $options: 'i' } },
+//             { 'userDetails.phone': { $regex: search, $options: 'i' } }
+//           ]
+//         }
+//       });
+//     }
+
+//     // Stage 6: Project required fields
+//     pipeline.push({
+//       $project: {
+//         _id: '$userDetails._id',
+//         fullName: '$userDetails.fullName',
+//         phone: '$userDetails.phone',
+//         role: '$userDetails.role',
+//         status: '$userDetails.status',
+//         isOnline: '$userDetails.isOnline',
+//         lastSeen: '$userDetails.lastSeen',
+//         isverified: '$userDetails.isverified',
+//         astrologerProfile: {
+//           userId: '$userId',
+//           photo: '$photo',
+//           specialization: '$specialization',
+//           yearOfExpertise: '$yearOfExpertise',
+//           yearOfExperience: '$yearOfExperience',
+//           bio: '$bio',
+//           description: '$description',
+//           ratepermin: '$ratepermin',
+//           rank: '$rank',
+//           languages: '$languages',
+//           qualification: '$qualification',
+//           astrologerApproved: '$astrologerApproved',
+//           accountStatus: '$accountStatus',
+//           isProfilecomplet: '$isProfilecomplet',
+//           bankDetails: '$bankDetails',
+//           kyc: '$kyc',
+//           createdAt: '$createdAt',
+//           updatedAt: '$updatedAt'
+//         }
+//       }
+//     });
+
+//     // Stage 7: Sort
+//     pipeline.push({ $sort: { 'fullName': 1 } });
+
+//     // Stage 8: Pagination
+//     pipeline.push({ $skip: (currentPage - 1) * perPage });
+//     pipeline.push({ $limit: perPage });
+
+//     // Execute aggregation for data
+//     const [mergedData, totalResult] = await Promise.all([
+//       Astrologer.aggregate(pipeline),
+//       Astrologer.aggregate([
+//         ...pipeline.slice(0, -2), // Remove skip and limit stages
+//         { $count: 'total' }
+//       ])
+//     ]);
+
+//     const totalUsers = totalResult[0]?.total || 0;
 
 //     return res.status(200).json(
 //       new ApiResponse(200, {
@@ -486,11 +548,6 @@ export const markMessageAsRead = asyncHandler(async (req, res) => {
 // });
 
 
-
-
-// helper to parse query ints
-
-
 export const getAllAstrologers = asyncHandler(async (req, res) => {
   try {
     const userId = req.user?.id || req.user?._id;
@@ -502,132 +559,199 @@ export const getAllAstrologers = asyncHandler(async (req, res) => {
       specialization = ""
     } = req.query;
 
-    const currentPage = parseInt(page) || 1;
-    const perPage = parseInt(limit) || 20;
+    const currentPage = Math.max(parseInt(page) || 1, 1);
+    const perPage = Math.max(parseInt(limit) || 20, 1);
 
-    // Build aggregation pipeline
-    const pipeline = [];
-
-    // Stage 1: Match astrologers with specialization filter
-    const astrologerMatchStage = {
-      $match: {
-        userId: { $ne: new mongoose.Types.ObjectId(userId) }
-      }
+    /* ---------------- BASE MATCH (Astrologer) ---------------- */
+    const baseMatch = {
+      userId: { $ne: new mongoose.Types.ObjectId(userId) },
+      astrologerApproved: true,
+      accountStatus: "approved",
+      isProfilecomplet: true,
     };
 
     if (specialization) {
-      astrologerMatchStage.$match.specialization = {
-        $elemMatch: { $regex: specialization, $options: 'i' }
+      baseMatch.specialization = {
+        $elemMatch: { $regex: specialization, $options: "i" },
       };
     }
 
-    pipeline.push(astrologerMatchStage);
+    /* ---------------- PIPELINE ---------------- */
+    const pipeline = [
+      { $match: baseMatch },
 
-    // Stage 2: Lookup user details
-    pipeline.push({
-      $lookup: {
-        from: 'users',
-        localField: 'userId',
-        foreignField: '_id',
-        as: 'userDetails'
-      }
-    });
-
-    // Stage 3: Unwind user details
-    pipeline.push({ $unwind: '$userDetails' });
-
-    // Stage 4: Match user role
-    pipeline.push({
-      $match: {
-        'userDetails.role': 'astrologer'
-      }
-    });
-
-    // Stage 5: Apply search filter
-    if (search) {
-      pipeline.push({
-        $match: {
-          $or: [
-            { 'userDetails.fullName': { $regex: search, $options: 'i' } },
-            { 'userDetails.email': { $regex: search, $options: 'i' } },
-            { 'userDetails.phone': { $regex: search, $options: 'i' } }
-          ]
-        }
-      });
-    }
-
-    // Stage 6: Project required fields
-    pipeline.push({
-      $project: {
-        _id: '$userDetails._id',
-        fullName: '$userDetails.fullName',
-        phone: '$userDetails.phone',
-        role: '$userDetails.role',
-        status: '$userDetails.status',
-        isOnline: '$userDetails.isOnline',
-        lastSeen: '$userDetails.lastSeen',
-        isverified: '$userDetails.isverified',
-        astrologerProfile: {
-          userId: '$userId',
-          photo: '$photo',
-          specialization: '$specialization',
-          yearOfExpertise: '$yearOfExpertise',
-          yearOfExperience: '$yearOfExperience',
-          bio: '$bio',
-          description: '$description',
-          ratepermin: '$ratepermin',
-          rank: '$rank',
-          languages: '$languages',
-          qualification: '$qualification',
-          astrologerApproved: '$astrologerApproved',
-          accountStatus: '$accountStatus',
-          isProfilecomplet: '$isProfilecomplet',
-          bankDetails: '$bankDetails',
-          kyc: '$kyc',
-          createdAt: '$createdAt',
-          updatedAt: '$updatedAt'
-        }
-      }
-    });
-
-    // Stage 7: Sort
-    pipeline.push({ $sort: { 'fullName': 1 } });
-
-    // Stage 8: Pagination
-    pipeline.push({ $skip: (currentPage - 1) * perPage });
-    pipeline.push({ $limit: perPage });
-
-    // Execute aggregation for data
-    const [mergedData, totalResult] = await Promise.all([
-      Astrologer.aggregate(pipeline),
-      Astrologer.aggregate([
-        ...pipeline.slice(0, -2), // Remove skip and limit stages
-        { $count: 'total' }
-      ])
-    ]);
-
-    const totalUsers = totalResult[0]?.total || 0;
-
-    return res.status(200).json(
-      new ApiResponse(200, {
-        data: mergedData,
-        pagination: {
-          currentPage,
-          totalPages: Math.ceil(totalUsers / perPage),
-          totalUsers,
-          hasNext: currentPage * perPage < totalUsers,
-          hasPrev: currentPage > 1,
+      /* JOIN USER */
+      {
+        $lookup: {
+          from: "users",
+          localField: "userId",
+          foreignField: "_id",
+          as: "userDetails",
         },
       },
-        "Astrologers retrieved successfully")
+      { $unwind: "$userDetails" },
+
+      /* USER FILTER */
+      {
+        $match: {
+          "userDetails.role": "astrologer",
+          "userDetails.isSuspend": false,
+          "userDetails.isVerified": true,
+          "userDetails.userStatus": "Active",
+        },
+      },
+
+      /* SEARCH */
+      ...(search
+        ? [
+          {
+            $match: {
+              $or: [
+                { "userDetails.fullName": { $regex: search, $options: "i" } },
+                { "userDetails.phone": { $regex: search, $options: "i" } },
+                { "userDetails.email": { $regex: search, $options: "i" } },
+              ],
+            },
+          },
+        ]
+        : []),
+
+      /* ---------------- SAFE MASKING ---------------- */
+      {
+        $addFields: {
+          /* PHONE MASK */
+          maskedPhone: {
+            $cond: [
+              {
+                $and: [
+                  { $ifNull: ["$userDetails.phone", false] },
+                  { $gte: [{ $strLenCP: "$userDetails.phone" }, 6] },
+                ],
+              },
+              {
+                $concat: [
+                  { $substrCP: ["$userDetails.phone", 0, 2] },
+                  "******",
+                  {
+                    $substrCP: [
+                      "$userDetails.phone",
+                      { $subtract: [{ $strLenCP: "$userDetails.phone" }, 2] },
+                      2,
+                    ],
+                  },
+                ],
+              },
+              null,
+            ],
+          },
+
+          /* EMAIL MASK */
+          maskedEmail: {
+            $cond: [
+              {
+                $and: [
+                  { $ifNull: ["$userDetails.email", false] },
+                  { $regexMatch: { input: "$userDetails.email", regex: /@/ } },
+                ],
+              },
+              {
+                $let: {
+                  vars: {
+                    parts: { $split: ["$userDetails.email", "@"] },
+                  },
+                  in: {
+                    $concat: [
+                      {
+                        $substrCP: [
+                          { $arrayElemAt: ["$$parts", 0] },
+                          0,
+                          2,
+                        ],
+                      },
+                      "****@",
+                      { $arrayElemAt: ["$$parts", 1] },
+                    ],
+                  },
+                },
+              },
+              null,
+            ],
+          },
+        },
+      },
+
+      /* ---------------- PROJECTION ---------------- */
+      {
+        $project: {
+          _id: "$userDetails._id",
+          fullName: { $ifNull: ["$userDetails.fullName", ""] },
+
+          phone: "$maskedPhone",
+          email: "$maskedEmail",
+
+          isOnline: { $ifNull: ["$userDetails.isOnline", false] },
+          lastSeen: "$userDetails.lastSeen",
+          status: { $ifNull: ["$userDetails.status", "offline"] },
+
+          astrologerProfile: {
+            userId: "$userId",
+            photo: { $ifNull: ["$photo", ""] },
+            specialization: { $ifNull: ["$specialization", []] },
+            experience: { $ifNull: ["$yearOfExperience", "0"] },
+            expertise: { $ifNull: ["$yearOfExpertise", "0"] },
+            ratepermin: { $ifNull: ["$ratepermin", 0] },
+            languages: { $ifNull: ["$languages", ["Hindi"]] },
+            rank: { $ifNull: ["$rank", 9999] },
+            bio: { $ifNull: ["$bio", ""] },
+          },
+        },
+      },
+
+      /* SORT (rank + online priority) */
+      {
+        $sort: {
+          "astrologerProfile.rank": 1,
+          isOnline: -1,
+          fullName: 1,
+        },
+      },
+    ];
+
+    /* ---------------- EXECUTION ---------------- */
+    const [data, totalArr] = await Promise.all([
+      Astrologer.aggregate([
+        ...pipeline,
+        { $skip: (currentPage - 1) * perPage },
+        { $limit: perPage },
+      ]),
+      Astrologer.aggregate([...pipeline, { $count: "total" }]),
+    ]);
+
+    const totalUsers = totalArr[0]?.total || 0;
+
+    return res.status(200).json(
+      new ApiResponse(
+        200,
+        {
+          data,
+          pagination: {
+            currentPage,
+            totalPages: Math.ceil(totalUsers / perPage),
+            totalUsers,
+            hasNext: currentPage * perPage < totalUsers,
+            hasPrev: currentPage > 1,
+          },
+        },
+        "Astrologers fetched successfully"
+      )
     );
   } catch (error) {
+    console.error("GET_ASTROLOGERS_ERROR:", error);
     return res
       .status(500)
       .json(new ApiResponse(500, null, "Internal Server Error"));
   }
 });
-
 const toInt = v => parseInt(v, 10) || 1;
 
 export const getRecentChats = async (req, res) => {
