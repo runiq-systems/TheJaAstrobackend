@@ -746,7 +746,7 @@ export class WebRTCService {
         reason,
       });
     } catch (error) {
-      logger.error("[CALL_END_ERROR]", {
+      logger.error("[CALL_END_ERROR45456]", {
         error: error.message,
         stack: error.stack,
         callerId,
