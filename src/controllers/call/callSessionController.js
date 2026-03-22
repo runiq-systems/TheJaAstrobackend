@@ -115,6 +115,34 @@ export const requestCallSession = asyncHandler(async (req, res) => {
 
     const ratePerMinute = astroProfile.ratepermin || astrologer.callRate || 50;
 
+
+
+    const now = new Date();
+
+    // Reserve 10 minutes upfront
+    const estimatedMinutes = 10;
+    const estimatedCost = ratePerMinute * estimatedMinutes;
+
+    // Check balance
+    const balanceCheck = await WalletService.checkBalance({
+      userId,
+      amount: estimatedCost,
+      currency: "INR",
+    });
+
+    if (!balanceCheck.hasSufficientBalance) {
+      throw new ApiError(
+        402,
+        `Insufficient balance. You need ₹${estimatedCost}, but only ₹${balanceCheck.availableBalance} is available.`,
+        {
+          code: "INSUFFICIENT_BALANCE",
+          shortfall: balanceCheck.shortfall,
+          available: balanceCheck.availableBalance,
+          required: estimatedCost,
+          currency: "INR"
+        }
+      );
+    }
     // === CHECK IF THERE IS ALREADY AN ACTIVE CALL BETWEEN THESE TWO ===
     const existingSession = await CallSession.findOne({
       $or: [
@@ -599,8 +627,7 @@ export const endCall = asyncHandler(async (req, res) => {
       requesterId.toString() === callSession.astrologerId.toString();
 
     console.log(
-      `[END CALL] ${
-        isAstrologer ? "Astrologer" : "User"
+      `[END CALL] ${isAstrologer ? "Astrologer" : "User"
       } ended session ${sessionId}`
     );
     console.log(
@@ -1036,9 +1063,9 @@ export const getAstrologerCallSessions = async (req, res) => {
 
     const callSessions = await query
       .populate("userId", "fullName avatar phone gender email photo")
-      .sort({ 
+      .sort({
         createdAt: -1, // Always show newest first
-        [sortBy]: sortOrder === "desc" ? -1 : 1 
+        [sortBy]: sortOrder === "desc" ? -1 : 1
       })
       .skip(skip)
       .limit(limitNum)
@@ -1113,7 +1140,7 @@ const mapBackendStatusToFrontend = (backendStatus) => {
     "EXPIRED": "EXPIRED",
     "AUTO_ENDED": "COMPLETED", // Map AUTO_ENDED to COMPLETED for frontend
   };
-  
+
   return statusMap[backendStatus] || backendStatus;
 };
 export const getCallSessionDetails = asyncHandler(async (req, res) => {
@@ -1408,9 +1435,8 @@ const sendSessionReminder = async (sessionId, chatId, minutesRemaining) => {
     emitSocketEventGlobal(chatId, ChatEventsEnum.RESERVATION_ENDING_SOON, {
       sessionId,
       minutesRemaining,
-      message: `Your chat session will end in ${minutesRemaining} minute${
-        minutesRemaining > 1 ? "s" : ""
-      }.`,
+      message: `Your chat session will end in ${minutesRemaining} minute${minutesRemaining > 1 ? "s" : ""
+        }.`,
     });
 
     console.log(
@@ -1777,9 +1803,8 @@ const sendCallReminder = async (sessionId, minutesRemaining) => {
     const reminderPayload = {
       sessionId,
       minutesRemaining,
-      message: `Call will auto-end in ${minutesRemaining} minute${
-        minutesRemaining > 1 ? "s" : ""
-      }.`,
+      message: `Call will auto-end in ${minutesRemaining} minute${minutesRemaining > 1 ? "s" : ""
+        }.`,
     };
 
     // Notify both parties
