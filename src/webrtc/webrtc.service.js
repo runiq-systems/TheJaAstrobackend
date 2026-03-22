@@ -515,7 +515,7 @@ export class WebRTCService {
   ) {
     try {
 
-      logger.info("callRecord id rejecting call",callRecordId);
+      logger.info("callRecord id rejecting call", callRecordId);
       const callKey = this.generateCallKey(callerId, receiverId);
 
       const callRecord = await Call.findByIdAndUpdate(
@@ -559,7 +559,7 @@ export class WebRTCService {
 
   async handleCancelCall(socket, { callerId, receiverId, callRecordId }) {
     const callKey = this.generateCallKey(callerId, receiverId);
-    
+
     try {
       if (!callRecordId) callRecordId = this.getCallRecordId(callKey);
       if (!callRecordId) throw new Error("Call record ID not found");
@@ -629,86 +629,133 @@ export class WebRTCService {
       });
     }
   }
-
   async handleEndCall(
     socket,
     { callerId, receiverId, callRecordId, reason = "normal" }
   ) {
-    try {
-      const callKey = this.generateCallKey(callerId, receiverId);
+    const callKey = this.generateCallKey(callerId, receiverId);
+    const endTime = new Date();
 
-      logger.info(`[CALL_END] ${callerId} ending call with ${receiverId}`, {
+    try {
+      logger.info("[CALL_END_INIT]", {
+        callerId,
+        receiverId,
         callRecordId,
-        reason,
         socketId: socket.id,
+        reason,
       });
 
-      // Calculate duration and update call record
+      // -------------------------------
+      // 1. Get call timing (in-memory)
+      // -------------------------------
       const callTiming = this.callTimings.get(callKey);
-      const endTime = new Date();
-      let duration = 0;
-      let callDuration = 0;
+
+      let totalDuration = 0;
+      let actualCallDuration = 0;
 
       if (callTiming) {
-        duration = Math.round((endTime - callTiming.startTime) / 1000);
+        totalDuration = Math.max(
+          0,
+          Math.floor((endTime - callTiming.startTime) / 1000)
+        );
+
         if (callTiming.connectTime) {
-          callDuration = Math.round((endTime - callTiming.connectTime) / 1000);
+          actualCallDuration = Math.max(
+            0,
+            Math.floor((endTime - callTiming.connectTime) / 1000)
+          );
         }
       }
 
-      const callRecord = await Call.findByIdAndUpdate(
-        callRecordId,
+      // -------------------------------
+      // 2. Find latest ACTIVE call (Atomic)
+      // -------------------------------
+      const callRecord = await Call.findOneAndUpdate(
         {
-          endTime,
-          duration,
-          status: "COMPLETED",
+          userId: callerId,
+          astrologerId: receiverId,
+          status: { $in: ["INITIATED", "ONGOING"] }, // prevent duplicate end
         },
-        { new: true }
+        {
+          $set: {
+            endTime,
+            duration: totalDuration,
+            callDuration: actualCallDuration,
+            status: "COMPLETED",
+            endReason: reason,
+          },
+        },
+        {
+          new: true,
+          sort: { createdAt: -1 },
+        }
       )
-        .populate("userId", "name fullName")
-        .populate("astrologerId", "name fullName");
+        .populate("userId", "name fullName profilePicture")
+        .populate("astrologerId", "name fullName profilePicture")
+        .lean();
 
-      const [callerUser, receiverUser] = await Promise.all([
-        User.findById(callerId).select("name fullName profilePicture"),
-        User.findById(receiverId).select("name fullName profilePicture"),
-      ]);
+      // -------------------------------
+      // 3. Handle Not Found (Idempotent)
+      // -------------------------------
+      if (!callRecord) {
+        logger.warn("[CALL_END_SKIPPED]", {
+          callerId,
+          receiverId,
+          reason: "No active call found",
+        });
 
-      // Notify both parties via socket
-      this.emitToUser(receiverId, "callEnded", {
+        socket.emit("callEnded", {
+          message: "Call already ended or not found",
+          callerId,
+          receiverId,
+          reason: "NO_ACTIVE_CALL",
+        });
+
+        return;
+      }
+
+      // -------------------------------
+      // 4. Emit Events (Realtime)
+      // -------------------------------
+      const payload = {
         callerId,
         receiverId,
-        duration: callDuration,
-        totalDuration: duration,
+        duration: actualCallDuration,
+        totalDuration,
         reason,
         timestamp: endTime,
         callRecordId: callRecord._id,
-      });
+      };
 
-      this.emitToUser(callerId, "callEnded", {
-        callerId,
-        receiverId,
-        duration: callDuration,
-        totalDuration: duration,
-        reason,
-        timestamp: endTime,
-        callRecordId: callRecord._id,
-      });
+      this.emitToUser(receiverId, "callEnded", payload);
+      this.emitToUser(callerId, "callEnded", payload);
 
-      // Cleanup resources
+      // -------------------------------
+      // 5. Cleanup (Memory + Socket)
+      // -------------------------------
       this.cleanupCallResources(callKey, callerId, receiverId, socket);
 
-      logger.info(
-        `[CALL_ENDED] ${callKey} lasted ${callDuration}s (total: ${duration}s)`,
-        {
-          callRecordId: callRecord._id,
-          reason,
-        }
-      );
+      // -------------------------------
+      // 6. Logging (Observability)
+      // -------------------------------
+      logger.info("[CALL_ENDED_SUCCESS]", {
+        callKey,
+        callRecordId: callRecord._id,
+        totalDuration,
+        actualCallDuration,
+        reason,
+      });
     } catch (error) {
-      logger.error(`Call end error:`, error);
+      logger.error("[CALL_END_ERROR]", {
+        error: error.message,
+        stack: error.stack,
+        callerId,
+        receiverId,
+      });
+
       socket.emit("callError", {
         message: "Failed to end call",
-        details: error.message,
+        error: error.message,
       });
     }
   }
